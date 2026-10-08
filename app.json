@@ -1,0 +1,62 @@
+{
+  "expo": {
+    "name": "Counter365",
+    "slug": "counterpro-android",
+    "scheme": [
+      "counter365",
+      "counterpro"
+    ],
+    "version": "1.0.4",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundColor": "#101318"
+      },
+      "permissions": [
+        "READ_CONTACTS",
+        "android.permission.READ_CONTACTS",
+        "android.permission.WRITE_CONTACTS"
+      ],
+      "package": "com.counterpro.app",
+      "softwareKeyboardLayoutMode": "pan"
+    },
+    "plugins": [
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/Archivo-Regular.ttf",
+            "./assets/fonts/Archivo-Medium.ttf",
+            "./assets/fonts/Archivo-SemiBold.ttf",
+            "./assets/fonts/Archivo-Bold.ttf",
+            "./assets/fonts/Archivo-Black.ttf",
+            "./assets/fonts/CaacupeOne-Regular.ttf"
+          ]
+        }
+      ],
+      "expo-sharing",
+      "expo-status-bar",
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Allow Counter365 to import customer contact details for billing and ledger khata."
+        }
+      ],
+      "expo-video"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "3a8aa2b0-0cce-48b2-a9d5-e9fdfb40426c"
+      }
+    }
+  }
+}

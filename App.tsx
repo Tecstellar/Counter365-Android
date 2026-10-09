@@ -476,6 +476,7 @@ const MainApp: React.FC = () => {
           <OtpStep
             phone={onbPhone || '98404 12345'}
             otp={onbOtp}
+            onChangeOtp={setOnbOtp}
             onKeyPress={handleOtpKeyPress}
             onEditPhone={() => {
               setOnbOtp('');

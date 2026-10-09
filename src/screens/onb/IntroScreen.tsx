@@ -319,14 +319,14 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({ onComplete }) => {
     })
   ).current;
 
-  // Dimensions clamped to match prototype: clamp(300px, 41vh, 380px)
-  const cardHeight = Math.min(380, Math.max(300, SCREEN_HEIGHT * 0.41));
+  // Dimensions clamped to match prototype with comfortable space: clamp(260px, 36vh, 340px)
+  const cardHeight = Math.min(340, Math.max(260, SCREEN_HEIGHT * 0.36));
   const cardWidth = SCREEN_WIDTH - 40;
 
   const currentSlide = ONB_SLIDES[currentIndex];
 
-  const topPadding = Math.max(insets.top, Platform.OS === 'android' ? 18 : 20);
-  const bottomPadding = Math.max(insets.bottom, 22);
+  const topPadding = Math.max(insets.top, Platform.OS === 'android' ? 14 : 16);
+  const bottomPadding = Math.max(insets.bottom, 18);
 
   // Parallax translation for the active image
   const parallaxOffset = panX.interpolate({
@@ -343,11 +343,7 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({ onComplete }) => {
       {/* Top Header Bar (.obt) */}
       <View style={styles.topBar}>
         <Image
-          source={
-            isDark
-              ? require('../../../assets/logo_dark.png')
-              : require('../../../assets/logo_light.png')
-          }
+          source={require('../../../assets/logo_light.png')}
           style={styles.logoImage}
           resizeMode="contain"
         />
@@ -358,8 +354,8 @@ export const IntroScreen: React.FC<IntroScreenProps> = ({ onComplete }) => {
           style={[
             styles.skipButton,
             {
-              backgroundColor: isDark ? colors.gc : colors.gc,
-              borderColor: isDark ? colors.glb : colors.glb,
+              backgroundColor: colors.gc,
+              borderColor: colors.glb,
             },
           ]}
         >
@@ -660,10 +656,10 @@ const styles = StyleSheet.create({
   },
   chipTopLeftText: {
     color: '#FFFFFF',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     fontFamily: 'Lexend',
-    letterSpacing: 1.6,
+    letterSpacing: 1.3,
     textTransform: 'uppercase',
   },
   chipTopRight: {
@@ -671,19 +667,19 @@ const styles = StyleSheet.create({
     top: 16,
     right: 16,
     zIndex: 2,
-    paddingVertical: 8,
-    paddingHorizontal: 13,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
     borderRadius: 14,
     backgroundColor: 'rgba(255,255,255,0.85)',
   },
   chipTopRightNum: {
     color: '#111111',
-    fontSize: 15,
+    fontSize: 13.5,
     fontWeight: '800',
     fontFamily: 'Lexend',
   },
   chipTopRightTotal: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: '#76716B',
   },
@@ -706,8 +702,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 7,
-    paddingVertical: 10,
+    gap: 6,
+    paddingVertical: 9,
     paddingHorizontal: 6,
     borderRadius: 15,
     backgroundColor: 'rgba(0,0,0,0.3)',
@@ -717,8 +713,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 10,
+    gap: 7,
+    paddingVertical: 9,
     paddingHorizontal: 8,
     borderRadius: 15,
     backgroundColor: 'rgba(0,0,0,0.3)',
@@ -727,22 +723,22 @@ const styles = StyleSheet.create({
     backgroundColor: '#FF5F00',
   },
   circleNum: {
-    width: 21,
-    height: 21,
-    borderRadius: 11,
+    width: 19,
+    height: 19,
+    borderRadius: 10,
     backgroundColor: '#FF5F00',
     alignItems: 'center',
     justifyContent: 'center',
   },
   circleNumText: {
     color: '#FFFFFF',
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '800',
     fontFamily: 'Lexend',
   },
   stripPillText: {
     color: '#FFFFFF',
-    fontSize: 12.5,
+    fontSize: 11.5,
     fontWeight: '600',
     fontFamily: 'Lexend',
   },
@@ -751,23 +747,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-start',
-    paddingVertical: 8,
+    paddingVertical: 7,
     paddingHorizontal: 12,
     borderRadius: 15,
     backgroundColor: 'rgba(0,0,0,0.3)',
-    gap: 10,
+    gap: 9,
   },
   pendingAvatar: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
+    width: 28,
+    height: 28,
+    borderRadius: 9,
     backgroundColor: '#FF5F00',
     alignItems: 'center',
     justifyContent: 'center',
   },
   pendingAvatarText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '800',
     fontFamily: 'Lexend',
   },
@@ -776,50 +772,50 @@ const styles = StyleSheet.create({
   },
   pendingName: {
     color: '#FFFFFF',
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: '700',
     fontFamily: 'Lexend',
   },
   pendingSub: {
     color: '#FFFFFF',
     opacity: 0.75,
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '500',
     fontFamily: 'Lexend',
   },
   pendingAmount: {
     color: '#FFFFFF',
-    fontSize: 17,
+    fontSize: 15,
     fontWeight: '700',
     fontFamily: 'Lexend',
   },
   textDetails: {
     width: '100%',
     paddingHorizontal: 4,
-    marginTop: 22,
+    marginTop: 18,
   },
   headline: {
     fontFamily: 'Jost',
     fontWeight: '700',
-    fontSize: 32,
-    lineHeight: 36,
-    letterSpacing: -0.6,
-    marginBottom: 10,
+    fontSize: 25,
+    lineHeight: 30,
+    letterSpacing: -0.5,
+    marginBottom: 8,
   },
   headlineEm: {
     color: '#FF5F00',
   },
   bodyText: {
     fontFamily: 'Lexend',
-    fontSize: 15.5,
-    lineHeight: 25,
+    fontSize: 13.5,
+    lineHeight: 21,
   },
   footerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingTop: 16,
+    paddingTop: 14,
   },
   dotsContainer: {
     flexDirection: 'row',
@@ -833,23 +829,23 @@ const styles = StyleSheet.create({
   ctaButton: {
     position: 'relative',
     overflow: 'hidden',
-    height: 62,
-    paddingHorizontal: 30,
-    borderRadius: 21,
+    height: 56,
+    paddingHorizontal: 26,
+    borderRadius: 18,
     backgroundColor: '#FF5F00',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 9,
     // 0 16px 28px -10px rgba(255,95,0,.65)
     shadowColor: '#FF5F00',
-    shadowOffset: { width: 0, height: 12 },
+    shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.65,
-    shadowRadius: 18,
+    shadowRadius: 16,
     elevation: 8,
   },
   ctaButtonText: {
     color: '#FFFFFF',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700',
     fontFamily: 'Lexend',
   },

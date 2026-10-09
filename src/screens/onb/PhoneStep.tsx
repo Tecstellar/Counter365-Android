@@ -12,10 +12,11 @@ import {
   AccessibilityInfo,
   KeyboardAvoidingView,
   ScrollView,
+  Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, LinearGradient, Stop, Rect } from 'react-native-svg';
-import { colors, useTheme } from '../../theme';
+import { colors } from '../../theme';
 import { ProtoIcon } from '../../components/common/ProtoIcon';
 import { AuthBackgroundGlows } from '../../components/common/AuthBackgroundGlows';
 
@@ -39,16 +40,62 @@ export const PhoneStep: React.FC<PhoneStepProps> = ({
   error = null,
 }) => {
   const insets = useSafeAreaInsets();
-  const { isDark } = useTheme();
+  const inputRef = useRef<TextInput>(null);
 
   const [isFocused, setIsFocused] = useState(false);
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [reduceMotion, setReduceMotion] = useState(false);
+
+  // Raw digits state for smooth typing on all mobile keyboards
+  const [digits, setDigits] = useState<string>(phone.replace(/\D/g, '').slice(0, 10));
+
+  // Sync external phone prop
+  useEffect(() => {
+    const clean = phone.replace(/\D/g, '').slice(0, 10);
+    if (clean !== digits) {
+      setDigits(clean);
+    }
+  }, [phone]);
 
   // Check accessibility reduce motion
   useEffect(() => {
     AccessibilityInfo.isReduceMotionEnabled().then(enabled => {
       setReduceMotion(enabled);
     });
+  }, []);
+
+  // Keyboard show/hide listener to prevent keyboard from hiding the field
+  const heroHeightAnim = useRef(new Animated.Value(330)).current;
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const onShow = () => {
+      setIsKeyboardVisible(true);
+      Animated.timing(heroHeightAnim, {
+        toValue: 90,
+        duration: 250,
+        useNativeDriver: false,
+      }).start();
+    };
+
+    const onHide = () => {
+      setIsKeyboardVisible(false);
+      Animated.timing(heroHeightAnim, {
+        toValue: 330,
+        duration: 250,
+        useNativeDriver: false,
+      }).start();
+    };
+
+    const showSub = Keyboard.addListener(showEvent, onShow);
+    const hideSub = Keyboard.addListener(hideEvent, onHide);
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
   }, []);
 
   // Animation values
@@ -66,17 +113,15 @@ export const PhoneStep: React.FC<PhoneStepProps> = ({
 
   const checkScale = useRef(new Animated.Value(0)).current;
 
-  // Format phone number: "98765 43210"
-  const formatPhone = (val: string) => {
-    const digits = val.replace(/\D/g, '').slice(0, 10);
-    if (digits.length > 5) {
-      return digits.slice(0, 5) + ' ' + digits.slice(5);
-    }
-    return digits;
-  };
+  const isValid = /^[6-9][0-9]{9}$/.test(digits);
 
-  const cleanDigits = phone.replace(/\D/g, '').slice(0, 10);
-  const isValid = /^[6-9][0-9]{9}$/.test(cleanDigits);
+  // Format phone display: "98765 43210"
+  const formatPhone = (val: string) => {
+    if (val.length > 5) {
+      return val.slice(0, 5) + ' ' + val.slice(5);
+    }
+    return val;
+  };
 
   // Animate green checkmark pop
   useEffect(() => {
@@ -194,17 +239,18 @@ export const PhoneStep: React.FC<PhoneStepProps> = ({
     return () => floatLoop.stop();
   }, [reduceMotion]);
 
-  // Handle phone input change
+  // Clean text change handler
   const handleChangeText = (text: string) => {
-    const digits = text.replace(/\D/g, '').slice(0, 10);
+    const raw = text.replace(/\D/g, '').slice(0, 10);
+    setDigits(raw);
     if (onChangePhone) {
-      onChangePhone(digits);
-    } else if (onKeyPress) {
-      // Backwards compatibility fallback if only onKeyPress passed
-      if (digits.length < cleanDigits.length) {
+      onChangePhone(raw);
+    }
+    if (onKeyPress) {
+      if (raw.length < digits.length) {
         onKeyPress('⌫');
       } else {
-        const added = digits.slice(-1);
+        const added = raw.slice(-1);
         if (added) onKeyPress(added);
       }
     }
@@ -234,29 +280,25 @@ export const PhoneStep: React.FC<PhoneStepProps> = ({
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="always"
         bounces={false}
       >
-        {/* Top Hero Panel (.lhero) */}
-        <View style={[styles.heroPanel, { paddingTop: topInset }]}>
-          {/* Hero background gradients */}
+        {/* Top Hero Panel (.lhero) - Collapses when keyboard is active */}
+        <Animated.View style={[styles.heroPanel, { height: heroHeightAnim, paddingTop: topInset }]}>
+          {/* Hero background gradients (Light Mode) */}
           <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
             <Defs>
               <RadialGradient id="heroTopRight" cx="85%" cy="0%" rx="90%" ry="80%" fx="85%" fy="0%">
-                <Stop offset="0%" stopColor="#FF5F00" stopOpacity={isDark ? 0.5 : 0.3} />
+                <Stop offset="0%" stopColor="#FF5F00" stopOpacity={0.3} />
                 <Stop offset="60%" stopColor="#FF5F00" stopOpacity={0} />
               </RadialGradient>
               <RadialGradient id="heroBottomLeft" cx="0%" cy="100%" rx="70%" ry="60%" fx="0%" fy="100%">
-                <Stop
-                  offset="0%"
-                  stopColor={isDark ? '#FF5F00' : '#FFAA6E'}
-                  stopOpacity={isDark ? 0.22 : 0.26}
-                />
+                <Stop offset="0%" stopColor="#FFAA6E" stopOpacity={0.26} />
                 <Stop offset="60%" stopColor="#FF5F00" stopOpacity={0} />
               </RadialGradient>
               <LinearGradient id="heroLinear" x1="0" y1="0" x2="1" y2="1">
-                <Stop offset="0%" stopColor={isDark ? '#1D1D1D' : '#FFFFFF'} />
-                <Stop offset="100%" stopColor={isDark ? '#080808' : '#FCEFE2'} />
+                <Stop offset="0%" stopColor="#FFFFFF" />
+                <Stop offset="100%" stopColor="#FCEFE2" />
               </LinearGradient>
             </Defs>
             <Rect width="100%" height="100%" fill="url(#heroLinear)" />
@@ -264,73 +306,74 @@ export const PhoneStep: React.FC<PhoneStepProps> = ({
             <Rect width="100%" height="100%" fill="url(#heroBottomLeft)" />
           </Svg>
 
-          {/* 3 Concentric Rings (.ring, .r2, .r3) */}
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.ring,
-              {
-                transform: [{ scale: getRingScale(ring1) }],
-                opacity: getRingOpacity(ring1),
-              },
-            ]}
-          />
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.ring,
-              {
-                transform: [{ scale: getRingScale(ring2) }],
-                opacity: getRingOpacity(ring2),
-              },
-            ]}
-          />
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.ring,
-              {
-                transform: [{ scale: getRingScale(ring3) }],
-                opacity: getRingOpacity(ring3),
-              },
-            ]}
-          />
+          {/* 3 Concentric Rings (.ring, .r2, .r3) - hidden when keyboard is open */}
+          {!isKeyboardVisible && (
+            <>
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.ring,
+                  {
+                    transform: [{ scale: getRingScale(ring1) }],
+                    opacity: getRingOpacity(ring1),
+                  },
+                ]}
+              />
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.ring,
+                  {
+                    transform: [{ scale: getRingScale(ring2) }],
+                    opacity: getRingOpacity(ring2),
+                  },
+                ]}
+              />
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.ring,
+                  {
+                    transform: [{ scale: getRingScale(ring3) }],
+                    opacity: getRingOpacity(ring3),
+                  },
+                ]}
+              />
 
-          {/* 3 Floating Dots (.dotx, .d1, .d2, .d3) */}
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.dot,
-              styles.dot1,
-              { transform: [{ translateY: dotFloat }] },
-            ]}
-          />
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.dot,
-              styles.dot2,
-              { transform: [{ translateY: dotFloat }] },
-            ]}
-          />
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.dot,
-              styles.dot3,
-              { transform: [{ translateY: dotFloat }] },
-            ]}
-          />
+              {/* 3 Floating Dots (.dotx, .d1, .d2, .d3) */}
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.dot,
+                  styles.dot1,
+                  { transform: [{ translateY: dotFloat }] },
+                ]}
+              />
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.dot,
+                  styles.dot2,
+                  { transform: [{ translateY: dotFloat }] },
+                ]}
+              />
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.dot,
+                  styles.dot3,
+                  { transform: [{ translateY: dotFloat }] },
+                ]}
+              />
+            </>
+          )}
 
           {/* Logo (.llogo) with entrance rise */}
           <Animated.Image
-            source={
-              isDark
-                ? require('../../../assets/logo_dark.png')
-                : require('../../../assets/logo_light.png')
-            }
+            source={require('../../../assets/logo_light.png')}
             style={[
               styles.heroLogo,
+              isKeyboardVisible && styles.heroLogoSmall,
               {
                 opacity: logoOpacity,
                 transform: [{ translateY: logoTranslateY }],
@@ -338,15 +381,16 @@ export const PhoneStep: React.FC<PhoneStepProps> = ({
             ]}
             resizeMode="contain"
           />
-        </View>
+        </Animated.View>
 
         {/* Form Card (.lcard) */}
         <Animated.View
           style={[
             styles.card,
+            isKeyboardVisible && styles.cardKeyboardActive,
             {
-              backgroundColor: isDark ? colors.gc : colors.gc,
-              borderColor: isDark ? colors.glb : colors.glb,
+              backgroundColor: colors.gc,
+              borderColor: colors.glb,
               opacity: cardOpacity,
               transform: [{ translateY: cardTranslateY }],
             },
@@ -360,7 +404,9 @@ export const PhoneStep: React.FC<PhoneStepProps> = ({
           <Text style={[styles.fieldLabel, { color: colors.mu }]}>MOBILE NUMBER</Text>
 
           {/* Phone Field (.pf) */}
-          <View
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={() => inputRef.current?.focus()}
             style={[
               styles.phoneInputContainer,
               {
@@ -378,16 +424,21 @@ export const PhoneStep: React.FC<PhoneStepProps> = ({
 
             {/* Input field */}
             <TextInput
-              style={[styles.phoneTextInput, { color: colors.ink }]}
-              value={formatPhone(cleanDigits)}
+              ref={inputRef}
+              style={[
+                styles.phoneTextInput,
+                { color: colors.ink },
+                Platform.OS === 'android' ? styles.phoneTextInputAndroid : styles.phoneTextInputIos,
+              ]}
+              value={formatPhone(digits)}
               onChangeText={handleChangeText}
               placeholder="98765 43210"
               placeholderTextColor={colors.mu}
-              keyboardType="number-pad"
-              maxLength={11} // 10 digits + 1 space
+              keyboardType="phone-pad"
+              autoComplete="tel"
+              maxLength={12}
               onFocus={() => setIsFocused(true)}
               onBlur={() => setIsFocused(false)}
-              autoFocus={true}
               selectionColor="#FF5F00"
             />
 
@@ -400,7 +451,7 @@ export const PhoneStep: React.FC<PhoneStepProps> = ({
             >
               <ProtoIcon name="ck" size={16} color="#FFFFFF" strokeWidth={2.5} />
             </Animated.View>
-          </View>
+          </TouchableOpacity>
 
           {/* Error notice if present */}
           {error ? (
@@ -452,22 +503,20 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingBottom: 40,
+    paddingBottom: 30,
   },
   heroPanel: {
-    height: 330,
     borderBottomLeftRadius: 46,
     borderBottomRightRadius: 46,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
-    // shadow
     shadowColor: '#FF5F00',
-    shadowOffset: { width: 0, height: 20 },
+    shadowOffset: { width: 0, height: 16 },
     shadowOpacity: 0.35,
-    shadowRadius: 28,
-    elevation: 10,
+    shadowRadius: 24,
+    elevation: 8,
   },
   ring: {
     position: 'absolute',
@@ -509,31 +558,37 @@ const styles = StyleSheet.create({
     height: 58,
     zIndex: 5,
   },
+  heroLogoSmall: {
+    width: 130,
+    height: 32,
+  },
   card: {
     marginTop: -44,
     marginHorizontal: 16,
-    paddingVertical: 24,
+    paddingVertical: 22,
     paddingHorizontal: 20,
     borderRadius: 30,
     borderWidth: 1,
-    // Card shadow
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 16 },
-    shadowOpacity: 0.22,
-    shadowRadius: 24,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.18,
+    shadowRadius: 22,
+    elevation: 6,
+  },
+  cardKeyboardActive: {
+    marginTop: 10,
   },
   title: {
     fontFamily: 'Jost',
-    fontSize: 30,
+    fontSize: 27,
     fontWeight: '700',
     letterSpacing: -0.4,
   },
   subtitle: {
     fontFamily: 'Lexend',
-    fontSize: 14,
-    marginTop: 6,
-    marginBottom: 22,
+    fontSize: 13.5,
+    marginTop: 4,
+    marginBottom: 18,
   },
   fieldLabel: {
     fontFamily: 'Lexend',
@@ -544,7 +599,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   phoneInputContainer: {
-    height: 62,
+    height: 60,
     borderRadius: 18,
     borderWidth: 1.5,
     flexDirection: 'row',
@@ -577,12 +632,17 @@ const styles = StyleSheet.create({
   },
   phoneTextInput: {
     flex: 1,
-    fontFamily: 'Lexend',
-    fontSize: 21,
-    fontWeight: '600',
+    fontSize: 20,
     letterSpacing: 1.2,
     padding: 0,
     margin: 0,
+  },
+  phoneTextInputIos: {
+    fontFamily: 'Lexend',
+    fontWeight: '600',
+  },
+  phoneTextInputAndroid: {
+    fontFamily: 'Lexend-SemiBold',
   },
   validationCheck: {
     width: 26,
@@ -609,13 +669,13 @@ const styles = StyleSheet.create({
   },
   helperText: {
     fontFamily: 'Lexend',
-    fontSize: 12.5,
-    marginTop: 10,
-    marginBottom: 22,
+    fontSize: 12,
+    marginTop: 8,
+    marginBottom: 18,
     marginHorizontal: 2,
   },
   submitButton: {
-    height: 56,
+    height: 54,
     borderRadius: 15,
     backgroundColor: '#FF5F00',
     flexDirection: 'row',
@@ -623,9 +683,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 10,
     shadowColor: '#FF5F00',
-    shadowOffset: { width: 0, height: 12 },
+    shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.45,
-    shadowRadius: 18,
+    shadowRadius: 16,
     elevation: 6,
   },
   submitButtonDisabled: {
@@ -644,7 +704,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: 'center',
     lineHeight: 18,
-    marginTop: 18,
+    marginTop: 16,
   },
   legalLink: {
     fontWeight: '700',

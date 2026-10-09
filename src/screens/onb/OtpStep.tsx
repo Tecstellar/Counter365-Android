@@ -11,6 +11,7 @@ import {
   AccessibilityInfo,
   KeyboardAvoidingView,
   ScrollView,
+  Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, useTheme } from '../../theme';
@@ -50,6 +51,23 @@ export const OtpStep: React.FC<OtpStepProps> = ({
   const [secondsLeft, setSecondsLeft] = useState<number>(30);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isSuccessView, setIsSuccessView] = useState<boolean>(false);
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const onShow = () => setIsKeyboardVisible(true);
+    const onHide = () => setIsKeyboardVisible(false);
+
+    const showSub = Keyboard.addListener(showEvent, onShow);
+    const hideSub = Keyboard.addListener(hideEvent, onHide);
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   // Input refs for 6 boxes
   const inputRefs = useRef<Array<TextInput | null>>([]);
@@ -419,6 +437,7 @@ export const OtpStep: React.FC<OtpStepProps> = ({
           <Animated.View
             style={[
               styles.lockTile,
+              isKeyboardVisible && styles.lockTileKeyboard,
               {
                 backgroundColor: colors.os,
                 opacity: lockOpacity,
@@ -437,11 +456,13 @@ export const OtpStep: React.FC<OtpStepProps> = ({
                 },
               ]}
             />
-            <ProtoIcon name="lock" size={30} color={colors.ot} strokeWidth={2} />
+            <ProtoIcon name="lock" size={isKeyboardVisible ? 24 : 30} color={colors.ot} strokeWidth={2} />
           </Animated.View>
 
           {/* Title (.lh) */}
-          <Text style={[styles.title, { color: colors.ink }]}>Verify your number</Text>
+          <Text style={[styles.title, isKeyboardVisible && styles.titleKeyboard, { color: colors.ink }]}>
+            Verify your number
+          </Text>
 
           {/* Subtitle with Edit link (.mu, .edt) */}
           <View style={styles.subtitleRow}>
@@ -461,6 +482,7 @@ export const OtpStep: React.FC<OtpStepProps> = ({
           <Animated.View
             style={[
               styles.otpBoxesRow,
+              isKeyboardVisible && styles.otpBoxesRowKeyboard,
               { transform: [{ translateX: shakeAnim }] },
             ]}
           >
@@ -487,6 +509,7 @@ export const OtpStep: React.FC<OtpStepProps> = ({
                     }}
                     style={[
                       styles.otpBox,
+                      Platform.OS === 'android' ? styles.otpBoxAndroid : styles.otpBoxIos,
                       {
                         backgroundColor: isFilled ? colors.os : colors.s,
                         borderColor: hasError
@@ -620,6 +643,12 @@ const styles = StyleSheet.create({
     marginTop: 26,
     position: 'relative',
   },
+  lockTileKeyboard: {
+    marginTop: 8,
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+  },
   lockPulseRing: {
     position: 'absolute',
     top: 0,
@@ -632,18 +661,22 @@ const styles = StyleSheet.create({
   },
   title: {
     fontFamily: 'Jost',
-    fontSize: 30,
+    fontSize: 28,
     fontWeight: '700',
     letterSpacing: -0.4,
-    marginTop: 22,
+    marginTop: 20,
+  },
+  titleKeyboard: {
+    marginTop: 10,
+    fontSize: 22,
   },
   subtitleRow: {
-    marginTop: 8,
+    marginTop: 6,
   },
   subtitle: {
     fontFamily: 'Lexend',
-    fontSize: 14.5,
-    lineHeight: 22,
+    fontSize: 13.5,
+    lineHeight: 20,
   },
   subtitlePhone: {
     fontWeight: '700',
@@ -656,21 +689,29 @@ const styles = StyleSheet.create({
   otpBoxesRow: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 30,
+    marginTop: 26,
     justifyContent: 'space-between',
+  },
+  otpBoxesRowKeyboard: {
+    marginTop: 14,
   },
   otpBoxWrapper: {
     flex: 1,
   },
   otpBox: {
-    height: 64,
+    height: 58,
     borderRadius: 16,
     borderWidth: 1.5,
     textAlign: 'center',
-    fontFamily: 'Lexend',
-    fontSize: 26,
-    fontWeight: '700',
+    fontSize: 24,
     padding: 0,
+  },
+  otpBoxIos: {
+    fontFamily: 'Lexend',
+    fontWeight: '700',
+  },
+  otpBoxAndroid: {
+    fontFamily: 'Lexend-Bold',
   },
   otpBoxFocused: {
     shadowColor: '#FF5F00',

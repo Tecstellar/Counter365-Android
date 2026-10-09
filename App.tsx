@@ -464,6 +464,7 @@ const MainApp: React.FC = () => {
         {currentRoute === 'onb_phone' && (
           <PhoneStep
             phone={onbPhone}
+            onChangePhone={setOnbPhone}
             onKeyPress={handlePhoneKeyPress}
             onNext={handleSendOtp}
             loading={isSendingOtp}

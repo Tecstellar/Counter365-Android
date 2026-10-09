@@ -147,7 +147,6 @@ export const expenseService = {
         expense_date: newExp.expenseDate,
         created_by_name: newExp.createdByName,
         created_by_role: newExp.createdByRole,
-        created_by: newExp.createdById && isValidUUID(newExp.createdById) ? newExp.createdById : null,
       });
       if (error) {
         console.warn('addExpense Supabase error:', error.message);

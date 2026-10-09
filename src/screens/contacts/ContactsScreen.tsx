@@ -178,11 +178,13 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
     setIsSaving(true);
     try {
       if (editingContact.type === 'customer') {
-        await contactService.updateCustomer(shop.id, editingContact.item.id, {
+        const custItem = editingContact.item as CustomerRecord;
+        await contactService.updateCustomer(shop.id, custItem.id, {
           name: editName.trim(),
           phone: editPhone ? editPhone.replace(/[^0-9]/g, '').slice(-10) : null,
           location: editLocation.trim() || null,
           isVip: editIsVip,
+          statusTag: editIsVip ? 'MVP' : (custItem.pendingBalance > 0 ? 'Pending' : 'Regular'),
           isActive: editIsActive,
         });
         flash(`Updated ${editName.trim()}`);
@@ -207,6 +209,13 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
 
   const handleToggleInactive = async (type: 'customer' | 'vendor', item: any) => {
     const newActive = item.isActive === false ? true : false;
+    // Optimistic UI update
+    if (type === 'customer') {
+      setCustomers(prev => prev.map(c => c.id === item.id ? { ...c, isActive: newActive } : c));
+    } else {
+      setVendors(prev => prev.map(v => v.id === item.id ? { ...v, isActive: newActive } : v));
+    }
+
     try {
       if (type === 'customer') {
         await contactService.toggleCustomerActive(shop.id, item.id, newActive);
@@ -224,6 +233,13 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
   };
 
   const handleDeleteContact = async (type: 'customer' | 'vendor', item: any) => {
+    // Optimistic UI update
+    if (type === 'customer') {
+      setCustomers(prev => prev.map(c => c.id === item.id ? { ...c, isActive: false } : c));
+    } else {
+      setVendors(prev => prev.map(v => v.id === item.id ? { ...v, isActive: false } : v));
+    }
+
     try {
       if (type === 'customer') {
         await contactService.toggleCustomerActive(shop.id, item.id, false);
@@ -245,7 +261,8 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch {}
 
-    const nextVip = !customer.isVip;
+    const currentVip = !!customer.isVip || customer.statusTag === 'MVP';
+    const nextVip = !currentVip;
     const nextStatusTag = nextVip ? 'MVP' : (customer.pendingBalance > 0 ? 'Pending' : 'Regular');
 
     // Optimistic UI update

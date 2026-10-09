@@ -1762,7 +1762,8 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
               title="Close"
               variant="outline"
               onPress={() => setIsAccountActionsModalOpen(false)}
-              style={styles.modalCloseActionButton}
+              style={styles.accountActionsCloseBtn}
+              textStyle={styles.accountActionsCloseText}
             />
           </View>
         </View>
@@ -3491,7 +3492,21 @@ const createStyles = (theme: Theme) => {
   },
   modalCloseActionButton: {
     minHeight: 46,
-    backgroundColor: '#111111',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: colors.dividerLight,
+  },
+  accountActionsCloseBtn: {
+    minHeight: 46,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: colors.dividerLight,
+    borderRadius: radii.pill,
+  },
+  accountActionsCloseText: {
+    color: '#111111',
+    fontWeight: '600',
+    fontSize: 14,
   },
 
   // User phone text

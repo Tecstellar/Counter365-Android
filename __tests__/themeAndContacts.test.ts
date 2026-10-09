@@ -3,16 +3,20 @@ import { lightTheme } from '../src/theme/lightTheme';
 import { darkTheme } from '../src/theme/darkTheme';
 import { storage } from '../src/lib/storage';
 
+const mockQueryBuilder = {
+  select: jest.fn().mockReturnThis(),
+  insert: jest.fn().mockReturnThis(),
+  update: jest.fn().mockReturnThis(),
+  upsert: jest.fn().mockReturnThis(),
+  delete: jest.fn().mockReturnThis(),
+  eq: jest.fn().mockReturnThis(),
+  order: jest.fn().mockResolvedValue({ data: [], error: null }),
+  maybeSingle: jest.fn().mockResolvedValue({ data: { id: '00000000-0000-0000-0000-000000000001' }, error: null }),
+};
+
 jest.mock('../src/lib/supabase', () => ({
   supabase: {
-    from: jest.fn(() => ({
-      select: jest.fn().mockReturnThis(),
-      insert: jest.fn().mockReturnThis(),
-      update: jest.fn().mockReturnThis(),
-      delete: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockReturnThis(),
-      order: jest.fn().mockResolvedValue({ data: [], error: null }),
-    })),
+    from: jest.fn(() => mockQueryBuilder),
   },
 }));
 
@@ -206,6 +210,64 @@ describe('Theme and Customer Contacts Integration', () => {
       const allCustomers = await contactService.getCustomers(shopId);
       const matchingPhone = allCustomers.filter(c => c.phone?.slice(-10) === '9840198401');
       expect(matchingPhone.length).toBe(1);
+    });
+  });
+
+  describe('4. VIP and is_active Supabase Database Persistence', () => {
+    const shopId = '00000000-0000-0000-0000-000000000001';
+
+    it('persists is_vip: true to Supabase customers table when customer is marked VIP', async () => {
+      const cust = await contactService.addCustomer(shopId, 'VIP Test User', '9876543210');
+      mockQueryBuilder.update.mockClear();
+
+      const updated = await contactService.updateCustomer(shopId, cust.id, {
+        isVip: true,
+        statusTag: 'MVP',
+      });
+
+      expect(updated?.isVip).toBe(true);
+      expect(updated?.statusTag).toBe('MVP');
+      expect(mockQueryBuilder.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          is_vip: true,
+          status_tag: 'MVP',
+        })
+      );
+    });
+
+    it('persists is_active: false and is_active: true to Supabase when toggled', async () => {
+      const cust = await contactService.addCustomer(shopId, 'Active Test User', '9876543211');
+      mockQueryBuilder.update.mockClear();
+
+      const resInactive = await contactService.toggleCustomerActive(shopId, cust.id, false);
+      expect(resInactive).toBe(true);
+      expect(mockQueryBuilder.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          is_active: false,
+        })
+      );
+
+      mockQueryBuilder.update.mockClear();
+      const resActive = await contactService.toggleCustomerActive(shopId, cust.id, true);
+      expect(resActive).toBe(true);
+      expect(mockQueryBuilder.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          is_active: true,
+        })
+      );
+    });
+
+    it('persists is_active for vendors when vendor is toggled inactive/active', async () => {
+      const vendor = await contactService.addVendor(shopId, 'Daily Milk Vendor', 'Milk', '9876543212');
+      mockQueryBuilder.update.mockClear();
+
+      const res = await contactService.toggleVendorActive(shopId, vendor.id, false);
+      expect(res).toBe(true);
+      expect(mockQueryBuilder.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          is_active: false,
+        })
+      );
     });
   });
 });

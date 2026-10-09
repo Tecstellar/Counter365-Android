@@ -48,7 +48,9 @@ export const contactService = {
             const parts = c.notes.split('|');
             location = parts[0].replace('Location:', '').trim();
           }
-          const isVip = c.is_vip ?? (c.notes?.includes('[VIP]') || Number(c.total_bills || 0) >= 15);
+          const isVip = typeof c.is_vip === 'boolean'
+            ? c.is_vip
+            : (c.notes?.includes('[VIP]') || Number(c.total_bills || 0) >= 15);
           const isActive = c.is_active !== false;
           return {
             id: c.id,
@@ -64,8 +66,20 @@ export const contactService = {
             isVip,
           };
         });
-        // Local cache contains most recent device mutations (payments/cancellations)
-        allCandidates = [...localFiltered, ...loaded];
+        // Merge loaded DB customers with local cache records
+        const loadedMap = new Map<string, CustomerRecord>(loaded.map(c => [c.id, c]));
+        const mergedLocal = localFiltered.map(local => {
+          const dbCust = loadedMap.get(local.id);
+          if (!dbCust) return local;
+          return {
+            ...local,
+            ...dbCust,
+            pendingBalance: local.pendingBalance ?? dbCust.pendingBalance,
+            isVip: typeof dbCust.isVip === 'boolean' ? dbCust.isVip : local.isVip,
+            statusTag: dbCust.statusTag || local.statusTag,
+          };
+        });
+        allCandidates = [...mergedLocal, ...loaded];
       }
     } catch (err) {
       console.warn('getCustomers Supabase notice:', err);
@@ -105,20 +119,28 @@ export const contactService = {
     name: string,
     phone?: string,
     location?: string,
-    notes?: string
+    notes?: string,
+    isVip: boolean = false
   ): Promise<CustomerRecord> {
     const list = await this.getCustomers(shopId);
     const cleanPhone = phone ? phone.replace(/[^0-9]/g, '').slice(-10) : '';
 
-    // If customer with same phone already exists, reuse and never duplicate
+    // If customer with same phone already exists, reuse and update VIP if requested
     if (cleanPhone && cleanPhone.length === 10) {
       const existing = list.find(c => c.phone && c.phone.replace(/[^0-9]/g, '').slice(-10) === cleanPhone);
       if (existing) {
+        if (isVip && !existing.isVip) {
+          const updated = await this.updateCustomer(shopId, existing.id, { isVip: true, statusTag: 'MVP' });
+          if (updated) return updated;
+        }
         return existing;
       }
     }
 
-    const notesContent = location ? `Location: ${location}${notes ? ` | ${notes}` : ''}` : (notes || null);
+    const vipTag = isVip ? '[VIP]' : '';
+    const notesContent = location
+      ? `Location: ${location}${notes ? ` | ${notes}` : ''} ${vipTag}`.trim()
+      : (notes ? `${notes} ${vipTag}`.trim() : (vipTag || null));
 
     const newCust: CustomerRecord = {
       id: generateUUID(),
@@ -129,7 +151,9 @@ export const contactService = {
       notes: notesContent,
       totalBills: 0,
       pendingBalance: 0,
-      statusTag: 'Regular',
+      statusTag: isVip ? 'MVP' : 'Regular',
+      isActive: true,
+      isVip,
     };
 
     const updated = [newCust, ...list.filter(c => c.id !== newCust.id)];
@@ -148,7 +172,7 @@ export const contactService = {
         pending_balance: 0,
         status_tag: newCust.statusTag || 'Regular',
         is_active: true,
-        is_vip: false,
+        is_vip: isVip,
       });
     } catch (err) {
       console.warn('addCustomer Supabase notice:', err);
@@ -183,21 +207,30 @@ export const contactService = {
         return true;
       }
 
+      // Check local cache for customer details
+      const localList = await storage.getObject<CustomerRecord[]>(LOCAL_CUSTOMERS_KEY, []);
+      const localCustomer = localList.find(c => c.id === customerId);
+      const isVip = Boolean(localCustomer?.isVip);
+      const statusTag = localCustomer?.statusTag || (isVip ? 'MVP' : 'Regular');
+
       // 2. Ensure parent shop exists first so customers_shop_id_fkey is satisfied
       await shopService.ensureShopExists(shopId);
 
-      // 3. Upsert customer into Supabase
+      // 3. Upsert customer into Supabase preserving VIP status
       const { error: upsertErr } = await (supabase.from('customers') as any)
         .upsert(
           {
             id: customerId,
             shop_id: shopId,
-            name: name ? name.trim() : 'Customer',
-            phone: phone ? phone.replace(/[^0-9]/g, '').slice(-10) : '',
-            status_tag: 'Regular',
-            is_active: true,
-            total_bills: 0,
-            pending_balance: 0,
+            name: name ? name.trim() : (localCustomer?.name || 'Customer'),
+            phone: phone ? phone.replace(/[^0-9]/g, '').slice(-10) : (localCustomer?.phone || ''),
+            location: localCustomer?.location || null,
+            notes: localCustomer?.notes || null,
+            status_tag: statusTag,
+            is_active: localCustomer?.isActive !== false,
+            is_vip: isVip,
+            total_bills: localCustomer?.totalBills || 0,
+            pending_balance: localCustomer?.pendingBalance || 0,
           },
           { onConflict: 'id' }
         );
@@ -322,6 +355,9 @@ export const contactService = {
   async getVendors(shopId: string): Promise<VendorRecord[]> {
     if (!shopId) return [];
 
+    const saved = await storage.getObject<VendorRecord[]>(LOCAL_VENDORS_KEY, []);
+    const localFiltered = saved.filter(v => v.shopId === shopId);
+
     try {
       const { data: dbVendors } = await (supabase.from('vendors') as any)
         .select('*')
@@ -347,15 +383,26 @@ export const contactService = {
             isActive: v.is_active !== false,
           };
         });
-        await storage.setObject(LOCAL_VENDORS_KEY, loaded);
-        return loaded;
+        // Merge loaded DB vendors with local records
+        const loadedMap = new Map<string, VendorRecord>(loaded.map(v => [v.id, v]));
+        const mergedLocal = localFiltered.map(local => {
+          const dbVend = loadedMap.get(local.id);
+          if (!dbVend) return local;
+          return {
+            ...local,
+            ...dbVend,
+            isActive: typeof dbVend.isActive === 'boolean' ? dbVend.isActive : local.isActive,
+          };
+        });
+        const finalVendors = [...mergedLocal, ...loaded.filter(v => !mergedLocal.some(m => m.id === v.id))];
+        await storage.setObject(LOCAL_VENDORS_KEY, finalVendors);
+        return finalVendors;
       }
     } catch (err) {
       console.warn('getVendors Supabase notice:', err);
     }
 
-    const saved = await storage.getObject<VendorRecord[]>(LOCAL_VENDORS_KEY, []);
-    return saved.filter(v => v.shopId === shopId);
+    return localFiltered;
   },
 
   /**
@@ -571,9 +618,30 @@ export const contactService = {
     if (index === -1) return null;
 
     const current = list[index];
+    const isVipNext = updates.isVip !== undefined ? updates.isVip : current.isVip;
+    const statusTagNext = updates.statusTag !== undefined
+      ? updates.statusTag
+      : (updates.isVip !== undefined
+          ? (updates.isVip ? 'MVP' : (current.pendingBalance > 0 ? 'Pending' : 'Regular'))
+          : current.statusTag);
+
+    let notesNext = current.notes;
+    if (updates.notes !== undefined || updates.location !== undefined || updates.isVip !== undefined) {
+      const loc = updates.location !== undefined ? updates.location : current.location;
+      const extraRaw = updates.notes !== undefined ? updates.notes : current.notes;
+      const cleanExtra = extraRaw ? extraRaw.replace(/\[VIP\]/g, '').trim() : '';
+      const vipTag = isVipNext ? '[VIP]' : '';
+      notesNext = loc
+        ? `Location: ${loc}${cleanExtra ? ` | ${cleanExtra}` : ''} ${vipTag}`.trim()
+        : (cleanExtra ? `${cleanExtra} ${vipTag}`.trim() : (vipTag || null));
+    }
+
     const updated: CustomerRecord = {
       ...current,
       ...updates,
+      notes: notesNext,
+      isVip: isVipNext,
+      statusTag: statusTagNext,
     };
 
     const nextList = [...list];
@@ -584,17 +652,48 @@ export const contactService = {
       const dbPayload: any = {};
       if (updates.name !== undefined) dbPayload.name = updates.name.trim();
       if (updates.phone !== undefined) dbPayload.phone = updates.phone;
+      if (updates.location !== undefined) dbPayload.location = updates.location ? updates.location.trim() : null;
       if (updates.notes !== undefined || updates.location !== undefined || updates.isVip !== undefined) {
-        const loc = updates.location !== undefined ? updates.location : current.location;
-        const extra = updates.notes !== undefined ? updates.notes : current.notes;
-        const vipTag = updates.isVip ? '[VIP]' : '';
-        dbPayload.notes = loc ? `Location: ${loc}${extra ? ` | ${extra}` : ''} ${vipTag}`.trim() : (extra ? `${extra} ${vipTag}`.trim() : (vipTag || null));
+        dbPayload.notes = notesNext;
       }
       if (updates.isActive !== undefined) dbPayload.is_active = updates.isActive;
+      if (updates.isVip !== undefined) {
+        dbPayload.is_vip = Boolean(updates.isVip);
+      }
+      if (statusTagNext !== undefined) {
+        dbPayload.status_tag = statusTagNext;
+      }
 
-      await (supabase.from('customers') as any)
-        .update(dbPayload)
-        .eq('id', customerId);
+      if (isValidUUID(shopId)) {
+        await shopService.ensureShopExists(shopId);
+      }
+
+      if (isValidUUID(customerId)) {
+        const { data: updatedRows, error: updateErr } = await (supabase.from('customers') as any)
+          .update(dbPayload)
+          .eq('id', customerId)
+          .select('id');
+
+        // If customer was created offline or missing from Supabase, upsert the full record
+        if (!updateErr && (!updatedRows || updatedRows.length === 0)) {
+          await (supabase.from('customers') as any).upsert(
+            {
+              id: customerId,
+              shop_id: shopId,
+              name: updated.name,
+              phone: updated.phone || null,
+              location: updated.location || null,
+              notes: updated.notes || null,
+              total_bills: updated.totalBills || 0,
+              pending_balance: updated.pendingBalance || 0,
+              status_tag: updated.statusTag || (updated.isVip ? 'MVP' : 'Regular'),
+              is_active: updated.isActive !== false,
+              is_vip: Boolean(updated.isVip),
+            },
+            { onConflict: 'id' }
+          );
+        }
+      }
     } catch (err) {
       console.warn('updateCustomer Supabase notice:', err);
     }
@@ -641,16 +740,42 @@ export const contactService = {
       if (updates.name !== undefined) dbPayload.name = updates.name.trim();
       if (updates.phone !== undefined) dbPayload.phone = updates.phone;
       if (updates.supplyType !== undefined) dbPayload.supply_type = updates.supplyType;
-      if (updates.isActive !== undefined) dbPayload.is_active = updates.isActive;
+      if (updates.isActive !== undefined) dbPayload.is_active = Boolean(updates.isActive);
       if (updates.notes !== undefined || updates.location !== undefined) {
         const loc = updates.location !== undefined ? updates.location : current.location;
         const extra = updates.notes !== undefined ? updates.notes : current.notes;
         dbPayload.notes = loc ? `Location: ${loc}${extra ? ` | ${extra}` : ''}` : extra;
       }
 
-      await (supabase.from('vendors') as any)
-        .update(dbPayload)
-        .eq('id', vendorId);
+      if (isValidUUID(shopId)) {
+        await shopService.ensureShopExists(shopId);
+      }
+
+      if (isValidUUID(vendorId)) {
+        const { data: updatedRows, error: updateErr } = await (supabase.from('vendors') as any)
+          .update(dbPayload)
+          .eq('id', vendorId)
+          .select('id');
+
+        if (!updateErr && (!updatedRows || updatedRows.length === 0)) {
+          await (supabase.from('vendors') as any).upsert(
+            {
+              id: vendorId,
+              shop_id: shopId,
+              name: updated.name,
+              phone: updated.phone || null,
+              category: 'General',
+              supply_type: updated.supplyType || 'Supplies',
+              location: updated.location || null,
+              schedule: updated.schedule || 'Regular',
+              notes: updated.notes || null,
+              pending_balance: 0,
+              is_active: updated.isActive !== false,
+            },
+            { onConflict: 'id' }
+          );
+        }
+      }
     } catch (err) {
       console.warn('updateVendor Supabase notice:', err);
     }

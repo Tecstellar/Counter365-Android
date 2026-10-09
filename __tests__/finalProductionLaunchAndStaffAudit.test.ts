@@ -431,12 +431,13 @@ describe('Counter Pro — Final Production Readiness Audit Test Suite', () => {
         phone: '9876500000',
       } as any;
 
-      const text = whatsappService.formatCustomerBill(mockBill, shop.name);
+      const text = whatsappService.formatCustomerBill(mockBill, shop.name, undefined, shop.phone);
 
-      expect(text).toContain('Bill #0042');
+      expect(text).toContain('Hi Karthik Raja 👋');
       expect(text).toContain('Raja Cafe');
       expect(text).toContain('https://counter365.tecstellar.com/b/bill_test_999');
-      expect(text).toContain('Official Bill & PDF Receipt:');
+      expect(text).toContain('📄 *View Receipt:*');
+      expect(text).toContain('Thank you for your business!');
       expect(text).not.toContain('/landing/');
       expect(text).not.toContain('/view-invoice-page');
     });

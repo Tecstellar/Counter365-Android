@@ -34,26 +34,29 @@ describe('WhatsApp Receipt & Formatting Polish', () => {
     completedAt: '2026-10-09T12:05:00Z',
   };
 
-  it('formats partial pay bill with itemized breakdown, due balance, and valid UPI ID', () => {
+  it('formats partial pay bill with clean customer message, due balance, and valid UPI ID', () => {
     const text = whatsappService.formatCustomerBill(
       sampleBill,
       'Biryani Darbar',
       'biryanidarbar@okhdfcbank'
     );
 
-    expect(text).toContain('Biryani Darbar');
-    expect(text).toContain('• Chicken Biryani × 1 = ₹260');
-    expect(text).toContain('• Lime Soda × 1 = ₹90');
-    expect(text).toContain('TOTAL AMOUNT: ₹368');
-    expect(text).toContain('PARTIALLY PAID');
-    expect(text).toContain('*Paid Now:* ₹200');
-    expect(text).toContain('*Balance Due:* ₹168');
-    expect(text).toContain('*Pay Due via UPI ID:* biryanidarbar@okhdfcbank');
-    // Receipt URL contains official UUID route and fallback ?d=
-    expect(text).toContain('https://counter365.tecstellar.com/b/f47ac10b-58cc-4372-a567-0e02b2c3d479?d=');
-    // Should NOT have .pdf appended to URL path
-    expect(text).not.toContain('.pdf?d=');
-    expect(text).not.toContain('f47ac10b-58cc-4372-a567-0e02b2c3d479.pdf');
+    expect(text).toContain('Hi Karthik Raja 👋');
+    expect(text).toContain('Thank you for choosing *Biryani Darbar*!');
+    expect(text).toContain('💰 *Total Amount:* ₹368');
+    expect(text).toContain('💵 *Total Paid:* ₹200');
+    expect(text).toContain('🔴 *Balance Due:* ₹168');
+    expect(text).toContain('⚠️ *Payment Status:* PARTIALLY PAID');
+    expect(text).toContain('💳 *UPI ID:* biryanidarbar@okhdfcbank');
+    expect(text).toContain('Thank you for your business!');
+    // No line items in text
+    expect(text).not.toContain('• Chicken Biryani');
+    expect(text).not.toContain('• Lime Soda');
+    // Direct short receipt link < 100 characters (aim < 80 characters)
+    expect(text).toContain('https://counter365.tecstellar.com/b/f47ac10b-58cc-4372-a567-0e02b2c3d479');
+    const urlMatch = text.match(/https:\/\/[^\s]+/);
+    expect(urlMatch).toBeTruthy();
+    expect(urlMatch![0].length).toBeLessThan(80);
   });
 
   it('omits UPI ID when bill is fully paid', () => {
@@ -70,8 +73,8 @@ describe('WhatsApp Receipt & Formatting Polish', () => {
       'biryanidarbar@okhdfcbank'
     );
 
-    expect(text).toContain('Payment Status:* ✅ PAID (Cash)');
-    expect(text).not.toContain('Pay Due via UPI ID');
+    expect(text).toContain('✅ *Payment Status:* PAID (Cash)');
+    expect(text).not.toContain('UPI ID');
   });
 
   it('omits UPI ID if shop UPI ID is invalid or placeholder', () => {
@@ -81,7 +84,7 @@ describe('WhatsApp Receipt & Formatting Polish', () => {
       'your-upi-placeholder'
     );
 
-    expect(text).not.toContain('Pay Due via UPI ID');
+    expect(text).not.toContain('UPI ID');
   });
 
   it('formats full pending payment bills accurately', () => {
@@ -98,9 +101,12 @@ describe('WhatsApp Receipt & Formatting Polish', () => {
       'shop@upi'
     );
 
-    expect(text).toContain('PAYMENT PENDING');
-    expect(text).toContain('*Balance Due:* ₹368');
-    expect(text).toContain('*Pay Due via UPI ID:* shop@upi');
+    expect(text).toContain('💰 *Total Amount:* ₹368');
+    expect(text).toContain('💵 *Total Paid:* ₹0.00');
+    expect(text).toContain('🔴 *Balance Due:* ₹368');
+    expect(text).toContain('⚠️ *Payment Status:* PENDING');
+    expect(text).toContain('💳 *UPI ID:* shop@upi');
+    expect(text).toContain('Thank you for your business!');
   });
 });
 

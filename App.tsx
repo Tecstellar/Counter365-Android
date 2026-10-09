@@ -596,7 +596,7 @@ const MainApp: React.FC = () => {
                 onBillSaved={async (bill, share, autoPrint) => {
                   setSavedBill(bill);
                   if (share) {
-                    const waText = whatsappService.formatCustomerBill(bill, shop.name, shop.upiId);
+                    const waText = whatsappService.formatCustomerBill(bill, shop.name, shop.upiId, shop.phone);
                     whatsappService.shareViaWhatsApp(waText, bill.customerPhone);
                   }
                   if (autoPrint) {
@@ -726,7 +726,7 @@ const MainApp: React.FC = () => {
         bill={savedBill}
         onSendWhatsApp={() => {
           if (!savedBill) return;
-          const msg = whatsappService.formatCustomerBill(savedBill, shop.name, shop.upiId);
+          const msg = whatsappService.formatCustomerBill(savedBill, shop.name, shop.upiId, shop.phone);
           whatsappService.shareViaWhatsApp(msg, savedBill.customerPhone);
           setSavedBill(null);
           setSalesSubView('menu');

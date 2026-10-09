@@ -93,7 +93,7 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch {}
-    const msg = whatsappService.formatCustomerBill(bill, shop.name, shop.upiId);
+    const msg = whatsappService.formatCustomerBill(bill, shop.name, shop.upiId, shop.phone);
     await whatsappService.shareViaWhatsApp(msg, bill.customerPhone);
     flash(`Bill ${bill.billNumber} sent on WhatsApp`);
   };

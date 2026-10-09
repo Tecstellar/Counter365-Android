@@ -284,7 +284,11 @@ describe('Additional Production Requirements Test Suite', () => {
 
       // Verify direct PDF/Receipt URL
       expect(formatted).toContain('https://counter365.tecstellar.com/b/bill_abc_123');
-      expect(formatted).toContain('Official Bill & PDF Receipt:');
+      expect(formatted).toContain('📄 *View Receipt:*');
+      expect(formatted).toContain('Thank you for your business!');
+      const urlMatch = formatted.match(/https:\/\/[^\s]+/);
+      expect(urlMatch).toBeTruthy();
+      expect(urlMatch![0].length).toBeLessThan(100);
     });
   });
 

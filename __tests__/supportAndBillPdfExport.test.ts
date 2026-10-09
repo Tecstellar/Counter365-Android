@@ -119,17 +119,22 @@ describe('Support Screen & Bill PDF Export Requirements', () => {
     expect(Print.printAsync).toHaveBeenCalled();
   });
 
-  test('whatsappService formats bill text with customer, table, and PDF copy note', () => {
-    const waText = whatsappService.formatCustomerBill(mockBill, mockShop.name);
+  test('whatsappService formats bill text with customer greeting, paid status, and short PDF receipt link', () => {
+    const waText = whatsappService.formatCustomerBill(mockBill, mockShop.name, mockShop.upiId, mockShop.phone);
 
-    expect(waText).toContain('Madras Chai Cafe');
-    expect(waText).toContain('Bill 1042');
-    expect(waText).toContain('Table: 3');
-    expect(waText).toContain('Karthik');
-    expect(waText).toContain('TOTAL AMOUNT: ₹89');
-    expect(waText).toContain('Cash ₹50');
-    expect(waText).toContain('GPay ₹39');
-    expect(waText).toContain('https://counter365.tecstellar.com/b/');
-    expect(waText).toContain('Official Bill & PDF Receipt:');
+    expect(waText).toContain('Hi Karthik 👋');
+    expect(waText).toContain('Thank you for choosing *Madras Chai Cafe*!');
+    expect(waText).toContain('💰 *Total Amount:* ₹89');
+    expect(waText).toContain('✅ *Payment Status:* PAID (Cash + GPay)');
+    expect(waText).toContain('📄 *View Receipt:*');
+    expect(waText).toContain('https://counter365.tecstellar.com/b/bill-test-001');
+    expect(waText).toContain('📞 *Contact:* 9840412345');
+    expect(waText).toContain('Thank you for your business!');
+    // Verify no line items in WhatsApp message text
+    expect(waText).not.toContain('Masala Chai × 2');
+    // Verify short URL < 100 characters
+    const urlMatch = waText.match(/https:\/\/[^\s]+/);
+    expect(urlMatch).toBeTruthy();
+    expect(urlMatch![0].length).toBeLessThan(100);
   });
 });

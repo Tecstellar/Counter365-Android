@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -34,6 +34,9 @@ import { supabase } from '../../lib/supabase';
 import * as Print from 'expo-print';
 import { printerService } from '../../services/printerService';
 import { twoFactorService } from '../../services/twoFactorService';
+import { generateDefaultInvoicePrefix } from '../../lib/invoiceUtils';
+import { subscriptionService } from '../../services/subscriptionService';
+import { SubscriptionRecord } from '../../types/models';
 
 const DELETE_ACCOUNT_REASONS: Array<{
   id: string;
@@ -89,6 +92,22 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
   const [editShopAddress, setEditShopAddress] = useState(shop.address || '');
   const [editShopCity, setEditShopCity] = useState(shop.city || '');
   const [editLogoUrl, setEditLogoUrl] = useState<string | null>(shop.logoUrl || null);
+  const [editInvoicePrefix, setEditInvoicePrefix] = useState<string>(
+    shop.invoicePrefix || generateDefaultInvoicePrefix(shop.name)
+  );
+  const [editInvoiceResetCycle, setEditInvoiceResetCycle] = useState<'monthly' | 'yearly'>(
+    shop.invoiceResetCycle || 'monthly'
+  );
+  const [editUpiId, setEditUpiId] = useState(shop.upiId || '');
+  const [subscriptionHistory, setSubscriptionHistory] = useState<SubscriptionRecord[]>([]);
+
+  useEffect(() => {
+    if (shop?.id) {
+      subscriptionService.getSubscriptionHistory(shop.id).then((history) => {
+        setSubscriptionHistory(history);
+      }).catch(() => {});
+    }
+  }, [shop?.id, subscriptionStatus?.isPaidActive]);
   const [isSavingShopEdit, setIsSavingShopEdit] = useState(false);
 
   // Users & Staff State (Supervisor & Biller)
@@ -311,11 +330,14 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
 
   const handleOpenEditShop = () => {
     setEditShopName(shop.name || 'Raja Tea Stall');
-    setEditOwnerName(profile?.fullName || 'Raja');
+    setEditOwnerName(shop.ownerName || profile?.fullName || 'Raja');
     setEditShopPhone(shop.phone || '');
     setEditShopAddress(shop.address || '');
     setEditShopCity(shop.city || '');
     setEditLogoUrl(shop.logoUrl || null);
+    setEditInvoicePrefix(shop.invoicePrefix || generateDefaultInvoicePrefix(shop.name));
+    setEditInvoiceResetCycle(shop.invoiceResetCycle || 'monthly');
+    setEditUpiId(shop.upiId || '');
     setIsEditShopOpen(true);
   };
 
@@ -350,10 +372,14 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
       const finalLogo = editLogoUrl || shop.logoUrl;
       await updateShop({
         name: editShopName.trim(),
+        ownerName: editOwnerName.trim(),
         phone: editShopPhone.trim(),
         address: editShopAddress.trim(),
         city: editShopCity.trim(),
+        upiId: editUpiId.trim() || null,
         logoUrl: finalLogo,
+        invoicePrefix: (editInvoicePrefix.trim().toUpperCase() || generateDefaultInvoicePrefix(editShopName)),
+        invoiceResetCycle: editInvoiceResetCycle,
       });
 
       // Update owner profile in AuthContext and persistent storage
@@ -399,9 +425,8 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
       setNewUserName('');
       setNewUserPhone('');
       setIsAddUserOpen(false);
-      flash(`Added ${name} as ${newUserRole} (+91 ${phone})`);
-    } catch (err) {
-      flash('Failed to add user');
+    } catch (err: any) {
+      flash(err?.message || 'Failed to add user');
     } finally {
       setIsSavingUser(false);
     }
@@ -621,6 +646,23 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
   };
 
   const handleConfirmPermanentlyDelete = () => {
+    if (currentRole !== 'Owner') {
+      flash('Only the shop Owner can delete the account');
+      return;
+    }
+
+    const cleanPhone = (shop.phone || profile?.phone || '').replace(/[^0-9]/g, '');
+    const isDemo =
+      shop.id === '99999999-9999-4999-8999-888888888888' ||
+      shop.id?.startsWith('99999999-') ||
+      cleanPhone === '9999999999' ||
+      /demo|sample/i.test(shop.name || '');
+
+    if (isDemo) {
+      Alert.alert('Protected Demo Account', 'Demo accounts are protected and cannot be deleted.');
+      return;
+    }
+
     setSelectedDeleteReason('');
     setDeleteFeedbackText('');
     setIsDeleteReasonModalVisible(true);
@@ -670,7 +712,11 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {/* 1. Shop Profile (Compact & Simple) */}
-        <View style={styles.profileCard}>
+        <TouchableOpacity
+          style={styles.profileCard}
+          activeOpacity={currentRole === 'Owner' ? 0.75 : 1}
+          onPress={currentRole === 'Owner' ? handleOpenEditShop : undefined}
+        >
           <TouchableOpacity
             onPress={currentRole === 'Owner' ? handlePickLogo : undefined}
             activeOpacity={currentRole === 'Owner' ? 0.8 : 1}
@@ -693,8 +739,16 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
           <View style={styles.profileMetaWrap}>
             <Text style={styles.profileName} numberOfLines={1}>{shop.name || 'Raja tea stall'}</Text>
             <Text style={styles.profileOwnerSub} numberOfLines={1}>
-              {shop.shopType} • +91 {shop.phone || profile?.phone}
+              Owner: {shop.ownerName || profile?.fullName || 'Owner'} • {shop.shopType} • +91 {shop.phone || profile?.phone}
             </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+              <View style={styles.invoicePrefixChip}>
+                <Ionicons name="receipt-outline" size={11} color="#FF5F00" />
+                <Text style={styles.invoicePrefixChipText}>
+                  Prefix: {shop.invoicePrefix || generateDefaultInvoicePrefix(shop.name)} ({shop.invoiceResetCycle === 'yearly' ? 'Yearly' : 'Monthly'})
+                </Text>
+              </View>
+            </View>
             {Boolean(shop.address || shop.city) && (
               <View style={styles.profileLocRow}>
                 <Ionicons name="location-outline" size={11} color={colors.textMuted} />
@@ -711,7 +765,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
               <Text style={styles.editProfileBtnText}>Edit</Text>
             </TouchableOpacity>
           )}
-        </View>
+        </TouchableOpacity>
 
         {/* 2. Dynamic Subscription / Free Tier Card (Owner) OR Staff Role Card (Supervisor / Biller) */}
         {currentRole === 'Owner' ? (
@@ -737,7 +791,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                     ? 'Pro Active'
                     : subscriptionStatus.billLimitReached
                     ? '100 / 100 Used'
-                    : `${subscriptionStatus.totalBillsCreated} / 100 Bills`}
+                    : `Starter Quota: ${subscriptionStatus.totalBillsCreated} / 100`}
                 </Text>
               </View>
             </View>
@@ -761,7 +815,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
               <Text style={styles.subPrice}>
                 {subscriptionStatus.isPaidActive
                   ? `${subscriptionStatus.activePlanName} (₹${subscriptionStatus.activePlanPrice})`
-                  : `${subscriptionStatus.totalBillsCreated} of 100 Used`}
+                  : `Starter Quota (${subscriptionStatus.totalBillsCreated} of 100 Sales)`}
               </Text>
               <Text style={styles.subRenew}>
                 {subscriptionStatus.isPaidActive
@@ -805,142 +859,226 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
           </View>
         )}
 
+
+
         {/* 3. Users & Staff Section (Owner & Supervisor) */}
-        {currentRole !== 'Biller' && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionHeading}>Users & Staff</Text>
-              {currentRole === 'Owner' && (
-                <TouchableOpacity
-                  onPress={() => setIsAddUserOpen(!isAddUserOpen)}
-                  style={styles.addUserBtn}
-                >
-                  <Text style={styles.addUserText}>
-                    {isAddUserOpen ? 'Cancel' : '+ Add user'}
+        {currentRole !== 'Biller' && (() => {
+          const activeMembers = members.filter(u => u.isActive !== false);
+          const inactiveMembers = members.filter(u => u.isActive === false);
+          const maxLimit = shop.maxStaffLimit || 5;
+          const isLimitReached = members.length >= maxLimit;
+
+          return (
+            <View style={styles.section}>
+              <View style={styles.sectionHeaderRow}>
+                <View>
+                  <Text style={styles.sectionHeading}>Users & Staff ({activeMembers.length} active)</Text>
+                  <Text style={styles.sectionSubHeading}>Allocation: {members.length}/{maxLimit} (Active + Inactive)</Text>
+                </View>
+                {currentRole === 'Owner' && (
+                  <TouchableOpacity
+                    onPress={() => setIsAddUserOpen(!isAddUserOpen)}
+                    style={styles.addUserBtn}
+                  >
+                    <Text style={styles.addUserText}>
+                      {isAddUserOpen ? 'Cancel' : '+ Add user'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Active Users List */}
+              <View style={styles.usersList}>
+                {activeMembers.length === 0 ? (
+                  <View style={styles.emptyStaffNotice}>
+                    <Text style={styles.emptyStaffText}>No active staff members. Add a Supervisor or Biller below.</Text>
+                  </View>
+                ) : (
+                  activeMembers.map((u: ShopMember) => {
+                    const hasOverrides = u.overrides && Object.keys(u.overrides).length > 0;
+                    const extraText = u.role === 'Owner' ? 'master ID' : hasOverrides ? 'has overrides' : '';
+
+                    return (
+                      <TouchableOpacity
+                        key={u.id}
+                        activeOpacity={currentRole === 'Owner' ? 0.7 : 1}
+                        onPress={() => {
+                          if (currentRole === 'Owner') {
+                            handleOpenUserSheet(u);
+                          }
+                        }}
+                        style={styles.userRow}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.userName}>{u.fullName}</Text>
+                          {u.phone ? <Text style={styles.userPhoneText}>+91 {u.phone}</Text> : null}
+                        </View>
+                        {extraText ? <Text style={styles.userExtra}>{extraText}</Text> : null}
+                        <AppTag
+                          label={u.role.toUpperCase()}
+                          variant={u.role === 'Owner' ? 'accent' : 'neutral'}
+                        />
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
+              </View>
+
+              {/* Inactive Staff Members Section (Preserved historical attribution) */}
+              {inactiveMembers.length > 0 && (
+                <View style={styles.inactiveStaffBox}>
+                  <View style={styles.inactiveStaffHeader}>
+                    <Ionicons name="archive-outline" size={15} color={colors.textSecondary} />
+                    <Text style={styles.inactiveStaffTitle}>Inactive Staff Records ({inactiveMembers.length})</Text>
+                  </View>
+                  <Text style={styles.inactiveStaffNotice}>
+                    Historical billing attribution and records are preserved. Inactive accounts count toward staff allocation limit.
                   </Text>
-                </TouchableOpacity>
+                  {inactiveMembers.map((u: ShopMember) => (
+                    <TouchableOpacity
+                      key={u.id}
+                      activeOpacity={currentRole === 'Owner' ? 0.7 : 1}
+                      onPress={() => {
+                        if (currentRole === 'Owner') {
+                          handleOpenUserSheet(u);
+                        }
+                      }}
+                      style={[styles.userRow, { opacity: 0.75, borderBottomColor: colors.dividerLight }]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.userName}>{u.fullName}</Text>
+                        {u.phone ? <Text style={styles.userPhoneText}>+91 {u.phone}</Text> : null}
+                        <Text style={styles.deactivatedSubText}>
+                          Deactivated • Role: {u.role}
+                        </Text>
+                      </View>
+                      <AppTag label="INACTIVE" variant="neutral" />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              {/* Locked Notice if not owner */}
+              {currentRole !== 'Owner' && (
+                <View style={styles.lockedUsersRow}>
+                  <Ionicons name="lock-closed" size={16} color={colors.textSecondary} />
+                  <Text style={styles.lockedUsersText}>
+                    Only the owner ID can add or remove users. Ask the owner.
+                  </Text>
+                </View>
+              )}
+
+              {/* Add User Form OR Allocation Support Template */}
+              {currentRole === 'Owner' && isAddUserOpen && (
+                isLimitReached ? (
+                  <View style={styles.supportTemplateCard}>
+                    <View style={styles.supportTemplateHeader}>
+                      <Ionicons name="alert-circle" size={22} color="#EA580C" />
+                      <Text style={styles.supportTemplateHeading}>Staff Allocation Limit Reached</Text>
+                    </View>
+                    <Text style={styles.supportTemplateText}>
+                      Your staff allocation limit ({members.length}/{maxLimit}) has been reached. Please contact our support team for assistance with adding or reactivating staff.
+                    </Text>
+                    <View style={styles.supportBtnRow}>
+                      <TouchableOpacity
+                        style={styles.supportCallBtn}
+                        onPress={() => Linking.openURL(`tel:${APP_CONFIG.supportPhone}`)}
+                      >
+                        <Ionicons name="call" size={14} color="#FFFFFF" />
+                        <Text style={styles.supportCallBtnText}>Call Support ({APP_CONFIG.supportPhoneFormatted})</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.supportWaBtn}
+                        onPress={() => {
+                          const msg = encodeURIComponent(`Hi Counter365 Support,\nI have reached the staff allocation limit (${members.length}/${maxLimit}) for my shop ${shop.name || ''} (+91 ${shop.phone || ''}).\nI need assistance adding/reactivating staff.`);
+                          Linking.openURL(`https://wa.me/91${APP_CONFIG.supportPhone}?text=${msg}`);
+                        }}
+                      >
+                        <Ionicons name="logo-whatsapp" size={14} color="#FFFFFF" />
+                        <Text style={styles.supportWaBtnText}>WhatsApp Support</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.addUserFormCard}>
+                    <Text style={styles.addUserFormTitle}>Add Store Staff</Text>
+                    <TextInput
+                      style={styles.addUserInput}
+                      placeholder="Staff Member Name (e.g. Karthik)"
+                      placeholderTextColor={colors.textSecondary}
+                      value={newUserName}
+                      onChangeText={setNewUserName}
+                    />
+                    <TextInput
+                      style={styles.addUserInput}
+                      placeholder="10-Digit Mobile Number"
+                      placeholderTextColor={colors.textSecondary}
+                      keyboardType="numeric"
+                      maxLength={10}
+                      value={newUserPhone}
+                      onChangeText={t => setNewUserPhone(t.replace(/[^0-9]/g, '').slice(0, 10))}
+                    />
+
+                    {/* Role Selector: Supervisor vs Biller */}
+                    <View style={styles.rolePickerRow}>
+                      <TouchableOpacity
+                        onPress={() => setNewUserRole('Supervisor')}
+                        style={[
+                          styles.roleChoiceBtn,
+                          newUserRole === 'Supervisor' && styles.roleChoiceBtnActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.roleChoiceText,
+                            newUserRole === 'Supervisor' && styles.roleChoiceTextActive,
+                          ]}
+                        >
+                          Supervisor
+                        </Text>
+                        <Text style={styles.roleChoiceSub}>Full Access</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={() => setNewUserRole('Biller')}
+                        style={[
+                          styles.roleChoiceBtn,
+                          newUserRole === 'Biller' && styles.roleChoiceBtnActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.roleChoiceText,
+                            newUserRole === 'Biller' && styles.roleChoiceTextActive,
+                          ]}
+                        >
+                          Biller
+                        </Text>
+                        <Text style={styles.roleChoiceSub}>Billing Only</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    <View style={styles.addUserActionRow}>
+                      <TouchableOpacity
+                        onPress={() => setIsAddUserOpen(false)}
+                        style={styles.cancelUserBtn}
+                      >
+                        <Text style={styles.cancelUserText}>Cancel</Text>
+                      </TouchableOpacity>
+                      <AppButton
+                        title={isSavingUser ? 'Adding...' : 'Save User'}
+                        variant="primary"
+                        onPress={handleSaveUser}
+                        disabled={isSavingUser}
+                        style={styles.saveUserBtn}
+                      />
+                    </View>
+                  </View>
+                )
               )}
             </View>
-
-            <View style={styles.usersList}>
-              {members.map((u: ShopMember) => {
-                const hasOverrides = u.overrides && Object.keys(u.overrides).length > 0;
-                const extraText = u.role === 'Owner' ? 'master ID' : hasOverrides ? 'has overrides' : '';
-
-                return (
-                  <TouchableOpacity
-                    key={u.id}
-                    activeOpacity={currentRole === 'Owner' ? 0.7 : 1}
-                    onPress={() => {
-                      if (currentRole === 'Owner') {
-                        handleOpenUserSheet(u);
-                      }
-                    }}
-                    style={styles.userRow}
-                  >
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.userName}>{u.fullName}</Text>
-                      {u.phone ? <Text style={styles.userPhoneText}>+91 {u.phone}</Text> : null}
-                    </View>
-                    {extraText ? <Text style={styles.userExtra}>{extraText}</Text> : null}
-                    <AppTag
-                      label={u.role.toUpperCase()}
-                      variant={u.role === 'Owner' ? 'accent' : u.role === 'Supervisor' ? 'neutral' : 'neutral'}
-                    />
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            {/* Locked Notice if not owner */}
-            {currentRole !== 'Owner' && (
-              <View style={styles.lockedUsersRow}>
-                <Ionicons name="lock-closed" size={16} color={colors.textSecondary} />
-                <Text style={styles.lockedUsersText}>
-                  Only the owner ID can add or remove users. Ask the owner.
-                </Text>
-              </View>
-            )}
-
-            {/* Add User Inline Form (Owner only) */}
-            {currentRole === 'Owner' && isAddUserOpen && (
-              <View style={styles.addUserFormCard}>
-                <Text style={styles.addUserFormTitle}>Add Store Staff</Text>
-                <TextInput
-                  style={styles.addUserInput}
-                  placeholder="Staff Member Name (e.g. Karthik)"
-                  placeholderTextColor={colors.textSecondary}
-                  value={newUserName}
-                  onChangeText={setNewUserName}
-                />
-                <TextInput
-                  style={styles.addUserInput}
-                  placeholder="10-Digit Mobile Number"
-                  placeholderTextColor={colors.textSecondary}
-                  keyboardType="numeric"
-                  maxLength={10}
-                  value={newUserPhone}
-                  onChangeText={t => setNewUserPhone(t.replace(/[^0-9]/g, '').slice(0, 10))}
-                />
-
-                {/* Role Selector: Supervisor vs Biller */}
-                <View style={styles.rolePickerRow}>
-                  <TouchableOpacity
-                    onPress={() => setNewUserRole('Supervisor')}
-                    style={[
-                      styles.roleChoiceBtn,
-                      newUserRole === 'Supervisor' && styles.roleChoiceBtnActive,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.roleChoiceText,
-                        newUserRole === 'Supervisor' && styles.roleChoiceTextActive,
-                      ]}
-                    >
-                      Supervisor
-                    </Text>
-                    <Text style={styles.roleChoiceSub}>Full Access</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => setNewUserRole('Biller')}
-                    style={[
-                      styles.roleChoiceBtn,
-                      newUserRole === 'Biller' && styles.roleChoiceBtnActive,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.roleChoiceText,
-                        newUserRole === 'Biller' && styles.roleChoiceTextActive,
-                      ]}
-                    >
-                      Biller
-                    </Text>
-                    <Text style={styles.roleChoiceSub}>Billing Only</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.addUserActionRow}>
-                  <TouchableOpacity
-                    onPress={() => setIsAddUserOpen(false)}
-                    style={styles.cancelUserBtn}
-                  >
-                    <Text style={styles.cancelUserText}>Cancel</Text>
-                  </TouchableOpacity>
-                  <AppButton
-                    title={isSavingUser ? 'Adding...' : 'Save User'}
-                    variant="primary"
-                    onPress={handleSaveUser}
-                    disabled={isSavingUser}
-                    style={styles.saveUserBtn}
-                  />
-                </View>
-              </View>
-            )}
-          </View>
-        )}
+          );
+        })()}
 
         {/* 4. Settings Toggles */}
         <View style={styles.section}>
@@ -1408,9 +1546,10 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
             <TouchableOpacity
               onPress={() => setIsAccountActionsModalOpen(true)}
               style={[styles.legalRow, { borderBottomWidth: 0 }]}
+              activeOpacity={0.7}
             >
-              <Text style={styles.legalTitle}>Account Actions</Text>
-              <Text style={styles.legalMeta}>Log out · Delete account</Text>
+              <Text style={styles.legalTitle} numberOfLines={1}>Account Actions</Text>
+              <Text style={styles.legalMeta} numberOfLines={1}>Log out · Delete account</Text>
               <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
@@ -1752,6 +1891,23 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                 />
               </View>
 
+              {/* Shop UPI ID (Optional) */}
+              <View style={styles.fieldWrap}>
+                <Text style={styles.fieldLabel}>Shop UPI ID (for WhatsApp Receipts)</Text>
+                <TextInput
+                  style={styles.formInput}
+                  value={editUpiId}
+                  onChangeText={setEditUpiId}
+                  placeholder="e.g. yourshop@okhdfcbank"
+                  placeholderTextColor={colors.textSecondary}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <Text style={styles.phoneChangeHint}>
+                  Customers can pay balance due directly using this UPI ID from their WhatsApp receipt.
+                </Text>
+              </View>
+
               {/* Shop Type (READ ONLY / LOCKED) */}
               <View style={styles.fieldWrap}>
                 <View style={styles.lockedLabelRow}>
@@ -1767,6 +1923,189 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                 <Text style={styles.lockedHelperText}>
                   Shop type cannot be edited after initial registration.
                 </Text>
+              </View>
+
+              {/* Invoice Prefix & Numbering Cycle */}
+              <View style={styles.fieldWrap}>
+                <View style={styles.fieldLabelRow}>
+                  <Text style={styles.fieldLabel}>Bill Invoice Prefix</Text>
+                  <TouchableOpacity
+                    onPress={() => setEditInvoicePrefix(generateDefaultInvoicePrefix(editShopName))}
+                    style={styles.autoPrefixBtn}
+                  >
+                    <Ionicons name="refresh-outline" size={11} color={colors.accent} />
+                    <Text style={styles.autoPrefixText}>
+                      Auto ({generateDefaultInvoicePrefix(editShopName)})
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                <TextInput
+                  style={styles.formInput}
+                  value={editInvoicePrefix}
+                  onChangeText={(val) => setEditInvoicePrefix(val.toUpperCase())}
+                  placeholder="e.g. RTS"
+                  placeholderTextColor={colors.textSecondary}
+                  autoCapitalize="characters"
+                  maxLength={8}
+                />
+                <Text style={styles.phoneChangeHint}>
+                  Preview: {editInvoicePrefix || 'RTS'}-{editInvoiceResetCycle === 'monthly' ? `${new Date().toLocaleString('en-US', { month: 'long' })}-001` : '001'}
+                </Text>
+              </View>
+
+              {/* Invoice Reset Cycle (Monthly vs Yearly) */}
+              <View style={styles.fieldWrap}>
+                <Text style={styles.fieldLabel}>Invoice Numbering Reset</Text>
+                <View style={styles.cycleToggleContainer}>
+                  <TouchableOpacity
+                    style={[
+                      styles.cycleOptionCard,
+                      editInvoiceResetCycle === 'monthly' && styles.cycleOptionCardActive,
+                    ]}
+                    onPress={() => setEditInvoiceResetCycle('monthly')}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.cycleOptionHeader}>
+                      <Ionicons
+                        name={editInvoiceResetCycle === 'monthly' ? 'radio-button-on' : 'radio-button-off'}
+                        size={16}
+                        color={editInvoiceResetCycle === 'monthly' ? colors.accent : colors.textMuted}
+                      />
+                      <Text
+                        style={[
+                          styles.cycleOptionTitle,
+                          editInvoiceResetCycle === 'monthly' && styles.cycleOptionTitleActive,
+                        ]}
+                      >
+                        Monthly
+                      </Text>
+                    </View>
+                    <Text style={styles.cycleOptionDesc}>
+                      Resets each month (e.g. {editInvoicePrefix || 'RTS'}-October-001)
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.cycleOptionCard,
+                      editInvoiceResetCycle === 'yearly' && styles.cycleOptionCardActive,
+                    ]}
+                    onPress={() => setEditInvoiceResetCycle('yearly')}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.cycleOptionHeader}>
+                      <Ionicons
+                        name={editInvoiceResetCycle === 'yearly' ? 'radio-button-on' : 'radio-button-off'}
+                        size={16}
+                        color={editInvoiceResetCycle === 'yearly' ? colors.accent : colors.textMuted}
+                      />
+                      <Text
+                        style={[
+                          styles.cycleOptionTitle,
+                          editInvoiceResetCycle === 'yearly' && styles.cycleOptionTitleActive,
+                        ]}
+                      >
+                        Yearly
+                      </Text>
+                    </View>
+                    <Text style={styles.cycleOptionDesc}>
+                      Continuous across all months (e.g. {editInvoicePrefix || 'RTS'}-001)
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              {/* Plan & Quota History Section (Inside Shop Profile) */}
+              <View style={[styles.subHistoryContainer, { marginTop: 16 }]}>
+                <View style={styles.subHistoryHeader}>
+                  <Ionicons name="time-outline" size={16} color={colors.accent} />
+                  <Text style={styles.subHistoryTitle}>Plan & Quota History</Text>
+                </View>
+
+                {/* Current Active Plan / Starter Quota Row */}
+                <View style={styles.subHistoryItem}>
+                  <View style={styles.subHistoryItemLeft}>
+                    <View style={styles.subHistoryIconBox}>
+                      <Ionicons
+                        name={subscriptionStatus.isPaidActive ? 'ribbon' : 'rocket-outline'}
+                        size={18}
+                        color={subscriptionStatus.isPaidActive ? '#10B981' : colors.accent}
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <Text style={styles.subHistoryPlanName}>
+                          {subscriptionStatus.isPaidActive
+                            ? (subscriptionStatus.activePlanName || 'Pro Plan')
+                            : 'Starter Quota'}
+                        </Text>
+                        <View
+                          style={[
+                            styles.subHistoryStatusBadge,
+                            subscriptionStatus.isPaidActive
+                              ? styles.subHistoryBadgeActive
+                              : subscriptionStatus.billLimitReached
+                              ? styles.subHistoryBadgeExpired
+                              : styles.subHistoryBadgeStarter,
+                          ]}
+                        >
+                          <Text style={styles.subHistoryStatusText}>
+                            {subscriptionStatus.isPaidActive
+                              ? 'ACTIVE'
+                              : subscriptionStatus.billLimitReached
+                              ? '100 / 100 USED'
+                              : 'STARTER'}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={styles.subHistoryDetail}>
+                        {subscriptionStatus.isPaidActive
+                          ? `₹${subscriptionStatus.activePlanPrice} • ${subscriptionStatus.daysRemaining} days remaining • ${subscriptionStatus.totalBillsCreated} bills created`
+                          : `Usage: ${subscriptionStatus.totalBillsCreated} / 100 bills generated (${subscriptionStatus.billsRemaining} remaining)`}
+                      </Text>
+                      {subscriptionStatus.isPaidActive && Boolean(subscriptionStatus.subscriptionEndDateFormatted) && (
+                        <Text style={styles.subHistoryPeriod}>
+                          Valid until: {subscriptionStatus.subscriptionEndDateFormatted}
+                        </Text>
+                      )}
+                    </View>
+                  </View>
+                </View>
+
+                {/* Past Subscription Records from Supabase */}
+                {subscriptionHistory
+                  .filter((rec) => rec.plan !== 'free' || (rec.amount && rec.amount > 0))
+                  .map((rec) => (
+                    <View key={rec.id} style={styles.subHistoryItem}>
+                      <View style={styles.subHistoryItemLeft}>
+                        <View style={styles.subHistoryIconBox}>
+                          <Ionicons name="receipt-outline" size={18} color={colors.textSecondary} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={styles.subHistoryPlanName}>
+                              {rec.interval || (rec.plan === 'pro' ? 'Pro Plan' : 'Subscription')}
+                            </Text>
+                            <View
+                              style={[
+                                styles.subHistoryStatusBadge,
+                                rec.status === 'active'
+                                  ? styles.subHistoryBadgeActive
+                                  : styles.subHistoryBadgeExpired,
+                              ]}
+                            >
+                              <Text style={styles.subHistoryStatusText}>{rec.status.toUpperCase()}</Text>
+                            </View>
+                          </View>
+                          <Text style={styles.subHistoryDetail}>
+                            {`₹${rec.amount}`} • {rec.createdAt ? new Date(rec.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Subscribed'}
+                          </Text>
+                          {Boolean(rec.paymentReference) && (
+                            <Text style={styles.subHistoryRefText}>Ref: {rec.paymentReference}</Text>
+                          )}
+                        </View>
+                      </View>
+                    </View>
+                  ))}
               </View>
             </ScrollView>
 
@@ -1815,7 +2154,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
         onRemoveUser={async () => {
           if (!selectedMemberForSheet) return;
           await removeMember(selectedMemberForSheet.id);
-          flash(`${selectedMemberForSheet.fullName} removed`);
+          flash(`${selectedMemberForSheet.fullName} deactivated (records preserved)`);
           setSelectedMemberForSheet(null);
         }}
       />
@@ -1931,7 +2270,9 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                 disabled={isDeletingShop}
                 style={styles.cancelDeleteBtn}
               >
-                <Text style={styles.cancelDeleteText}>Keep Account</Text>
+                <Text style={styles.cancelDeleteText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                  Keep Account
+                </Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -1942,7 +2283,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                   (!selectedDeleteReason || isDeletingShop) && styles.confirmDeleteBtnDisabled,
                 ]}
               >
-                <Text style={styles.confirmDeleteText}>
+                <Text style={styles.confirmDeleteText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
                   {isDeletingShop ? 'Deleting...' : 'Permanently Delete'}
                 </Text>
               </TouchableOpacity>
@@ -2439,6 +2780,117 @@ const createStyles = (theme: Theme) => {
     letterSpacing: 0.8,
     textTransform: 'uppercase',
   },
+  sectionSubHeading: {
+    fontFamily: typography.fonts.body,
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginTop: 1,
+  },
+  emptyStaffNotice: {
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  emptyStaffText: {
+    fontFamily: typography.fonts.body,
+    fontSize: 12,
+    color: colors.textSecondary,
+  },
+  inactiveStaffBox: {
+    marginTop: 10,
+    backgroundColor: colors.surfaceSecondary || colors.surface,
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.divider,
+    gap: 8,
+  },
+  inactiveStaffHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  inactiveStaffTitle: {
+    fontFamily: typography.fonts.heading,
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+  },
+  inactiveStaffNotice: {
+    fontFamily: typography.fonts.body,
+    fontSize: 11,
+    color: colors.textMuted,
+    lineHeight: 15,
+  },
+  deactivatedSubText: {
+    fontFamily: typography.fonts.body,
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  supportTemplateCard: {
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1.5,
+    borderColor: '#FDBA74',
+    borderRadius: 16,
+    padding: 16,
+    gap: 10,
+    marginTop: 10,
+  },
+  supportTemplateHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  supportTemplateHeading: {
+    fontFamily: typography.fonts.heading,
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#9A3412',
+  },
+  supportTemplateText: {
+    fontFamily: typography.fonts.body,
+    fontSize: 13,
+    color: '#C2410C',
+    lineHeight: 18,
+  },
+  supportBtnRow: {
+    flexDirection: 'column',
+    gap: 8,
+    marginTop: 4,
+  },
+  supportCallBtn: {
+    backgroundColor: '#EA580C',
+    borderRadius: radii.md,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  supportCallBtnText: {
+    color: '#FFFFFF',
+    fontFamily: typography.fonts.heading,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  supportWaBtn: {
+    backgroundColor: '#059669',
+    borderRadius: radii.md,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  supportWaBtnText: {
+    color: '#FFFFFF',
+    fontFamily: typography.fonts.heading,
+    fontSize: 13,
+    fontWeight: '700',
+  },
   addUserBtn: {
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -2683,7 +3135,7 @@ const createStyles = (theme: Theme) => {
   },
   printerTestBtn: {
     flex: 1.4,
-    backgroundColor: colors.accent900,
+    backgroundColor: '#111111',
     paddingVertical: 8,
     paddingHorizontal: 10,
     borderRadius: radii.sm,
@@ -2743,7 +3195,7 @@ const createStyles = (theme: Theme) => {
     lineHeight: 16,
   },
   scanPrinterBtn: {
-    backgroundColor: colors.accent900,
+    backgroundColor: '#111111',
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: radii.md,
@@ -2847,13 +3299,13 @@ const createStyles = (theme: Theme) => {
     marginTop: 1,
   },
   backupNowBtn: {
-    backgroundColor: colors.accent900,
+    backgroundColor: '#111111',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: radii.sm,
   },
   backupNowText: {
-    color: colors.bg,
+    color: '#FFFFFF',
     fontSize: 11,
     fontFamily: typography.fonts.heading,
   },
@@ -2877,15 +3329,19 @@ const createStyles = (theme: Theme) => {
     gap: 10,
   },
   legalTitle: {
-    flex: 1,
-    fontSize: typography.sizes.base,
+    fontSize: 14,
     color: colors.text,
-    fontFamily: typography.fonts.body,
+    fontFamily: typography.fonts.heading,
+    fontWeight: '700',
+    flexShrink: 0,
   },
   legalMeta: {
-    fontSize: typography.sizes.sub,
+    flex: 1,
+    textAlign: 'right',
+    fontSize: 12,
     color: colors.textMuted,
     fontFamily: typography.fonts.body,
+    flexShrink: 1,
   },
   legalArrow: {
     fontSize: 18,
@@ -3035,7 +3491,7 @@ const createStyles = (theme: Theme) => {
   },
   modalCloseActionButton: {
     minHeight: 46,
-    backgroundColor: colors.accent900,
+    backgroundColor: '#111111',
   },
 
   // User phone text
@@ -3117,7 +3573,7 @@ const createStyles = (theme: Theme) => {
     paddingHorizontal: 18,
     paddingVertical: 8,
     borderRadius: radii.sm,
-    backgroundColor: colors.accent900,
+    backgroundColor: '#111111',
   },
 
   // Edit Shop Modal
@@ -3274,7 +3730,7 @@ const createStyles = (theme: Theme) => {
   saveEditBtn: {
     minHeight: 42,
     paddingHorizontal: 20,
-    backgroundColor: colors.accent900,
+    backgroundColor: '#111111',
   },
 
   // Staff Role Card (Supervisor & Biller)
@@ -3464,6 +3920,8 @@ const createStyles = (theme: Theme) => {
     borderWidth: 1,
     borderColor: colors.divider,
     paddingVertical: 12,
+    paddingHorizontal: 8,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -3472,12 +3930,15 @@ const createStyles = (theme: Theme) => {
     fontSize: typography.sizes.sm,
     color: colors.text,
     fontWeight: '600',
+    textAlign: 'center',
   },
   confirmDeleteBtn: {
     flex: 1.3,
     backgroundColor: '#DC2626',
     borderRadius: radii.md,
     paddingVertical: 12,
+    paddingHorizontal: 8,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -3726,5 +4187,169 @@ const createStyles = (theme: Theme) => {
     fontWeight: '700',
     fontFamily: typography.fonts.heading,
   },
+  invoicePrefixChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.surfaceElevated,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    alignSelf: 'flex-start',
+  },
+  invoicePrefixChipText: {
+    fontSize: 11,
+    fontFamily: typography.fonts.heading,
+    fontWeight: '700',
+    color: '#FF5F00',
+  },
+  autoPrefixBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: colors.surfaceElevated,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  autoPrefixText: {
+    fontSize: 11,
+    fontFamily: typography.fonts.heading,
+    fontWeight: '700',
+    color: colors.accent,
+  },
+  cycleToggleContainer: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  cycleOptionCard: {
+    flex: 1,
+    backgroundColor: colors.inputBg,
+    borderWidth: 1.5,
+    borderColor: colors.inputBorder,
+    borderRadius: radii.md,
+    padding: 10,
+    gap: 4,
+  },
+  cycleOptionCardActive: {
+    borderColor: colors.accent,
+    backgroundColor: colors.surfaceElevated,
+  },
+  cycleOptionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  cycleOptionTitle: {
+    fontSize: 13,
+    fontFamily: typography.fonts.heading,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  cycleOptionTitleActive: {
+    color: colors.text,
+  },
+  cycleOptionDesc: {
+    fontSize: 11,
+    fontFamily: typography.fonts.body,
+    color: colors.textMuted,
+    lineHeight: 14,
+  },
+  subHistoryContainer: {
+    backgroundColor: colors.surface,
+    borderRadius: 18,
+    padding: 14,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    ...shadows.card,
+  },
+  subHistoryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingBottom: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  subHistoryTitle: {
+    fontSize: 13,
+    fontFamily: typography.fonts.heading,
+    fontWeight: '700',
+    color: colors.text,
+    letterSpacing: 0.2,
+  },
+  subHistoryItem: {
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radii.md,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  subHistoryItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  subHistoryIconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: radii.sm,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  subHistoryPlanName: {
+    fontSize: 13,
+    fontFamily: typography.fonts.heading,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  subHistoryStatusBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: radii.pill,
+  },
+  subHistoryBadgeActive: {
+    backgroundColor: '#059669',
+  },
+  subHistoryBadgeStarter: {
+    backgroundColor: '#2563EB',
+  },
+  subHistoryBadgeExpired: {
+    backgroundColor: '#DC2626',
+  },
+  subHistoryStatusText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontFamily: typography.fonts.heading,
+    fontWeight: '800',
+  },
+  subHistoryDetail: {
+    fontSize: 12,
+    fontFamily: typography.fonts.body,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  subHistoryPeriod: {
+    fontSize: 11,
+    fontFamily: typography.fonts.body,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  subHistoryRefText: {
+    fontSize: 10,
+    fontFamily: typography.fonts.body,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+
   });
 };

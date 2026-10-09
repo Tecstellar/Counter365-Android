@@ -6,12 +6,14 @@ import {
   ScrollView,
   StyleSheet,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { colors, typography, radii, spacing, shadows, useTheme, Theme } from '../../theme';
 import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '../../components/common/AppButton';
 import { SegmentedControl } from '../../components/common/SegmentedControl';
 import { PaymentModeIcon } from '../../components/common/PaymentModeIcon';
+import { ReportPreviewModal } from '../../components/modals/ReportPreviewModal';
 import { useShop } from '../../context/ShopContext';
 import { useCart } from '../../context/CartContext';
 import { reportService } from '../../services/reportService';
@@ -23,15 +25,20 @@ import { formatRupee } from '../../lib/money';
 
 interface MonthlyReportsScreenProps {
   onBackToHome: () => void;
+  onNavigateToUpgrade?: () => void;
 }
 
 export const MonthlyReportsScreen: React.FC<MonthlyReportsScreenProps> = ({
   onBackToHome,
+  onNavigateToUpgrade,
 }) => {
   const { theme, isDark } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const { shop } = useShop();
+  const { shop, subscriptionStatus } = useShop();
   const { flash } = useCart();
+
+  const isQuotaExceeded = !!(subscriptionStatus?.billLimitReached && !subscriptionStatus?.isPaidActive);
+  const [isPreviewModalVisible, setIsPreviewModalVisible] = useState(false);
 
   const now = new Date();
   const [repMonth, setRepMonth] = useState(now.getMonth());
@@ -82,6 +89,17 @@ export const MonthlyReportsScreen: React.FC<MonthlyReportsScreenProps> = ({
   const [isExportingExcel, setIsExportingExcel] = useState(false);
 
   const handleExportPdf = async () => {
+    if (isQuotaExceeded) {
+      Alert.alert(
+        'Quota Reached (100 Bills)',
+        'You have reached the free tier limit of 100 bills. Upgrade to Pro to export PDF and Excel reports.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Upgrade to Pro', onPress: onNavigateToUpgrade },
+        ]
+      );
+      return;
+    }
     setIsExportingPdf(true);
     try {
       const res = await exportService.exportMonthlyReportPdf(reportData, shop);
@@ -98,6 +116,17 @@ export const MonthlyReportsScreen: React.FC<MonthlyReportsScreenProps> = ({
   };
 
   const handleExportExcel = async () => {
+    if (isQuotaExceeded) {
+      Alert.alert(
+        'Quota Reached (100 Bills)',
+        'You have reached the free tier limit of 100 bills. Upgrade to Pro to export PDF and Excel reports.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Upgrade to Pro', onPress: onNavigateToUpgrade },
+        ]
+      );
+      return;
+    }
     setIsExportingExcel(true);
     try {
       const res = await exportService.exportMonthlyReportExcel(reportData, shop);
@@ -114,6 +143,17 @@ export const MonthlyReportsScreen: React.FC<MonthlyReportsScreenProps> = ({
   };
 
   const handleShareWhatsApp = async () => {
+    if (isQuotaExceeded) {
+      Alert.alert(
+        'Quota Reached (100 Bills)',
+        'You have reached the free tier limit of 100 bills. Upgrade to Pro to share export reports.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Upgrade to Pro', onPress: onNavigateToUpgrade },
+        ]
+      );
+      return;
+    }
     const success = await exportService.shareMonthlyReportWhatsApp(reportData, shop, shop.phone);
     if (success) {
       flash(`${reportData.monthShort} report sent on WhatsApp`);
@@ -381,11 +421,37 @@ export const MonthlyReportsScreen: React.FC<MonthlyReportsScreenProps> = ({
             Summary, day-wise table and top items — {reportData.days.length} days of verified financial records
           </Text>
 
+          {isQuotaExceeded && (
+            <View style={styles.quotaWarningBox}>
+              <Ionicons name="lock-closed" size={16} color="#EA580C" />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.quotaWarningTitle}>Free Plan 100-Bill Quota Reached</Text>
+                <Text style={styles.quotaWarningText}>
+                  Reports viewing is free, but PDF/Excel exports require an active Pro subscription.
+                </Text>
+              </View>
+              {onNavigateToUpgrade && (
+                <TouchableOpacity onPress={onNavigateToUpgrade} style={styles.upgradeInlineBtn} activeOpacity={0.8}>
+                  <Text style={styles.upgradeInlineBtnText}>Upgrade</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          <TouchableOpacity
+            onPress={() => setIsPreviewModalVisible(true)}
+            style={styles.previewReportBtn}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="eye-outline" size={16} color={colors.accent} style={{ marginRight: 6 }} />
+            <Text style={styles.previewReportBtnText}>Preview Report Before Export</Text>
+          </TouchableOpacity>
+
           <View style={styles.exportBtnRow}>
             <TouchableOpacity
               onPress={handleExportPdf}
               disabled={isExportingPdf}
-              style={[styles.exportActionBtn, styles.pdfBtn]}
+              style={[styles.exportActionBtn, styles.pdfBtn, isQuotaExceeded && styles.disabledActionBtn]}
               activeOpacity={0.8}
             >
               {isExportingPdf ? (
@@ -401,7 +467,7 @@ export const MonthlyReportsScreen: React.FC<MonthlyReportsScreenProps> = ({
             <TouchableOpacity
               onPress={handleExportExcel}
               disabled={isExportingExcel}
-              style={[styles.exportActionBtn, styles.xlsBtn]}
+              style={[styles.exportActionBtn, styles.xlsBtn, isQuotaExceeded && styles.disabledActionBtn]}
               activeOpacity={0.8}
             >
               {isExportingExcel ? (
@@ -423,6 +489,30 @@ export const MonthlyReportsScreen: React.FC<MonthlyReportsScreenProps> = ({
           />
         </View>
       </ScrollView>
+
+      {/* Report Preview Modal */}
+      <ReportPreviewModal
+        visible={isPreviewModalVisible}
+        onClose={() => setIsPreviewModalVisible(false)}
+        reportData={reportData}
+        shop={shop}
+        isExportingPdf={isExportingPdf}
+        isExportingExcel={isExportingExcel}
+        onConfirmPdf={() => {
+          setIsPreviewModalVisible(false);
+          handleExportPdf();
+        }}
+        onConfirmExcel={() => {
+          setIsPreviewModalVisible(false);
+          handleExportExcel();
+        }}
+        onShareWhatsApp={() => {
+          setIsPreviewModalVisible(false);
+          handleShareWhatsApp();
+        }}
+        isQuotaExceeded={isQuotaExceeded}
+        onUpgradePress={onNavigateToUpgrade}
+      />
     </View>
   );
 };
@@ -913,6 +1003,62 @@ const createStyles = (theme: Theme) => {
     waExportBtn: {
       minHeight: 48,
       borderRadius: 16,
+    },
+    quotaWarningBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.isDark ? '#431407' : '#FFF7ED',
+      borderWidth: 1,
+      borderColor: theme.isDark ? '#7C2D12' : '#FED7AA',
+      borderRadius: 14,
+      padding: 12,
+      gap: 10,
+      marginTop: 4,
+    },
+    quotaWarningTitle: {
+      fontSize: 12,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '700',
+      color: theme.isDark ? '#FDBA74' : '#C2410C',
+    },
+    quotaWarningText: {
+      fontSize: 11,
+      fontFamily: typography.fonts.body,
+      color: theme.isDark ? '#FED7AA' : '#9A3412',
+      lineHeight: 15,
+      marginTop: 2,
+    },
+    upgradeInlineBtn: {
+      backgroundColor: '#EA580C',
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 8,
+    },
+    upgradeInlineBtnText: {
+      color: '#FFFFFF',
+      fontSize: 11,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '800',
+    },
+    previewReportBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 14,
+      paddingVertical: 12,
+      marginTop: 6,
+    },
+    previewReportBtnText: {
+      fontSize: 13,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '700',
+      color: colors.accent,
+    },
+    disabledActionBtn: {
+      opacity: 0.65,
     },
   });
 };

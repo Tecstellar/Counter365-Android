@@ -503,40 +503,50 @@ export const exportService = {
         </tr>
       `).join('');
 
+      const isFullPaid = bill.paymentMode !== 'Pending' && bill.paymentMode !== 'Partial Pay';
+      const isPartial = bill.paymentMode === 'Partial Pay';
+      const isPending = bill.paymentMode === 'Pending';
+
       let paymentDetailsHtml = `
-        <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 0;">
-          <span style="font-size: 12px; color: #64748b; font-weight: 500;">Payment Mode:</span>
-          <span style="font-size: 12px; font-weight: 700; color: #0f172a; background: #e2e8f0; padding: 2px 8px; border-radius: 4px;">${bill.paymentMode}</span>
+        <div style="background: #FFF7ED; border: 1px solid #FFEDD5; border-radius: 8px; padding: 12px 14px; margin-top: 14px; display: flex; align-items: center; justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="width: 26px; height: 26px; border-radius: 13px; background: #EA580C; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 800;">✓</div>
+            <div style="width: 1px; height: 26px; background: #FED7AA;"></div>
+            <div>
+              <div style="font-size: 11px; font-weight: 800; color: #EA580C; letter-spacing: 0.5px; text-transform: uppercase;">
+                ${isFullPaid ? 'PAID' : isPartial ? 'PARTIALLY PAID' : 'PENDING'}
+              </div>
+              <div style="font-size: 12.5px; font-weight: 600; color: #1E293B;">
+                Paid via ${bill.paymentMode}
+              </div>
+            </div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 16px; font-weight: 800; color: #0F172A;">
+              ${formatRupee(isFullPaid ? bill.totalAmount : isPartial ? (bill.paidAmount || 0) : 0)}
+            </div>
+          </div>
         </div>
       `;
 
-      if (bill.paymentMode === 'Partial Pay') {
+      if (isPartial) {
         paymentDetailsHtml += `
-          <div style="display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px;">
-            <span style="color: #15803d; font-weight: 600;">Amount Paid:</span>
-            <span style="font-weight: 700; color: #15803d;">${formatRupee(bill.paidAmount || 0)}</span>
-          </div>
-          <div style="display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px;">
-            <span style="color: #b91c1c; font-weight: 600;">Balance Due:</span>
-            <span style="font-weight: 700; color: #b91c1c;">${formatRupee(bill.pendingAmount || 0)}</span>
+          <div style="display: flex; justify-content: space-between; margin-top: 6px; padding: 6px 12px; background: #FEF2F2; border-radius: 6px; font-size: 12px;">
+            <span style="color: #DC2626; font-weight: 600;">Balance Due:</span>
+            <strong style="color: #DC2626;">${formatRupee(bill.pendingAmount || 0)}</strong>
           </div>
         `;
-      } else if (bill.paymentMode === 'Cash + GPay') {
+        if (shop.upiId) {
+          paymentDetailsHtml += `
+            <div style="margin-top: 6px; font-size: 11px; color: #475569; text-align: center; background: #F8FAFC; padding: 6px; border-radius: 6px; border: 1px dashed #CBD5E1;">
+              📲 Pay Balance Due via UPI: <strong style="color: #0F172A;">${shop.upiId}</strong>
+            </div>
+          `;
+        }
+      } else if (isPending && shop.upiId) {
         paymentDetailsHtml += `
-          <div style="display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px;">
-            <span style="color: #475569;">Cash:</span>
-            <span style="font-weight: 600;">${formatRupee(bill.cashAmount || 0)}</span>
-          </div>
-          <div style="display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px;">
-            <span style="color: #475569;">GPay / UPI:</span>
-            <span style="font-weight: 600;">${formatRupee(bill.gpayAmount || 0)}</span>
-          </div>
-        `;
-      } else if (bill.paymentMode === 'Pending') {
-        paymentDetailsHtml += `
-          <div style="display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px;">
-            <span style="color: #b91c1c; font-weight: 600;">Pending Due:</span>
-            <span style="font-weight: 700; color: #b91c1c;">${formatRupee(bill.pendingAmount || bill.totalAmount)}</span>
+          <div style="margin-top: 6px; font-size: 11px; color: #475569; text-align: center; background: #F8FAFC; padding: 6px; border-radius: 6px; border: 1px dashed #CBD5E1;">
+            📲 Pay Due via UPI: <strong style="color: #0F172A;">${shop.upiId}</strong>
           </div>
         `;
       }
@@ -552,7 +562,7 @@ export const exportService = {
           <link href="https://fonts.googleapis.com/css2?family=Jost:wght@500;600;700;800&family=Lexend:wght@300..800&family=Noto+Sans+Tamil:wght@400;600;700&display=swap" rel="stylesheet">
           <style>
             @page {
-              margin: 8mm;
+              margin: 6mm;
               size: auto;
             }
             * {
@@ -564,155 +574,295 @@ export const exportService = {
               color: #0f172a;
               background-color: #f8fafc;
               margin: 0;
-              padding: 16px;
+              padding: 12px;
               display: flex;
               justify-content: center;
               align-items: flex-start;
-            }
-            .shop-name, .receipt-title {
-              font-family: 'Jost', 'Noto Sans Tamil', system-ui, sans-serif;
             }
             .receipt-card {
               width: 100%;
               max-width: 440px;
               background: #ffffff;
-              border: 1px solid #cbd5e1;
+              border: 1px solid #e2e8f0;
               border-radius: 12px;
-              padding: 22px 20px;
-              box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+              padding: 24px 20px;
+              box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
             }
-            .shop-header {
-              text-align: center;
-              padding-bottom: 14px;
-              border-bottom: 2px dashed #0f172a;
-            }
-            .shop-name {
-              font-size: 21px;
-              font-weight: 800;
-              color: #0f172a;
-              letter-spacing: 0.5px;
-              margin: 0 0 4px 0;
-              text-transform: uppercase;
-            }
-            .shop-meta {
-              font-size: 11px;
-              color: #64748b;
-              line-height: 1.4;
-              margin: 0;
-            }
-            .meta-box {
+            .top-bar {
               display: flex;
               justify-content: space-between;
-              padding: 10px 0;
-              border-bottom: 1px dashed #cbd5e1;
-              font-size: 12px;
+              align-items: center;
+              margin-bottom: 20px;
             }
-            .meta-col {
-              display: flex;
-              flex-direction: column;
-              gap: 2px;
-            }
-            .meta-label {
-              font-size: 10px;
+            .merchant-logo-box {
+              background-color: #E2E8F0;
+              border-radius: 6px;
+              padding: 8px 16px;
+              font-size: 11px;
               font-weight: 700;
-              color: #94a3b8;
+              letter-spacing: 0.5px;
+              color: #475569;
+              text-transform: uppercase;
+              display: inline-flex;
+              align-items: center;
+              justify-content: center;
+            }
+            .shop-logo-img {
+              max-height: 38px;
+              border-radius: 6px;
+              object-fit: contain;
+            }
+            .receipt-title-wrap {
+              text-align: right;
+            }
+            .receipt-title {
+              font-family: 'Jost', system-ui, sans-serif;
+              font-size: 15px;
+              font-weight: 800;
+              letter-spacing: 1px;
+              color: #0f172a;
+              margin: 0;
               text-transform: uppercase;
             }
-            .meta-val {
-              font-weight: 700;
+            .receipt-title-underline {
+              width: 32px;
+              height: 2.5px;
+              background-color: #F97316;
+              margin-top: 3px;
+              margin-left: auto;
+            }
+            .shop-info-block {
+              margin-bottom: 16px;
+            }
+            .shop-name {
+              font-family: 'Jost', 'Noto Sans Tamil', system-ui, sans-serif;
+              font-size: 22px;
+              font-weight: 800;
               color: #0f172a;
+              margin: 0 0 6px 0;
+            }
+            .shop-meta-line {
+              font-size: 12px;
+              color: #475569;
+              margin: 3px 0;
+              display: flex;
+              align-items: center;
+              gap: 6px;
+            }
+            .h-divider {
+              height: 1px;
+              background-color: #E5E7EB;
+              margin: 14px 0;
+            }
+            .meta-columns {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+            }
+            .meta-col-left {
+              flex: 1;
+            }
+            .meta-v-divider {
+              width: 1px;
+              height: 36px;
+              background-color: #E5E7EB;
+              margin: 0 16px;
+            }
+            .meta-col-right {
+              flex: 1;
+            }
+            .meta-label-small {
+              font-size: 10px;
+              font-weight: 700;
+              color: #6B7280;
+              text-transform: uppercase;
+              letter-spacing: 0.5px;
+              margin-bottom: 3px;
+              display: flex;
+              align-items: center;
+              gap: 4px;
+            }
+            .meta-val-large {
+              font-size: 15px;
+              font-weight: 800;
+              color: #0F172A;
+            }
+            .billed-to-block {
+              margin-top: 4px;
+            }
+            .customer-name-large {
+              font-size: 14px;
+              font-weight: 700;
+              color: #0F172A;
+              margin-top: 2px;
+            }
+            .customer-phone-sub {
+              font-size: 12px;
+              color: #64748B;
+              margin-top: 1px;
             }
             .items-table {
               width: 100%;
               border-collapse: collapse;
-              margin: 12px 0;
+              margin: 16px 0 6px 0;
             }
             .items-table th {
-              background-color: #f8fafc;
-              padding: 6px;
-              font-size: 11px;
+              background-color: #F3F4F6;
+              padding: 8px 10px;
+              font-size: 10.5px;
               font-weight: 700;
-              color: #475569;
+              color: #6B7280;
               text-transform: uppercase;
-              border-bottom: 1px solid #cbd5e1;
+              letter-spacing: 0.5px;
             }
-            .totals-section {
-              border-top: 2px solid #0f172a;
-              padding-top: 10px;
-              margin-top: 8px;
-            }
-            .tot-row {
-              display: flex;
-              justify-content: space-between;
-              padding: 3px 0;
+            .items-table td {
+              padding: 9px 10px;
               font-size: 13px;
+              border-bottom: 1px solid #F1F5F9;
+              color: #0F172A;
+            }
+            .subtotal-row {
+              display: flex;
+              justify-content: flex-end;
+              gap: 32px;
+              padding: 10px 10px 4px 10px;
+              font-size: 13px;
+            }
+            .subtotal-label {
+              font-weight: 600;
               color: #475569;
             }
-            .grand-tot-row {
+            .subtotal-val {
+              font-weight: 700;
+              color: #0F172A;
+            }
+            .grand-total-bar {
               display: flex;
               justify-content: space-between;
-              padding: 8px 0;
-              margin-top: 6px;
-              border-top: 1px dashed #cbd5e1;
-              border-bottom: 2px solid #0f172a;
-              font-size: 18px;
+              align-items: center;
+              padding: 12px 14px;
+              margin-top: 10px;
+              background-color: #F8FAFC;
+              border-top: 3px solid #F97316;
+              border-bottom: 1px solid #E2E8F0;
+            }
+            .grand-total-label {
+              font-family: 'Jost', system-ui, sans-serif;
+              font-size: 14px;
               font-weight: 800;
-              color: #0f172a;
+              color: #0F172A;
+              letter-spacing: 0.5px;
+              text-transform: uppercase;
             }
-            .payment-box {
-              background-color: #f8fafc;
-              border: 1px solid #e2e8f0;
-              border-radius: 8px;
-              padding: 10px;
-              margin-top: 12px;
+            .grand-total-val {
+              font-size: 20px;
+              font-weight: 800;
+              color: #0F172A;
             }
-            .footer {
+            .thank-you-row {
+              display: flex;
+              align-items: center;
+              gap: 12px;
+              margin: 22px 0 14px 0;
+            }
+            .thank-you-line {
+              flex: 1;
+              height: 1px;
+              background-color: #E2E8F0;
+            }
+            .thank-you-text {
+              font-size: 13px;
+              font-weight: 700;
+              color: #0F172A;
+            }
+            .footer-branding {
               text-align: center;
-              margin-top: 16px;
-              padding-top: 12px;
-              border-top: 1px dashed #cbd5e1;
+              margin-top: 10px;
+            }
+            .counter-brand-logo {
+              display: inline-flex;
+              align-items: center;
+              gap: 5px;
+              font-size: 14px;
+              font-weight: 800;
+              color: #0F172A;
+            }
+            .brand-badge {
+              width: 18px;
+              height: 18px;
+              border-radius: 9px;
+              background-color: #0F172A;
+              color: #FFFFFF;
               font-size: 11px;
-              color: #94a3b8;
-              line-height: 1.4;
+              font-weight: 900;
+              display: inline-flex;
+              align-items: center;
+              justify-content: center;
+            }
+            .footer-receipt-note {
+              font-size: 10px;
+              color: #94A3B8;
+              margin-top: 3px;
             }
           </style>
         </head>
         <body>
           <div class="receipt-card">
-            <div class="shop-header">
-              <h1 class="shop-name">${shop.name}</h1>
-              <p class="shop-meta">${shop.address ? `${shop.address}, ` : ''}${shop.city ? `${shop.city}, ` : ''}${shop.state}</p>
-              <p class="shop-meta">Phone: +91 ${shop.phone}${shop.gstEnabled && shop.gstNumber ? ` · GSTIN: ${shop.gstNumber}` : ''}</p>
+            <!-- 1. Top Bar: Merchant Logo (left) | RECEIPT (right) -->
+            <div class="top-bar">
+              <div>
+                ${shop.logoUrl ? `
+                  <img src="${shop.logoUrl}" class="shop-logo-img" alt="Logo" />
+                ` : `
+                  <div class="merchant-logo-box">MERCHANT LOGO</div>
+                `}
+              </div>
+              <div class="receipt-title-wrap">
+                <h2 class="receipt-title">RECEIPT</h2>
+                <div class="receipt-title-underline"></div>
+              </div>
             </div>
 
-            <div class="meta-box">
-              <div class="meta-col">
-                <span class="meta-label">Bill Number</span>
-                <span class="meta-val">#${bill.billNumber}</span>
-                ${bill.tableNumber ? `<span style="color: #ea580c; font-weight: 700; margin-top: 2px;">Table ${bill.tableNumber}</span>` : ''}
+            <!-- 2. Shop Details -->
+            <div class="shop-info-block">
+              <h1 class="shop-name">${shop.name}</h1>
+              <div class="shop-meta-line">📍 ${shop.address ? `${shop.address}, ` : ''}${shop.city ? `${shop.city}` : ''}</div>
+              <div class="shop-meta-line">📞 +91 ${shop.phone}${shop.gstEnabled && shop.gstNumber ? ` · GSTIN: ${shop.gstNumber}` : ''}</div>
+            </div>
+
+            <div class="h-divider"></div>
+
+            <!-- 3. Metadata: Bill Number & Date/Time -->
+            <div class="meta-columns">
+              <div class="meta-col-left">
+                <div class="meta-label-small">BILL NUMBER</div>
+                <div class="meta-val-large">Bill #${bill.billNumber}</div>
+                ${bill.tableNumber ? `<div style="font-size: 11px; color: #EA580C; font-weight: 700; margin-top: 2px;">Table ${bill.tableNumber}</div>` : ''}
               </div>
-              <div class="meta-col" style="text-align: right;">
-                <span class="meta-label">Date & Time</span>
-                <span class="meta-val">${dateStr}</span>
-                <span style="color: #64748b; font-size: 11px;">${timeStr}</span>
+              <div class="meta-v-divider"></div>
+              <div class="meta-col-right">
+                <div class="meta-label-small">📅 DATE & TIME</div>
+                <div class="meta-val-large" style="font-size: 13.5px;">${dateStr} · ${timeStr}</div>
               </div>
             </div>
 
             ${(bill.customerName || bill.customerPhone) ? `
-              <div style="padding: 6px 0; font-size: 12px; color: #334155; border-bottom: 1px dashed #e2e8f0;">
-                <span style="color: #94a3b8; font-size: 10px; font-weight: 700; text-transform: uppercase;">Customer: </span>
-                <strong>${bill.customerName || 'Customer'}</strong>
-                ${bill.customerPhone ? `<span style="color: #64748b;"> (+91 ${bill.customerPhone})</span>` : ''}
+              <div class="h-divider"></div>
+              <div class="billed-to-block">
+                <div class="meta-label-small">👤 BILLED TO</div>
+                <div class="customer-name-large">${bill.customerName || 'Customer'}</div>
+                ${bill.customerPhone ? `<div class="customer-phone-sub">+91 ${bill.customerPhone}</div>` : ''}
               </div>
             ` : ''}
 
+            <!-- 4. Items Table with gray header background -->
             <table class="items-table">
               <thead>
                 <tr>
-                  <th style="text-align: left;">Item</th>
-                  <th style="text-align: center; width: 45px;">Qty</th>
-                  <th style="text-align: right; width: 65px;">Rate</th>
-                  <th style="text-align: right; width: 75px;">Total</th>
+                  <th style="text-align: left; border-top-left-radius: 4px; border-bottom-left-radius: 4px;">ITEM</th>
+                  <th style="text-align: center; width: 45px;">QTY</th>
+                  <th style="text-align: right; width: 65px;">PRICE</th>
+                  <th style="text-align: right; width: 75px; border-top-right-radius: 4px; border-bottom-right-radius: 4px;">TOTAL</th>
                 </tr>
               </thead>
               <tbody>
@@ -720,30 +870,41 @@ export const exportService = {
               </tbody>
             </table>
 
-            <div class="totals-section">
-              <div class="tot-row">
-                <span>Subtotal</span>
-                <span style="font-weight: 600; color: #0f172a;">${formatRupee(bill.subtotal || bill.totalAmount)}</span>
+            <!-- 5. Subtotal -->
+            <div class="subtotal-row">
+              <span class="subtotal-label">Subtotal</span>
+              <span class="subtotal-val">${formatRupee(bill.subtotal || bill.totalAmount)}</span>
+            </div>
+            ${(bill.gstAmount || 0) > 0 ? `
+              <div class="subtotal-row" style="padding-top: 0;">
+                <span class="subtotal-label">GST ${shop.gstRate ? `(${shop.gstRate}%)` : ''}</span>
+                <span class="subtotal-val">${formatRupee(bill.gstAmount || 0)}</span>
               </div>
-              ${(bill.gstAmount || 0) > 0 ? `
-                <div class="tot-row">
-                  <span>GST ${shop.gstRate ? `(${shop.gstRate}%)` : ''}</span>
-                  <span style="font-weight: 600; color: #0f172a;">${formatRupee(bill.gstAmount || 0)}</span>
-                </div>
-              ` : ''}
-              <div class="grand-tot-row">
-                <span>GRAND TOTAL</span>
-                <span>${formatRupee(bill.totalAmount)}</span>
-              </div>
+            ` : ''}
+
+            <!-- 6. GRAND TOTAL Bar with orange top border -->
+            <div class="grand-total-bar">
+              <span class="grand-total-label">GRAND TOTAL</span>
+              <span class="grand-total-val">${formatRupee(bill.totalAmount)}</span>
             </div>
 
-            <div class="payment-box">
-              ${paymentDetailsHtml}
+            <!-- 7. Peach Payment Card with orange checkmark -->
+            ${paymentDetailsHtml}
+
+            <!-- 8. Footer -->
+            <div class="thank-you-row">
+              <div class="thank-you-line"></div>
+              <span class="thank-you-text">Thank you for your business!</span>
+              <div class="thank-you-line"></div>
             </div>
 
-            <div class="footer">
-              Thank you for dining with us!<br/>
-              Billed via <strong>Counter365</strong> • Official Receipt Copy
+            <div class="footer-branding">
+              <div class="counter-brand-logo">
+                <span class="brand-badge">C</span> Counter<span style="color: #FF5F00;">365</span>
+              </div>
+              <div class="footer-receipt-note">
+                Generated via Counter365 Point of Sale · Official Receipt Copy
+              </div>
             </div>
           </div>
         </body>

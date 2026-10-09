@@ -13,11 +13,13 @@ import { colors, typography, radii, spacing, shadows, useTheme, Theme } from '..
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { CollectDueModal } from '../../components/modals/CollectDueModal';
+import { CustomerHistoryModal } from '../../components/modals/CustomerHistoryModal';
 import { useShop } from '../../context/ShopContext';
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
 import { billingService } from '../../services/billingService';
-import { PendingPaymentRecord, PaymentMethod } from '../../types/models';
+import { contactService } from '../../services/contactService';
+import { PendingPaymentRecord, PaymentMethod, CustomerRecord } from '../../types/models';
 import { formatRupee } from '../../lib/money';
 
 interface PendingPaymentsScreenProps {
@@ -34,7 +36,7 @@ export const PendingPaymentsScreen: React.FC<PendingPaymentsScreenProps> = ({
   const { theme, isDark } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { shop } = useShop();
-  const { can } = useAuth();
+  const { can, profile, currentMember, currentRole } = useAuth();
   const { flash } = useCart();
 
   const [pendingList, setPendingList] = useState<PendingPaymentRecord[]>([]);
@@ -44,6 +46,37 @@ export const PendingPaymentsScreen: React.FC<PendingPaymentsScreenProps> = ({
   const [sortBy, setSortBy] = useState<'amount' | 'recent'>('amount');
   const [selectedPendingRecord, setSelectedPendingRecord] = useState<PendingPaymentRecord | null>(null);
   const [isCollectDueModalVisible, setIsCollectDueModalVisible] = useState(false);
+  const [historyCustomer, setHistoryCustomer] = useState<CustomerRecord | null>(null);
+  const [customerHistoryData, setCustomerHistoryData] = useState<{
+    totalBills: number;
+    totalSpent: number;
+    bills: any[];
+    favoriteItems: Array<{ name: string; quantity: number; amount: number }>;
+  } | null>(null);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+  const handleOpenCustomerProfile = async (item: PendingPaymentRecord) => {
+    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+    const dummyRecord: CustomerRecord = {
+      id: item.billId || item.id,
+      shopId: shop.id,
+      name: item.customerName,
+      phone: item.customerPhone ? item.customerPhone.replace(/[^0-9]/g, '') : null,
+      totalBills: item.bills?.length || 1,
+      pendingBalance: item.amountDue,
+      statusTag: 'Pending',
+    };
+    setHistoryCustomer(dummyRecord);
+    setIsLoadingHistory(true);
+    try {
+      const hist = await contactService.getCustomerHistory(shop.id, item.customerName, item.customerPhone);
+      setCustomerHistoryData(hist);
+    } catch (err) {
+      console.warn('Failed to load customer history:', err);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
 
   useEffect(() => {
     loadPending();
@@ -76,11 +109,17 @@ export const PendingPaymentsScreen: React.FC<PendingPaymentsScreenProps> = ({
     amountToCollect: number,
     paymentMode: PaymentMethod
   ) => {
+    const userMeta = {
+      name: profile?.fullName || currentMember?.fullName || currentRole,
+      role: currentRole,
+      id: profile?.id || currentMember?.id,
+    };
     const updated = await billingService.clearPendingPayment(
       shop.id,
       record.billId || record.id,
       amountToCollect,
-      paymentMode
+      paymentMode,
+      userMeta
     );
     setPendingList(updated);
 
@@ -403,21 +442,13 @@ export const PendingPaymentsScreen: React.FC<PendingPaymentsScreenProps> = ({
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      onPress={() => {
-                        try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-                        if (hasNoNumber) {
-                          flash('No contact profile linked — skipped');
-                        } else {
-                          onNavigateToContacts(item.customerName);
-                          flash(`Opened ${item.customerName} profile`);
-                        }
-                      }}
-                      style={[styles.quickIconBtn, styles.profileQuickBtn, hasNoNumber && styles.disabledQuickBtn]}
+                      onPress={() => handleOpenCustomerProfile(item)}
+                      style={[styles.quickIconBtn, styles.profileQuickBtn]}
                       activeOpacity={0.7}
                       hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                       accessibilityLabel="View Customer History"
                     >
-                      <Ionicons name="person" size={14} color={hasNoNumber ? colors.textMuted : colors.accent} />
+                      <Ionicons name="person" size={14} color={colors.accent} />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -522,6 +553,19 @@ export const PendingPaymentsScreen: React.FC<PendingPaymentsScreenProps> = ({
         onClose={() => setIsCollectDueModalVisible(false)}
         record={selectedPendingRecord}
         onConfirm={handleConfirmCollectDue}
+      />
+
+      {/* Customer History In-Place Modal */}
+      <CustomerHistoryModal
+        visible={!!historyCustomer}
+        customer={historyCustomer}
+        historyData={customerHistoryData}
+        isLoading={isLoadingHistory}
+        onClose={() => {
+          setHistoryCustomer(null);
+          setCustomerHistoryData(null);
+        }}
+        shopName={shop.name}
       />
     </View>
   );

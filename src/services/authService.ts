@@ -98,19 +98,52 @@ export const authService = {
         let memberOverrides: any = undefined;
 
         if (!shopData) {
-          // Check if this phone/user is a member (Supervisor or Biller) of any shop in Supabase
+          // Check if this phone belongs to a member by direct phone match OR user_id
           try {
-            const { data: memberList } = await (supabase.from('shop_members') as any)
+            // First check by direct phone column on shop_members
+            const { data: memberByPhone } = await (supabase.from('shop_members') as any)
               .select('*, shops(*)')
-              .eq('user_id', profile.id)
+              .eq('phone', cleanPhone)
               .order('created_at', { ascending: false })
               .limit(1);
 
-            if (memberList && memberList.length > 0 && memberList[0].shops) {
-              shopData = memberList[0].shops;
-              memberRole = (memberList[0].role as UserRole) || 'Biller';
-              memberId = memberList[0].id;
-              memberOverrides = memberList[0].permissions_override;
+            let activeMemberRow = memberByPhone && memberByPhone.length > 0 ? memberByPhone[0] : null;
+
+            // If not found by phone, check by user_id
+            if (!activeMemberRow) {
+              const { data: memberByUserId } = await (supabase.from('shop_members') as any)
+                .select('*, shops(*)')
+                .eq('user_id', profile.id)
+                .order('created_at', { ascending: false })
+                .limit(1);
+
+              if (memberByUserId && memberByUserId.length > 0) {
+                activeMemberRow = memberByUserId[0];
+              }
+            }
+
+            if (activeMemberRow) {
+              // CRITICAL: Block deactivated staff from logging in
+              if (activeMemberRow.is_active === false) {
+                return {
+                  success: false,
+                  error: 'Your staff account has been deactivated. Please contact the shop owner.',
+                };
+              }
+
+              if (activeMemberRow.shops) {
+                shopData = activeMemberRow.shops;
+                memberRole = (activeMemberRow.role as UserRole) || 'Biller';
+                memberId = activeMemberRow.id;
+                memberOverrides = activeMemberRow.permissions_override;
+
+                // Sync authenticated profile id and clean phone on shop_members
+                try {
+                  await (supabase.from('shop_members') as any)
+                    .update({ user_id: profile.id, phone: cleanPhone })
+                    .eq('id', activeMemberRow.id);
+                } catch {}
+              }
             }
           } catch (mErr) {
             console.warn('Supabase member check notice:', mErr);
@@ -118,13 +151,21 @@ export const authService = {
         }
 
         // Also check local storage members cache to match phone
-        const localMembers = await storage.getObject<ShopMember[]>('@counterpro/shop_members', []);
-        const matchedMember = localMembers?.find(m => m.phone?.replace(/\D/g, '') === cleanPhone);
-        if (matchedMember) {
-          memberRole = matchedMember.role;
-          memberId = matchedMember.id;
-          memberOverrides = matchedMember.overrides;
-          if (!shopData) {
+        if (!shopData) {
+          const cachedUsers = await storage.getObject<ShopMember[]>('@counterpro/shop_users', []);
+          const cachedMembers = await storage.getObject<ShopMember[]>('@counterpro/shop_members', []);
+          const allLocalMembers = [...(cachedUsers || []), ...(cachedMembers || [])];
+          const matchedMember = allLocalMembers.find(m => m.phone?.replace(/\D/g, '') === cleanPhone);
+          if (matchedMember) {
+            if (matchedMember.isActive === false) {
+              return {
+                success: false,
+                error: 'Your staff account has been deactivated. Please contact the shop owner.',
+              };
+            }
+            memberRole = matchedMember.role;
+            memberId = matchedMember.id;
+            memberOverrides = matchedMember.overrides;
             const localShop = await storage.getObject<Shop | null>('@counterpro/active_shop', null);
             if (localShop) {
               shopData = localShop as any;
@@ -155,7 +196,7 @@ export const authService = {
           const loadedShop: Shop = {
             id: shopData.id,
             name: shopData.name,
-            shopType: (shopData.shop_type as ShopType) || 'Tea Shop',
+            shopType: (shopData.shop_type || shopData.shopType) as ShopType || 'Tea Shop',
             phone: shopData.phone,
             email: shopData.email,
             address: shopData.address || '',
@@ -165,18 +206,18 @@ export const authService = {
             pincode: shopData.pincode || '',
             latitude: shopData.latitude ? Number(shopData.latitude) : undefined,
             longitude: shopData.longitude ? Number(shopData.longitude) : undefined,
-            logoUrl: shopData.logo_url,
-            currencyCode: shopData.currency_code || 'INR',
+            logoUrl: shopData.logo_url || shopData.logoUrl,
+            currencyCode: shopData.currency_code || shopData.currencyCode || 'INR',
             timezone: shopData.timezone || 'Asia/Kolkata',
-            gstEnabled: shopData.gst_enabled ?? false,
-            gstRate: shopData.gst_rate ? Number(shopData.gst_rate) : 5.0,
-            gstNumber: shopData.gst_number,
-            roundOffEnabled: shopData.round_off_enabled ?? true,
-            dailyBackupEnabled: shopData.daily_backup_enabled ?? true,
-            printerEnabled: shopData.printer_enabled ?? false,
-            printerName: shopData.printer_name,
-            tableManagementEnabled: shopData.table_management_enabled ?? false,
-            tableCount: shopData.table_count ? Number(shopData.table_count) : 4,
+            gstEnabled: shopData.gst_enabled ?? shopData.gstEnabled ?? false,
+            gstRate: shopData.gst_rate !== undefined ? Number(shopData.gst_rate) : (shopData.gstRate ?? 5.0),
+            gstNumber: shopData.gst_number || shopData.gstNumber,
+            roundOffEnabled: shopData.round_off_enabled ?? shopData.roundOffEnabled ?? true,
+            dailyBackupEnabled: shopData.daily_backup_enabled ?? shopData.dailyBackupEnabled ?? true,
+            printerEnabled: shopData.printer_enabled ?? shopData.printerEnabled ?? false,
+            printerName: shopData.printer_name || shopData.printerName,
+            tableManagementEnabled: shopData.table_management_enabled ?? shopData.tableManagementEnabled ?? false,
+            tableCount: shopData.table_count !== undefined ? Number(shopData.table_count) : (shopData.tableCount ?? 4),
           };
 
           const loadedMember: ShopMember = {
@@ -267,6 +308,24 @@ export const authService = {
 
   async getCurrentMember(): Promise<ShopMember | null> {
     return await storage.getObject<ShopMember | null>(LOCAL_MEMBER_KEY, null);
+  },
+
+  async isUserActiveInShop(shopId: string, memberIdOrUserId?: string | null): Promise<boolean> {
+    if (!shopId || !memberIdOrUserId) return true;
+    try {
+      const { data: member } = await (supabase.from('shop_members') as any)
+        .select('is_active, role')
+        .eq('shop_id', shopId)
+        .or(`id.eq.${memberIdOrUserId},user_id.eq.${memberIdOrUserId}`)
+        .maybeSingle();
+
+      if (member && member.is_active === false) {
+        // Immediate session invalidation on client
+        await storage.removeItem(LOCAL_MEMBER_KEY);
+        return false;
+      }
+    } catch {}
+    return true;
   },
 
   async signOut(): Promise<void> {

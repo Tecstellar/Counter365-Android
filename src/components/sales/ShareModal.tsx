@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, Modal, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, typography, spacing, radii, shadows } from '../../theme';
+import { colors, typography, spacing, radii, shadows, useTheme, Theme } from '../../theme';
 
 interface ShareModalProps {
   visible: boolean;
@@ -41,6 +41,10 @@ export const ShareModal: React.FC<ShareModalProps> = ({
   onClose,
   onSelectOption,
 }) => {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+  const colors = theme.colors;
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.overlay}>
@@ -89,108 +93,111 @@ export const ShareModal: React.FC<ShareModalProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: colors.overlay55,
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: radii.xl,
-    borderTopRightRadius: radii.xl,
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: 26,
-    gap: 12,
-    ...shadows.lg,
-  },
-  handleBar: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.divider,
-    alignSelf: 'center',
-    marginBottom: 8,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingBottom: 4,
-  },
-  kicker: {
-    fontSize: 10,
-    fontFamily: typography.fonts.heading,
-    letterSpacing: 1.1,
-    color: colors.accent,
-    textTransform: 'uppercase',
-  },
-  title: {
-    fontFamily: typography.fonts.heading,
-    fontSize: typography.sizes.h4,
-    color: colors.text,
-    fontWeight: '700',
-    marginTop: 2,
-  },
-  closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: colors.neutral100,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  optionsList: {
-    gap: 8,
-    marginTop: 4,
-  },
-  optionRow: {
-    minHeight: 52,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: colors.divider,
-    borderRadius: radii.md,
-  },
-  iconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.accent100,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  optionInfo: {
-    flex: 1,
-  },
-  optionName: {
-    fontFamily: typography.fonts.heading,
-    fontSize: typography.sizes.sm,
-    fontWeight: '700',
-    color: colors.text,
-  },
-  optionSub: {
-    fontSize: 11,
-    color: colors.textMuted,
-    fontFamily: typography.fonts.body,
-    marginTop: 1,
-  },
-  footerNoteRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 6,
-    paddingTop: 8,
-  },
-  footerNote: {
-    fontSize: 11,
-    color: colors.textSecondary,
-    fontFamily: typography.fonts.body,
-    flex: 1,
-  },
-});
+const createStyles = (theme: Theme) => {
+  const colors = theme.colors;
+  return StyleSheet.create({
+    overlay: {
+      flex: 1,
+      backgroundColor: colors.overlay55,
+      justifyContent: 'flex-end',
+    },
+    sheet: {
+      backgroundColor: colors.surface,
+      borderTopLeftRadius: radii.xl,
+      borderTopRightRadius: radii.xl,
+      paddingHorizontal: 18,
+      paddingTop: 10,
+      paddingBottom: 26,
+      gap: 12,
+      ...shadows.lg,
+    },
+    handleBar: {
+      width: 36,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: colors.divider,
+      alignSelf: 'center',
+      marginBottom: 8,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingBottom: 4,
+    },
+    kicker: {
+      fontSize: 10,
+      fontFamily: typography.fonts.heading,
+      letterSpacing: 1.1,
+      color: colors.accent,
+      textTransform: 'uppercase',
+    },
+    title: {
+      fontFamily: typography.fonts.heading,
+      fontSize: typography.sizes.h4,
+      color: colors.text,
+      fontWeight: '700',
+      marginTop: 2,
+    },
+    closeBtn: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: colors.neutral100,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    optionsList: {
+      gap: 8,
+      marginTop: 4,
+    },
+    optionRow: {
+      minHeight: 52,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      backgroundColor: colors.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: colors.divider,
+      borderRadius: radii.md,
+    },
+    iconCircle: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: colors.accent100,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    optionInfo: {
+      flex: 1,
+    },
+    optionName: {
+      fontFamily: typography.fonts.heading,
+      fontSize: typography.sizes.sm,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    optionSub: {
+      fontSize: 11,
+      color: colors.textMuted,
+      fontFamily: typography.fonts.body,
+      marginTop: 1,
+    },
+    footerNoteRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginTop: 6,
+      paddingTop: 8,
+    },
+    footerNote: {
+      fontSize: 11,
+      color: colors.textSecondary,
+      fontFamily: typography.fonts.body,
+      flex: 1,
+    },
+  });
+};

@@ -93,7 +93,7 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch {}
-    const msg = whatsappService.formatCustomerBill(bill, shop.name);
+    const msg = whatsappService.formatCustomerBill(bill, shop.name, shop.upiId);
     await whatsappService.shareViaWhatsApp(msg, bill.customerPhone);
     flash(`Bill ${bill.billNumber} sent on WhatsApp`);
   };
@@ -140,22 +140,32 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
 
   const handleConfirmDelete = async () => {
     if (!billToDelete || !shop.id) return;
+    if (currentRole !== 'Owner') {
+      flash('Only the shop Owner can delete or cancel bills');
+      setBillToDelete(null);
+      return;
+    }
     setIsDeleting(true);
     try {
       try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning); } catch {}
-      await billingService.deleteBill(shop.id, billToDelete.id, {
-        name: profile?.fullName || currentMember?.fullName || currentRole,
-        role: currentRole,
-        id: profile?.id || currentMember?.id,
-      });
+      await billingService.deleteBill(
+        shop.id,
+        billToDelete.id,
+        {
+          name: profile?.fullName || currentMember?.fullName || currentRole,
+          role: currentRole,
+          id: profile?.id || currentMember?.id,
+        },
+        'Cancelled from Bills register'
+      );
 
       setBillToDelete(null);
       await loadBills();
       try { await refreshSubscription(); } catch {}
-      flash(`Bill ${billToDelete.billNumber} deleted`);
-    } catch (err) {
+      flash(`Bill ${billToDelete.billNumber} cancelled & voided`);
+    } catch (err: any) {
       console.warn('handleConfirmDelete error:', err);
-      flash('Failed to delete bill');
+      flash(err?.message || 'Failed to cancel bill');
     } finally {
       setIsDeleting(false);
     }
@@ -268,7 +278,7 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
             activeOpacity={0.7}
           >
             <Text style={[styles.tabChipText, activeTab === 'deleted' && styles.activeTabChipText]}>
-              Recently Deleted ({counts.deleted})
+              Cancelled / Voided ({counts.deleted})
             </Text>
           </TouchableOpacity>
         </ScrollView>
@@ -302,7 +312,7 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
           showsVerticalScrollIndicator={false}
         >
           {filteredBills.map((bill) => {
-            const isDeleted = bill.isDeleted || bill.status === 'deleted';
+            const isDeleted = bill.isDeleted || bill.status === 'deleted' || bill.status === 'cancelled';
             const isEdited = bill.isEdited || bill.status === 'edited';
 
             return (
@@ -331,7 +341,7 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
 
                       {isDeleted ? (
                         <View style={styles.deletedBadge}>
-                          <Text style={styles.deletedBadgeText}>DELETED</Text>
+                          <Text style={styles.deletedBadgeText}>CANCELLED</Text>
                         </View>
                       ) : isEdited ? (
                         <View style={styles.editedBadge}>
@@ -397,7 +407,8 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
                     <View style={styles.auditBox}>
                       {isDeleted && bill.deletedByName ? (
                         <Text style={[styles.auditLine, { color: colors.danger || '#DC2626' }]}>
-                          Deleted by <Text style={styles.auditHighlight}>{bill.deletedByName}</Text> ({bill.deletedByRole || 'Staff'}) {bill.deletedAt ? `on ${formatTimestamp(bill.deletedAt)}` : ''}
+                          Cancelled by <Text style={styles.auditHighlight}>{bill.deletedByName}</Text> ({bill.deletedByRole || 'Staff'}) {bill.deletedAt ? `on ${formatTimestamp(bill.deletedAt)}` : ''}
+                          {bill.cancellationReason ? ` • ${bill.cancellationReason}` : ''}
                         </Text>
                       ) : isEdited && bill.editedByName ? (
                         <Text style={[styles.auditLine, { color: '#B45309' }]}>
@@ -425,9 +436,17 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
         onDownloadPdf={handleDownloadPdf}
         onShareWhatsApp={handleShareWhatsApp}
         onEdit={(bill) => {
+          if (currentRole === 'Biller') {
+            flash('Only Owner or Supervisor can edit completed bills');
+            return;
+          }
           onEditBill(bill);
         }}
         onDelete={(bill) => {
+          if (currentRole !== 'Owner') {
+            flash('Only the shop Owner can delete or cancel bills');
+            return;
+          }
           setBillToDelete(bill);
         }}
       />

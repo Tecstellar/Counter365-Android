@@ -16,12 +16,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, typography, radii, spacing, shadows } from '../../theme';
+import { colors, typography, radii, spacing, shadows, useTheme, Theme } from '../../theme';
 import {
   SUBSCRIPTION_PLANS,
   SubscriptionPlanConfig,
+  LAUNCH_OFFER_PLANS,
+  LaunchOfferPlanConfig,
+  getLaunchOfferPlanById,
+  getSubscriptionPlanById,
 } from '../../constants/subscriptionPlans';
-import { cashfreeService } from '../../services/cashfreeService';
+import { cashfreeService, CF_CHECKOUT_URL } from '../../services/cashfreeService';
 import { subscriptionService } from '../../services/subscriptionService';
 import { useShop } from '../../context/ShopContext';
 import { useCart } from '../../context/CartContext';
@@ -39,6 +43,8 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
   onClose,
   canDismiss = true,
 }) => {
+  const { theme, isDark } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const { shop, refreshSubscription } = useShop();
   const { flash } = useCart();
 
@@ -51,7 +57,32 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  const selectedPlan = SUBSCRIPTION_PLANS.find(p => p.id === selectedPlanId) || SUBSCRIPTION_PLANS[0];
+  // Authoritative 30-day Launch Offer eligibility state
+  const [isLaunchEligible, setIsLaunchEligible] = useState<boolean>(true);
+  const [eligibilityData, setEligibilityData] = useState<{
+    daysRemaining: number;
+    hoursRemaining: number;
+    secondsRemaining: number;
+  }>({ daysRemaining: 30, hoursRemaining: 720, secondsRemaining: 2592000 });
+
+  useEffect(() => {
+    if (visible && shop?.id) {
+      subscriptionService.checkLaunchOfferEligibility(shop.id, shop.createdAt).then(res => {
+        setIsLaunchEligible(res.isEligible);
+        setEligibilityData({
+          daysRemaining: res.daysRemaining,
+          hoursRemaining: res.hoursRemaining,
+          secondsRemaining: res.secondsRemaining,
+        });
+      }).catch(() => {
+        setIsLaunchEligible(true);
+      });
+    }
+  }, [visible, shop?.id, shop?.createdAt]);
+
+  const activePlans: any[] = isLaunchEligible ? LAUNCH_OFFER_PLANS : SUBSCRIPTION_PLANS;
+  const selectedPlan: any = activePlans.find(p => p.id === selectedPlanId) || activePlans[0];
+  const selectedPrice: number = isLaunchEligible ? (selectedPlan.launchPrice || selectedPlan.price) : selectedPlan.price;
   const isVerifyingRef = useRef(false);
 
   // Core verification function
@@ -69,11 +100,13 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
       );
 
       if (verifyRes.success && verifyRes.isPaid) {
-        // Payment genuinely verified — activate in Supabase
+        // Payment genuinely verified — activate in Supabase with authoritative eligibility check
         const actRes = await subscriptionService.activatePaidSubscription(
           shop.id,
           planIdToVerify as any,
-          orderIdToVerify
+          orderIdToVerify,
+          undefined,
+          isLaunchEligible
         );
 
         if (actRes.success) {
@@ -106,7 +139,6 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
   useEffect(() => {
     const handleAppStateChange = async (nextState: AppStateStatus) => {
       if (nextState === 'active') {
-        // Check state or AsyncStorage
         if (activeOrderId) {
           await verifyAndActivate(activeOrderId, selectedPlan.id);
         } else {
@@ -176,7 +208,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
     return () => clearInterval(interval);
   }, [visible, activeOrderId, selectedPlan.id, shop.id]);
 
-  const handleSelectPlan = (plan: SubscriptionPlanConfig) => {
+  const handleSelectPlan = (plan: any) => {
     if (activeOrderId) return; // Locked during in-flight order
     setSelectedPlanId(plan.id);
   };
@@ -187,7 +219,12 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
     setStatusMessage(null);
 
     try {
-      const orderRes = await cashfreeService.initiateOrder(selectedPlan, {
+      const orderPlanPayload = {
+        ...selectedPlan,
+        price: selectedPrice,
+      };
+
+      const orderRes = await cashfreeService.initiateOrder(orderPlanPayload as any, {
         id: shop.id,
         name: shop.name || 'Counter365',
         phone: shop.phone,
@@ -264,8 +301,19 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
           {/* Header */}
           <View style={styles.header}>
             <View>
-              <Text style={styles.kicker}>COUNTER365 PLANS</Text>
-              <Text style={styles.title}>Choose Subscription</Text>
+              {isLaunchEligible ? (
+                <View style={styles.launchBadgeRow}>
+                  <View style={styles.launchBadge}>
+                    <Text style={styles.launchBadgeText}>LAUNCH OFFER</Text>
+                  </View>
+                  <Text style={styles.countdownIndicatorText}>
+                    ⏳ {eligibilityData.daysRemaining} {eligibilityData.daysRemaining === 1 ? 'day' : 'days'} left
+                  </Text>
+                </View>
+              ) : (
+                <Text style={styles.kicker}>COUNTER365 PLANS</Text>
+              )}
+              <Text style={styles.title}>{isLaunchEligible ? 'Choose Your Plan' : 'Choose Subscription'}</Text>
             </View>
             {canDismiss && !activeOrderId && (
               <TouchableOpacity onPress={onClose} style={styles.closeBtn} activeOpacity={0.7}>
@@ -282,14 +330,21 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
             <View style={styles.introBanner}>
               <Ionicons name="shield-checkmark" size={20} color={colors.accent900} />
               <Text style={styles.introText}>
-                30-day trial included. Transparent pricing, no hidden fees, instant activation.
+                {isLaunchEligible
+                  ? 'Regular price ₹999/month. Lock in exclusive launch pricing before your 30-day offer expires.'
+                  : '30-day trial included. Transparent pricing, no hidden fees, instant activation.'}
               </Text>
             </View>
 
             {/* Plans List */}
             <View style={styles.plansContainer}>
-              {SUBSCRIPTION_PLANS.map(plan => {
+              {activePlans.map((plan: any) => {
                 const isSelected = selectedPlanId === plan.id;
+                const price = isLaunchEligible ? plan.launchPrice : plan.price;
+                const strikethroughPrice = isLaunchEligible && plan.savings > 0 ? plan.regularPrice : (plan.savings > 0 ? plan.normalPrice : null);
+                const savingsLabel = isLaunchEligible ? plan.savingsLabel : (plan.savings > 0 ? `Save ₹${plan.savings}` : null);
+                const pricePerDay = isLaunchEligible ? plan.pricePerDay : Math.round(plan.price / (plan.durationMonths * 30));
+
                 return (
                   <TouchableOpacity
                     key={plan.id}
@@ -309,12 +364,21 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                       </View>
 
                       <View style={styles.badgeRow}>
-                        {plan.discountBadge && (
+                        {savingsLabel && (
                           <View style={styles.discountBadge}>
-                            <Text style={styles.discountBadgeText}>{plan.discountBadge}</Text>
+                            <Text style={styles.discountBadgeText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                              {savingsLabel}
+                            </Text>
                           </View>
                         )}
-                        {plan.popular && plan.discountBadge !== 'PREFERRED' && (
+                        {!isLaunchEligible && plan.discountBadge && (
+                          <View style={styles.discountBadge}>
+                            <Text style={styles.discountBadgeText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                              {plan.discountBadge}
+                            </Text>
+                          </View>
+                        )}
+                        {plan.popular && !savingsLabel && (
                           <View style={styles.popularBadge}>
                             <Text style={styles.popularBadgeText}>POPULAR</Text>
                           </View>
@@ -325,19 +389,19 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                     {/* Price Row */}
                     <View style={styles.priceRow}>
                       <View style={styles.priceCol}>
-                        <Text style={styles.priceText}>₹{plan.price.toLocaleString('en-IN')}</Text>
-                        {plan.savings > 0 && (
-                          <Text style={styles.savingsText}>Save ₹{plan.savings}</Text>
-                        )}
+                        <Text style={styles.priceText}>₹{price.toLocaleString('en-IN')}</Text>
+                        <Text style={styles.pricePerDayText}>₹{pricePerDay}/day</Text>
                       </View>
                       <View style={styles.monthlyCol}>
-                        <Text style={styles.monthlyText}>
-                          ₹{plan.monthlyEquivalent % 1 === 0 ? plan.monthlyEquivalent : plan.monthlyEquivalent.toFixed(2)}
-                          <Text style={styles.monthlySuffix}>/mo</Text>
-                        </Text>
-                        {plan.savings > 0 && (
+                        {strikethroughPrice && (
                           <Text style={styles.strikethroughNormal}>
-                            ₹{plan.normalPrice.toLocaleString('en-IN')}
+                            ₹{strikethroughPrice.toLocaleString('en-IN')}
+                          </Text>
+                        )}
+                        {!isLaunchEligible && plan.monthlyEquivalent && (
+                          <Text style={styles.monthlyText}>
+                            ₹{plan.monthlyEquivalent % 1 === 0 ? plan.monthlyEquivalent : plan.monthlyEquivalent.toFixed(2)}
+                            <Text style={styles.monthlySuffix}>/mo</Text>
                           </Text>
                         )}
                       </View>
@@ -370,7 +434,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                   <Text style={styles.inFlightTitle}>Payment in Progress</Text>
                 </View>
                 <Text style={styles.inFlightOrderId}>Order ID: {activeOrderId}</Text>
-                <Text style={styles.inFlightAmount}>Amount: ₹{selectedPlan.price}</Text>
+                <Text style={styles.inFlightAmount}>Amount: ₹{selectedPrice}</Text>
 
                 {statusMessage && (
                   <View style={styles.statusMessageBox}>
@@ -444,7 +508,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                   <ActivityIndicator color="#FFFFFF" size="small" />
                 ) : (
                   <Text style={styles.payBtnText}>
-                    Pay ₹{selectedPlan.price.toLocaleString('en-IN')} via Cashfree
+                    Pay ₹{selectedPrice.toLocaleString('en-IN')} via Cashfree
                   </Text>
                 )}
               </TouchableOpacity>
@@ -570,11 +634,30 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                 }}
                 source={{
                   uri: activePaymentUrl || (
-                    (process.env.EXPO_PUBLIC_CASHFREE_ENV || 'PROD') === 'PROD'
-                      ? `https://payments.cashfree.com/order/#${checkoutSessionId}`
-                      : `https://payments-test.cashfree.com/order/#${checkoutSessionId}`
+                    checkoutSessionId ? `${CF_CHECKOUT_URL}${checkoutSessionId}` : 'https://payments.cashfree.com'
                   ),
                 }}
+                renderError={() => (
+                  <View style={styles.webViewLoader}>
+                    <Ionicons name="alert-circle-outline" size={36} color="#DC2626" />
+                    <Text style={[styles.webViewLoaderText, { color: '#DC2626', fontWeight: 'bold' }]}>
+                      Unable to load Cashfree checkout
+                    </Text>
+                    <Text style={[styles.webViewLoaderText, { fontSize: 12, marginTop: 4 }]}>
+                      Payment session may have expired or network disconnected.
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setShowCheckoutModal(false);
+                        handleInitiatePayment();
+                      }}
+                      style={{ marginTop: 16, backgroundColor: colors.accent, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 12 }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ color: '#fff', fontWeight: '700' }}>Retry New Session</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
                 onNavigationStateChange={(navState) => {
                   if (
                     navState.url.includes('payment-return') ||
@@ -601,392 +684,433 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
-    justifyContent: 'flex-end',
-  },
-  sheetContainer: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: radii.xl,
-    borderTopRightRadius: radii.xl,
-    maxHeight: '92%',
-    paddingBottom: Platform.OS === 'ios' ? 24 : 16,
-    ...shadows.lg,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    paddingBottom: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  kicker: {
-    fontSize: 11,
-    fontFamily: typography.fonts.heading,
-    letterSpacing: 1.1,
-    color: colors.accent,
-    textTransform: 'uppercase',
-  },
-  title: {
-    fontSize: 20,
-    fontFamily: typography.fonts.heading,
-    color: colors.text,
-    fontWeight: '700',
-    marginTop: 2,
-  },
-  closeBtn: {
-    padding: 6,
-    borderRadius: radii.pill,
-    backgroundColor: '#F3F4F6',
-  },
-  scrollContent: {
-    padding: 20,
-    gap: 16,
-  },
-  introBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#F0F9FF',
-    borderRadius: radii.md,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
-  },
-  introText: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: typography.fonts.body,
-    color: '#0369A1',
-    lineHeight: 18,
-  },
-  plansContainer: {
-    gap: 12,
-  },
-  planCard: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: '#E5E7EB',
-    borderRadius: radii.lg,
-    padding: 16,
-    gap: 10,
-  },
-  planCardSelected: {
-    borderColor: colors.accent900,
-    backgroundColor: '#F8FAFC',
-    borderWidth: 2,
-  },
-  planCardPopular: {
-    borderColor: colors.accent,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  planTitleCol: {
-    gap: 2,
-  },
-  planName: {
-    fontSize: 18,
-    fontFamily: typography.fonts.heading,
-    fontWeight: '700',
-    color: colors.text,
-  },
-  durationLabel: {
-    fontSize: 12,
-    fontFamily: typography.fonts.body,
-    color: colors.textSecondary,
-  },
-  badgeRow: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  discountBadge: {
-    backgroundColor: '#059669',
-    borderRadius: radii.sm,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  discountBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '700',
-    fontFamily: typography.fonts.heading,
-  },
-  popularBadge: {
-    backgroundColor: colors.accent,
-    borderRadius: radii.sm,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  popularBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '800',
-    fontFamily: typography.fonts.heading,
-  },
-  priceRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-    paddingTop: 8,
-  },
-  priceCol: {
-    gap: 2,
-  },
-  priceText: {
-    fontSize: 22,
-    fontFamily: typography.fonts.heading,
-    fontWeight: '800',
-    color: colors.accent900,
-  },
-  savingsText: {
-    fontSize: 12,
-    fontFamily: typography.fonts.body,
-    color: '#059669',
-    fontWeight: '600',
-  },
-  monthlyCol: {
-    alignItems: 'flex-end',
-    gap: 2,
-  },
-  monthlyText: {
-    fontSize: 15,
-    fontFamily: typography.fonts.heading,
-    fontWeight: '700',
-    color: colors.text,
-  },
-  monthlySuffix: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    fontWeight: 'normal',
-  },
-  strikethroughNormal: {
-    fontSize: 12,
-    fontFamily: typography.fonts.body,
-    color: '#9CA3AF',
-    textDecorationLine: 'line-through',
-  },
-  radioRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 4,
-  },
-  radioCircle: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    borderWidth: 2,
-    borderColor: '#D1D5DB',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  radioCircleSelected: {
-    borderColor: colors.accent900,
-  },
-  radioInner: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: colors.accent900,
-  },
-  selectLabel: {
-    fontSize: 13,
-    fontFamily: typography.fonts.body,
-    color: colors.textSecondary,
-  },
-  selectLabelSelected: {
-    color: colors.accent900,
-    fontWeight: '600',
-  },
-  securityNote: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 6,
-  },
-  securityText: {
-    fontSize: 12,
-    fontFamily: typography.fonts.body,
-    color: colors.textSecondary,
-  },
-  inFlightBox: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: radii.lg,
-    padding: 18,
-    borderWidth: 1.5,
-    borderColor: colors.accent900,
-    gap: 10,
-  },
-  inFlightHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  inFlightTitle: {
-    fontSize: 16,
-    fontFamily: typography.fonts.heading,
-    fontWeight: '700',
-    color: colors.accent900,
-  },
-  inFlightOrderId: {
-    fontSize: 12,
-    fontFamily: typography.fonts.body,
-    color: colors.textSecondary,
-  },
-  inFlightAmount: {
-    fontSize: 15,
-    fontFamily: typography.fonts.heading,
-    fontWeight: '700',
-    color: colors.text,
-  },
-  statusMessageBox: {
-    backgroundColor: '#FEF3C7',
-    padding: 10,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-  },
-  statusMessageText: {
-    fontSize: 13,
-    fontFamily: typography.fonts.body,
-    color: '#92400E',
-    lineHeight: 18,
-  },
-  inFlightActionCol: {
-    gap: 10,
-    marginTop: 6,
-  },
-  reopenLinkBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 10,
-    backgroundColor: '#EFF6FF',
-    borderRadius: radii.md,
-  },
-  reopenLinkText: {
-    fontSize: 13,
-    fontFamily: typography.fonts.heading,
-    fontWeight: '600',
-    color: colors.accent900,
-  },
-  verifyBtn: {
-    backgroundColor: '#059669',
-    paddingVertical: 14,
-    borderRadius: radii.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  verifyBtnText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontFamily: typography.fonts.heading,
-    fontWeight: '700',
-  },
-  cancelPaymentBtn: {
-    paddingVertical: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cancelPaymentText: {
-    fontSize: 13,
-    fontFamily: typography.fonts.body,
-    color: colors.textSecondary,
-    textDecorationLine: 'underline',
-  },
-  footer: {
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-  },
-  payBtn: {
-    backgroundColor: colors.accent900,
-    paddingVertical: 16,
-    borderRadius: radii.lg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...shadows.sm,
-  },
-  payBtnText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontFamily: typography.fonts.heading,
-    fontWeight: '700',
-  },
-  webViewContainer: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  webViewHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
-  },
-  webViewTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  webViewTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    fontFamily: typography.fonts.heading,
-    color: colors.text,
-  },
-  webViewSubtitle: {
-    fontSize: 12,
-    fontFamily: typography.fonts.body,
-    color: colors.textSecondary,
-    marginTop: 1,
-  },
-  webViewCloseBtn: {
-    padding: 6,
-    borderRadius: radii.pill,
-    backgroundColor: '#F3F4F6',
-  },
-  webViewUpiBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: '#E0F2FE',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: radii.pill,
-  },
-  webViewUpiBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#0284C7',
-    fontFamily: typography.fonts.heading,
-  },
-  webViewLoader: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-  },
-  webViewLoaderText: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    fontFamily: typography.fonts.body,
-  },
-});
+const createStyles = (theme: Theme, isDark: boolean) => {
+  const colors = theme.colors;
+  return StyleSheet.create({
+    overlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.55)',
+      justifyContent: 'flex-end',
+    },
+    sheetContainer: {
+      backgroundColor: colors.surface,
+      borderTopLeftRadius: radii.xl,
+      borderTopRightRadius: radii.xl,
+      maxHeight: '92%',
+      paddingBottom: Platform.OS === 'ios' ? 24 : 16,
+      ...shadows.lg,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 20,
+      paddingTop: 18,
+      paddingBottom: 14,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    kicker: {
+      fontSize: 11,
+      fontFamily: typography.fonts.heading,
+      letterSpacing: 1.1,
+      color: colors.accent,
+      textTransform: 'uppercase',
+    },
+    launchBadgeRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 2,
+    },
+    launchBadge: {
+      backgroundColor: '#FF5F00',
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: radii.sm,
+    },
+    launchBadgeText: {
+      color: '#FFFFFF',
+      fontSize: 10,
+      fontWeight: '800',
+      fontFamily: typography.fonts.heading,
+      letterSpacing: 0.5,
+    },
+    countdownIndicatorText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: colors.accent,
+      fontFamily: typography.fonts.heading,
+    },
+    pricePerDayText: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      fontFamily: typography.fonts.body,
+      fontWeight: '600',
+    },
+    title: {
+      fontSize: 20,
+      fontFamily: typography.fonts.heading,
+      color: colors.text,
+      fontWeight: '700',
+      marginTop: 2,
+    },
+    closeBtn: {
+      padding: 6,
+      borderRadius: radii.pill,
+      backgroundColor: isDark ? colors.surfaceSecondary : '#F3F4F6',
+    },
+    scrollContent: {
+      padding: 20,
+      gap: 16,
+    },
+    introBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      backgroundColor: isDark ? colors.surfaceSecondary : '#F0F9FF',
+      borderRadius: radii.md,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: isDark ? colors.border : '#BAE6FD',
+    },
+    introText: {
+      flex: 1,
+      fontSize: 13,
+      fontFamily: typography.fonts.body,
+      color: isDark ? colors.text : '#0369A1',
+      lineHeight: 18,
+    },
+    plansContainer: {
+      gap: 12,
+    },
+    planCard: {
+      backgroundColor: colors.surface,
+      borderWidth: 1.5,
+      borderColor: colors.border,
+      borderRadius: radii.lg,
+      padding: 16,
+      gap: 10,
+    },
+    planCardSelected: {
+      borderColor: colors.accent,
+      backgroundColor: isDark ? colors.surfaceSecondary : '#F8FAFC',
+      borderWidth: 2,
+    },
+    planCardPopular: {
+      borderColor: colors.accent,
+    },
+    cardHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      gap: 8,
+    },
+    planTitleCol: {
+      flexShrink: 1,
+      gap: 2,
+    },
+    planName: {
+      fontSize: 18,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    durationLabel: {
+      fontSize: 12,
+      fontFamily: typography.fonts.body,
+      color: colors.textSecondary,
+    },
+    badgeRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'flex-end',
+      maxWidth: '62%',
+      gap: 6,
+    },
+    discountBadge: {
+      backgroundColor: '#059669',
+      borderRadius: radii.sm,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      alignSelf: 'flex-start',
+    },
+    discountBadgeText: {
+      color: '#FFFFFF',
+      fontSize: 10.5,
+      fontWeight: '700',
+      fontFamily: typography.fonts.heading,
+      textAlign: 'center',
+    },
+    popularBadge: {
+      backgroundColor: colors.accent,
+      borderRadius: radii.sm,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+    },
+    popularBadgeText: {
+      color: '#FFFFFF',
+      fontSize: 10,
+      fontWeight: '800',
+      fontFamily: typography.fonts.heading,
+    },
+    priceRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-end',
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      paddingTop: 8,
+    },
+    priceCol: {
+      gap: 2,
+    },
+    priceText: {
+      fontSize: 22,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '800',
+      color: colors.accent,
+    },
+    savingsText: {
+      fontSize: 12,
+      fontFamily: typography.fonts.body,
+      color: '#059669',
+      fontWeight: '600',
+    },
+    monthlyCol: {
+      alignItems: 'flex-end',
+      gap: 2,
+    },
+    monthlyText: {
+      fontSize: 15,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    monthlySuffix: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      fontWeight: 'normal',
+    },
+    strikethroughNormal: {
+      fontSize: 12,
+      fontFamily: typography.fonts.body,
+      color: colors.textMuted,
+      textDecorationLine: 'line-through',
+    },
+    radioRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 4,
+    },
+    radioCircle: {
+      width: 18,
+      height: 18,
+      borderRadius: 9,
+      borderWidth: 2,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    radioCircleSelected: {
+      borderColor: colors.accent,
+    },
+    radioInner: {
+      width: 10,
+      height: 10,
+      borderRadius: 5,
+      backgroundColor: colors.accent,
+    },
+    selectLabel: {
+      fontSize: 13,
+      fontFamily: typography.fonts.body,
+      color: colors.textSecondary,
+    },
+    selectLabelSelected: {
+      color: colors.accent,
+      fontWeight: '600',
+    },
+    securityNote: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingVertical: 6,
+    },
+    securityText: {
+      fontSize: 12,
+      fontFamily: typography.fonts.body,
+      color: colors.textSecondary,
+    },
+    inFlightBox: {
+      backgroundColor: isDark ? colors.surfaceSecondary : '#F8FAFC',
+      borderRadius: radii.lg,
+      padding: 18,
+      borderWidth: 1.5,
+      borderColor: colors.accent,
+      gap: 10,
+    },
+    inFlightHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    inFlightTitle: {
+      fontSize: 16,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '700',
+      color: colors.accent,
+    },
+    inFlightOrderId: {
+      fontSize: 12,
+      fontFamily: typography.fonts.body,
+      color: colors.textSecondary,
+    },
+    inFlightAmount: {
+      fontSize: 15,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    statusMessageBox: {
+      backgroundColor: isDark ? 'rgba(217, 119, 6, 0.15)' : '#FEF3C7',
+      padding: 10,
+      borderRadius: radii.sm,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(217, 119, 6, 0.4)' : '#FDE68A',
+    },
+    statusMessageText: {
+      fontSize: 13,
+      fontFamily: typography.fonts.body,
+      color: isDark ? '#F59E0B' : '#92400E',
+      lineHeight: 18,
+    },
+    inFlightActionCol: {
+      gap: 10,
+      marginTop: 6,
+    },
+    reopenLinkBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingVertical: 10,
+      backgroundColor: isDark ? colors.surfaceSecondary : '#EFF6FF',
+      borderRadius: radii.md,
+    },
+    reopenLinkText: {
+      fontSize: 13,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '600',
+      color: colors.accent,
+    },
+    verifyBtn: {
+      backgroundColor: '#059669',
+      paddingVertical: 14,
+      borderRadius: radii.md,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    verifyBtnText: {
+      color: '#FFFFFF',
+      fontSize: 14,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '700',
+    },
+    cancelPaymentBtn: {
+      paddingVertical: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    cancelPaymentText: {
+      fontSize: 13,
+      fontFamily: typography.fonts.body,
+      color: colors.textSecondary,
+      textDecorationLine: 'underline',
+    },
+    footer: {
+      paddingHorizontal: 20,
+      paddingTop: 12,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+    },
+    payBtn: {
+      backgroundColor: colors.accent,
+      paddingVertical: 16,
+      borderRadius: radii.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      ...shadows.sm,
+    },
+    payBtnText: {
+      color: '#FFFFFF',
+      fontSize: 16,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '700',
+    },
+    webViewContainer: {
+      flex: 1,
+      backgroundColor: colors.surface,
+    },
+    webViewHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      backgroundColor: colors.surface,
+    },
+    webViewTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    webViewTitle: {
+      fontSize: 15,
+      fontWeight: '700',
+      fontFamily: typography.fonts.heading,
+      color: colors.text,
+    },
+    webViewSubtitle: {
+      fontSize: 12,
+      fontFamily: typography.fonts.body,
+      color: colors.textSecondary,
+      marginTop: 1,
+    },
+    webViewCloseBtn: {
+      padding: 6,
+      borderRadius: radii.pill,
+      backgroundColor: isDark ? colors.surfaceSecondary : '#F3F4F6',
+    },
+    webViewUpiBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      backgroundColor: isDark ? colors.surfaceSecondary : '#E0F2FE',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: radii.pill,
+    },
+    webViewUpiBtnText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: colors.accent,
+      fontFamily: typography.fonts.heading,
+    },
+    webViewLoader: {
+      ...StyleSheet.absoluteFill,
+      backgroundColor: colors.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 12,
+    },
+    webViewLoaderText: {
+      fontSize: 13,
+      color: colors.textSecondary,
+      fontFamily: typography.fonts.body,
+    },
+  });
+};

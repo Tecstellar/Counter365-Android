@@ -307,9 +307,23 @@ export const menuService = {
   async saveMenuItem(item: MenuItem): Promise<MenuItem[]> {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const validatedId = uuidRegex.test(item.id) ? item.id : generateUUID();
+
+    let validCategoryId = item.categoryId;
+    if (!validCategoryId || !uuidRegex.test(validCategoryId)) {
+      const cats = await this.getCategories(item.shopId);
+      const matched = cats.find(c => uuidRegex.test(c.id));
+      if (matched) {
+        validCategoryId = matched.id;
+      } else {
+        const fallbackCat = await this.addCategory(item.shopId, 'General');
+        validCategoryId = fallbackCat.id;
+      }
+    }
+
     const itemToSave: MenuItem = {
       ...item,
       id: validatedId,
+      categoryId: validCategoryId,
       name: item.name.trim(),
       price: Number(item.price || 0),
       halfPrice: item.halfPrice ? Number(item.halfPrice) : undefined,

@@ -11,6 +11,7 @@ import {
   Animated,
   PanResponder,
   AccessibilityInfo,
+  Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { typography, radii, shadows, useTheme, Theme } from '../../theme';
@@ -78,7 +79,7 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
   const insets = useSafeAreaInsets();
   const { theme, isDark } = useTheme();
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
-  const { shop, refreshSubscription, subscriptionStatus } = useShop();
+  const { shop, updateShop, refreshSubscription, subscriptionStatus } = useShop();
   const { profile, currentRole, currentMember } = useAuth();
   const {
     cart,
@@ -97,6 +98,7 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
   const [paymentMode, setPaymentMode] = useState<PaymentMethod>(editingBill?.paymentMode || 'Cash');
   const [customerName, setCustomerName] = useState(editingBill?.customerName || '');
   const [customerPhone, setCustomerPhone] = useState(editingBill?.customerPhone || '');
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(editingBill?.customerId || null);
   const [isSaving, setIsSaving] = useState(false);
   const [savedCustomers, setSavedCustomers] = useState<CustomerRecord[]>([]);
 
@@ -104,42 +106,92 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
   const gstAmount = shop.gstEnabled ? calculateGST(subtotal, shop.gstRate) : 0;
   const totalAmount = subtotal + gstAmount;
 
-  // Cash + GPay split percentage (0 - 100, step 5, default 50)
-  const [splitPercent, setSplitPercent] = useState<number>(() => {
-    if (editingBill?.paymentMode === 'Cash + GPay' && editingBill.cashAmount) {
-      return Math.round((editingBill.cashAmount / totalAmount) * 20) * 5;
+  // Partial pay amount input (manual entry)
+  const [partialPaidInput, setPartialPaidInput] = useState<string>(() => {
+    if (editingBill?.paymentMode === 'Partial Pay' && editingBill.paidAmount !== undefined) {
+      return String(editingBill.paidAmount);
     }
-    return 50;
+    return String(Math.round(totalAmount * 0.5));
   });
 
-  // Partial pay amount (step 5, default 80% rounded to 5)
-  const [partialPaidAmt, setPartialPaidAmt] = useState<number>(() => {
-    if (editingBill?.paymentMode === 'Partial Pay' && editingBill.paidAmount) {
-      return editingBill.paidAmount;
+  // Cash + GPay split inputs (manual entry)
+  const [splitCashInput, setSplitCashInput] = useState<string>(() => {
+    if (editingBill?.paymentMode === 'Cash + GPay' && editingBill.cashAmount !== undefined) {
+      return String(editingBill.cashAmount);
     }
-    return Math.min(totalAmount, Math.max(0, Math.round((totalAmount * 0.8) / 5) * 5));
+    return String(Math.round(totalAmount * 0.5));
   });
 
-  // Update defaults if totalAmount changes
+  const [splitGpayInput, setSplitGpayInput] = useState<string>(() => {
+    if (editingBill?.paymentMode === 'Cash + GPay' && editingBill.gpayAmount !== undefined) {
+      return String(editingBill.gpayAmount);
+    }
+    return String(totalAmount - Math.round(totalAmount * 0.5));
+  });
+
+  // Update defaults when totalAmount changes
   useEffect(() => {
     if (!editingBill) {
-      setPartialPaidAmt(Math.min(totalAmount, Math.max(0, Math.round((totalAmount * 0.8) / 5) * 5)));
+      const half = Math.round(totalAmount * 0.5);
+      setPartialPaidInput(String(half));
+      setSplitCashInput(String(half));
+      setSplitGpayInput(String(totalAmount - half));
     }
   }, [totalAmount, editingBill]);
 
-  // Derived Split Amounts
-  const splitCashAmt = Math.round((totalAmount * splitPercent) / 100);
-  const splitGpayAmt = totalAmount - splitCashAmt;
+  const partialPaidAmt = Math.min(totalAmount, Math.max(0, Number(partialPaidInput) || 0));
   const partialDueAmt = Math.max(0, totalAmount - partialPaidAmt);
 
-  // Dropdown Animation States
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const dropdownAnim = useRef(new Animated.Value(0)).current; // 0 = closed, 1 = open
-  const chevronRotate = useRef(new Animated.Value(0)).current;
-  const closedIconScale = useRef(new Animated.Value(1)).current;
-  const rowFadeAnims = useRef(PAYMENT_MODES.map(() => new Animated.Value(0))).current;
-  const rowSlideAnims = useRef(PAYMENT_MODES.map(() => new Animated.Value(10))).current;
-  const checkScaleAnims = useRef(PAYMENT_MODES.map(() => new Animated.Value(0))).current;
+  const splitCashAmt = Math.max(0, Number(splitCashInput) || 0);
+  const splitGpayAmt = Math.max(0, Number(splitGpayInput) || 0);
+
+  // Shop UPI ID prompt modal state
+  const [isUpiPromptOpen, setIsUpiPromptOpen] = useState(false);
+  const [shopUpiInput, setShopUpiInput] = useState(shop.upiId || '');
+
+  const handleSelectPaymentMode = (mode: PaymentMethod) => {
+    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+    setPaymentMode(mode);
+
+    if ((mode === 'Partial Pay' || mode === 'Pending') && !shop.upiId) {
+      setIsUpiPromptOpen(true);
+    }
+  };
+
+  const handleCashInputChange = (val: string) => {
+    const clean = val.replace(/[^0-9]/g, '');
+    setSplitCashInput(clean);
+    const num = Number(clean) || 0;
+    const remainder = Math.max(0, totalAmount - num);
+    setSplitGpayInput(String(remainder));
+  };
+
+  const handleGpayInputChange = (val: string) => {
+    const clean = val.replace(/[^0-9]/g, '');
+    setSplitGpayInput(clean);
+    const num = Number(clean) || 0;
+    const remainder = Math.max(0, totalAmount - num);
+    setSplitCashInput(String(remainder));
+  };
+
+  const handlePartialPaidChange = (val: string) => {
+    const clean = val.replace(/[^0-9]/g, '');
+    const num = Number(clean) || 0;
+    if (num > totalAmount) {
+      setPartialPaidInput(String(totalAmount));
+    } else {
+      setPartialPaidInput(clean);
+    }
+  };
+
+  // Handle saving shop UPI ID
+  const handleSaveShopUpi = async () => {
+    if (shopUpiInput.trim()) {
+      await updateShop({ upiId: shopUpiInput.trim() });
+      flash('Shop UPI ID saved');
+    }
+    setIsUpiPromptOpen(false);
+  };
 
   // Count-up total animation (0 -> totalAmount over 900ms)
   const [displayTotal, setDisplayTotal] = useState(0);
@@ -281,101 +333,13 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
     ]).start();
   };
 
-  // Dropdown open/close handler
-  const toggleDropdown = () => {
-    const willOpen = !isDropdownOpen;
-    setIsDropdownOpen(willOpen);
-    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-
-    Animated.parallel([
-      Animated.timing(dropdownAnim, {
-        toValue: willOpen ? 1 : 0,
-        duration: 380,
-        useNativeDriver: false,
-      }),
-      Animated.timing(chevronRotate, {
-        toValue: willOpen ? 1 : 0,
-        duration: 280,
-        useNativeDriver: true,
-      }),
-    ]).start();
-
-    if (willOpen) {
-      PAYMENT_MODES.forEach((_, idx) => {
-        rowFadeAnims[idx].setValue(0);
-        rowSlideAnims[idx].setValue(10);
-        checkScaleAnims[idx].setValue(PAYMENT_MODES[idx].mode === paymentMode ? 1 : 0);
-
-        Animated.parallel([
-          Animated.timing(rowFadeAnims[idx], {
-            toValue: 1,
-            duration: 200,
-            delay: idx * 50,
-            useNativeDriver: true,
-          }),
-          Animated.timing(rowSlideAnims[idx], {
-            toValue: 0,
-            duration: 220,
-            delay: idx * 50,
-            useNativeDriver: true,
-          }),
-        ]).start();
-      });
-    }
-  };
-
-  const closeDropdown = () => {
-    if (!isDropdownOpen) return;
-    setIsDropdownOpen(false);
-    Animated.parallel([
-      Animated.timing(dropdownAnim, {
-        toValue: 0,
-        duration: 260,
-        useNativeDriver: false,
-      }),
-      Animated.timing(chevronRotate, {
-        toValue: 0,
-        duration: 240,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  };
-
-  const selectPaymentMode = (mode: PaymentMethod, idx: number) => {
-    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
-    setPaymentMode(mode);
-
-    // Animate checkmark spring
-    PAYMENT_MODES.forEach((_, i) => {
-      checkScaleAnims[i].setValue(i === idx ? 0 : 0);
-    });
-    Animated.spring(checkScaleAnims[idx], {
-      toValue: 1,
-      friction: 4,
-      tension: 60,
-      useNativeDriver: true,
-    }).start();
-
-    // Pop icon tile
-    closedIconScale.setValue(0.85);
-    Animated.spring(closedIconScale, {
-      toValue: 1,
-      friction: 4,
-      tension: 50,
-      useNativeDriver: true,
-    }).start();
-
-    // Auto close after 180ms
-    setTimeout(() => {
-      closeDropdown();
-    }, 180);
-  };
 
   // Select customer from list
   const handleSelectCustomer = (c: CustomerRecord) => {
     try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
     setCustomerName(c.name);
     setCustomerPhone(c.phone ? c.phone.replace(/[^0-9]/g, '').slice(0, 10) : '');
+    setSelectedCustomerId(c.id);
     transitionCustomerState('selected');
     flash(`Selected ${c.name}`);
   };
@@ -443,6 +407,7 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
     setIsSaving(true);
     try {
       let finalCustomerName = customerName.trim();
+      let finalCustomerId = selectedCustomerId;
       const cleanPhone = customerPhone.replace(/[^0-9]/g, '').slice(-10);
       if (cleanPhone.length === 10) {
         const matched = savedCustomers.find(
@@ -450,6 +415,7 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
         );
         if (matched) {
           finalCustomerName = matched.name;
+          finalCustomerId = matched.id;
         }
       }
 
@@ -460,6 +426,12 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
       };
 
       if (editingBill) {
+        if (currentRole === 'Biller') {
+          flash('Only Owner or Supervisor can edit completed bills');
+          setIsSaving(false);
+          return;
+        }
+
         const updatedBill = await billingService.updateBill({
           shopId: shop.id,
           billId: editingBill.id,
@@ -472,6 +444,7 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
           tableNumber: selectedTable,
           customerName: finalCustomerName || undefined,
           customerPhone: customerPhone.trim() || undefined,
+          customerId: finalCustomerId || undefined,
           editor: userMeta,
         });
 
@@ -491,6 +464,7 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
           tableNumber: selectedTable,
           customerName: finalCustomerName || undefined,
           customerPhone: customerPhone.trim() || undefined,
+          customerId: finalCustomerId || undefined,
           creator: userMeta,
         });
 
@@ -507,12 +481,6 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
     }
   };
 
-  const selectedConfig = PAYMENT_MODES.find(m => m.mode === paymentMode) || PAYMENT_MODES[0];
-
-  const chevronSpin = chevronRotate.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0deg', '180deg'],
-  });
 
   return (
     <KeyboardAvoidingView
@@ -569,15 +537,32 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
         </View>
 
         {/* Selected Dining Table Indicator */}
-        {selectedTable && (
+        {(selectedTable || shop.tableManagementEnabled) && (
           <View style={styles.tableBadgeRow}>
             <View style={styles.tableBadge}>
-              <Ionicons name="restaurant-outline" size={15} color="#FF5F00" />
-              <Text style={styles.tableBadgeText}>Dining: {selectedTable}</Text>
+              <Ionicons
+                name={selectedTable ? "restaurant-outline" : "storefront-outline"}
+                size={15}
+                color={selectedTable ? "#FF5F00" : theme.colors.textSecondary}
+              />
+              <Text style={styles.tableBadgeText}>
+                {selectedTable ? `Dining: Table ${selectedTable}` : 'Order Mode: Counter (Takeaway)'}
+              </Text>
             </View>
-            <TouchableOpacity onPress={() => setSelectedTable(null)} style={styles.clearTableBtn}>
-              <Text style={styles.clearTableText}>Remove</Text>
-            </TouchableOpacity>
+            {selectedTable ? (
+              <TouchableOpacity
+                onPress={() => {
+                  try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+                  setSelectedTable(null);
+                  flash('Switched to Counter (Takeaway) • Bill items preserved');
+                }}
+                style={styles.clearTableBtn}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="arrow-undo-outline" size={13} color="#FF5F00" style={{ marginRight: 2 }} />
+                <Text style={styles.clearTableText}>Clear Table / Switch to Counter</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         )}
 
@@ -656,104 +641,37 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
         {/* 3. Payment Mode Section Header */}
         <Text style={styles.sectionTitle}>Payment mode</Text>
 
-        {/* Payment Mode Dropdown */}
-        <View style={styles.dropdownContainer}>
-          {/* Closed / Main Header Card */}
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={toggleDropdown}
-            accessibilityRole="combobox"
-            accessibilityState={{ expanded: isDropdownOpen }}
-            accessibilityLabel={`Payment mode: ${selectedConfig.name}`}
-            style={[
-              styles.dropdownHeaderCard,
-              isDropdownOpen && styles.dropdownHeaderCardActive,
-            ]}
-          >
-            <Animated.View
-              style={[
-                styles.modeIconTile,
-                { transform: [{ scale: closedIconScale }] },
-              ]}
-            >
-              <Ionicons name={selectedConfig.icon} size={22} color="#FF5F00" />
-            </Animated.View>
-
-            <View style={styles.dropdownHeaderInfo}>
-              <Text style={styles.selectedCaption}>Selected</Text>
-              <Text style={styles.selectedModeName}>{selectedConfig.name}</Text>
-            </View>
-
-            <Animated.View style={{ transform: [{ rotate: chevronSpin }] }}>
-              <Ionicons
-                name="chevron-down"
-                size={20}
-                color={isDropdownOpen ? '#FF5F00' : isDark ? '#9A948D' : '#76716B'}
-              />
-            </Animated.View>
-          </TouchableOpacity>
-
-          {/* Dropdown Options List */}
-          {isDropdownOpen && (
-            <View style={styles.dropdownOptionsList}>
-              {PAYMENT_MODES.map((item, idx) => {
-                const isSelected = item.mode === paymentMode;
-                return (
-                  <Animated.View
-                    key={item.mode}
-                    style={{
-                      opacity: rowFadeAnims[idx],
-                      transform: [{ translateY: rowSlideAnims[idx] }],
-                    }}
-                  >
-                    <TouchableOpacity
-                      activeOpacity={0.7}
-                      onPress={() => selectPaymentMode(item.mode, idx)}
-                      style={[
-                        styles.dropdownOptionRow,
-                        isSelected && styles.dropdownOptionRowSelected,
-                      ]}
-                      accessibilityRole="button"
-                    >
-                      <View
-                        style={[
-                          styles.optionIconTile,
-                          isSelected && styles.optionIconTileSelected,
-                        ]}
-                      >
-                        <Ionicons
-                          name={item.icon}
-                          size={20}
-                          color={isSelected ? '#FF5F00' : isDark ? '#F5F3F0' : '#111111'}
-                        />
-                      </View>
-
-                      <View style={styles.optionTextWrap}>
-                        <Text style={[styles.optionName, isSelected && styles.optionNameSelected]}>
-                          {item.name}
-                        </Text>
-                        <Text style={styles.optionDesc}>{item.description}</Text>
-                      </View>
-
-                      {isSelected && (
-                        <Animated.View
-                          style={[
-                            styles.selectedCheckWrap,
-                            { transform: [{ scale: checkScaleAnims[idx] }] },
-                          ]}
-                        >
-                          <Ionicons name="checkmark-circle" size={22} color="#FF5F00" />
-                        </Animated.View>
-                      )}
-                    </TouchableOpacity>
-                  </Animated.View>
-                );
-              })}
-            </View>
-          )}
+        {/* Payment Mode Selection - Clean Chips Grid */}
+        <View style={styles.paymentChipsContainer}>
+          {PAYMENT_MODES.map((item) => {
+            const isSelected = item.mode === paymentMode;
+            return (
+              <TouchableOpacity
+                key={item.mode}
+                activeOpacity={0.75}
+                onPress={() => handleSelectPaymentMode(item.mode)}
+                style={[
+                  styles.paymentChip,
+                  isSelected && styles.paymentChipSelected,
+                ]}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: isSelected }}
+              >
+                <Ionicons
+                  name={item.icon}
+                  size={17}
+                  color={isSelected ? '#FF5F00' : isDark ? '#A8A29E' : '#57534E'}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={[styles.paymentChipText, isSelected && styles.paymentChipTextSelected]}>
+                  {item.name}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
-        {/* 4. Contextual Panel (Directly under dropdown, animated fade+slide on mode change) */}
+        {/* 4. Contextual Payment Panel */}
         <Animated.View
           style={[
             styles.contextualPanel,
@@ -763,7 +681,7 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
                 {
                   translateY: panelAnim.interpolate({
                     inputRange: [0, 1],
-                    outputRange: [-8, 0],
+                    outputRange: [-6, 0],
                   }),
                 },
               ],
@@ -790,125 +708,87 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
             </View>
           )}
 
-          {/* Mode: Cash + GPay (Split bar + slider 0..100) */}
-          {paymentMode === 'Cash + GPay' && (
-            <View style={styles.splitBox}>
-              <View style={styles.splitValuesRow}>
-                <View style={styles.splitValTag}>
-                  <Text style={styles.splitValLabel}>Cash (Black)</Text>
-                  <Text style={styles.splitValAmount}>{formatRupee(splitCashAmt)}</Text>
-                </View>
-                <View style={[styles.splitValTag, { alignItems: 'flex-end' }]}>
-                  <Text style={[styles.splitValLabel, { color: '#FF5F00' }]}>GPay (Orange)</Text>
-                  <Text style={[styles.splitValAmount, { color: '#FF5F00' }]}>
-                    {formatRupee(splitGpayAmt)}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Animated Split Bar */}
-              <View style={styles.splitBarTrack}>
-                <View style={[styles.splitBarCash, { width: `${splitPercent}%` }]} />
-                <View style={[styles.splitBarGpay, { width: `${100 - splitPercent}%` }]} />
-              </View>
-
-              {/* Stepper / Slider Controls */}
-              <View style={styles.sliderControlRow}>
-                <TouchableOpacity
-                  onPress={() => setSplitPercent(prev => Math.max(0, prev - 5))}
-                  style={styles.stepCtrlBtn}
-                >
-                  <Text style={styles.stepCtrlBtnText}>− 5%</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => setSplitPercent(50)}
-                  style={[styles.stepCtrlBtn, splitPercent === 50 && styles.stepCtrlBtnActive]}
-                >
-                  <Text style={[styles.stepCtrlBtnText, splitPercent === 50 && styles.stepCtrlBtnTextActive]}>
-                    50 / 50
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => setSplitPercent(prev => Math.min(100, prev + 5))}
-                  style={styles.stepCtrlBtn}
-                >
-                  <Text style={styles.stepCtrlBtnText}>+ 5%</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-
           {/* Mode: Full Pending */}
           {paymentMode === 'Pending' && (
-            <View style={styles.noteCard}>
+            <View style={[styles.noteCard, styles.pendingNoteCard]}>
               <Ionicons name="time" size={18} color="#DC2626" style={{ marginRight: 10 }} />
               <Text style={styles.noteText}>
-                <Text style={styles.boldText}>{formatRupee(totalAmount)}</Text> will be added to the udhar ledger · customer needed
+                <Text style={[styles.boldText, { color: '#DC2626' }]}>{formatRupee(totalAmount)}</Text> will be added to udhar ledger · customer needed
               </Text>
             </View>
           )}
 
-          {/* Mode: Partial Pay (Paid/Due bar + slider 0..totalAmount) */}
+          {/* Mode: Cash + GPay (Compact 2 text fields, no extra spaces) */}
+          {paymentMode === 'Cash + GPay' && (
+            <View style={styles.splitBox}>
+              <View style={styles.splitInputsRow}>
+                <View style={styles.splitInputCol}>
+                  <Text style={styles.splitInputLabel}>Cash (₹)</Text>
+                  <View style={styles.splitInputWrapper}>
+                    <Text style={styles.rupeeSymbol}>₹</Text>
+                    <TextInput
+                      style={styles.splitTextInput}
+                      keyboardType="number-pad"
+                      value={splitCashInput}
+                      onChangeText={handleCashInputChange}
+                      placeholder="0"
+                      placeholderTextColor={isDark ? '#71717A' : '#A1A1AA'}
+                      maxLength={7}
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.splitInputCol}>
+                  <Text style={[styles.splitInputLabel, { color: '#FF5F00' }]}>GPay (₹)</Text>
+                  <View style={[styles.splitInputWrapper, { borderColor: '#FF5F00' }]}>
+                    <Text style={[styles.rupeeSymbol, { color: '#FF5F00' }]}>₹</Text>
+                    <TextInput
+                      style={styles.splitTextInput}
+                      keyboardType="number-pad"
+                      value={splitGpayInput}
+                      onChangeText={handleGpayInputChange}
+                      placeholder="0"
+                      placeholderTextColor={isDark ? '#71717A' : '#A1A1AA'}
+                      maxLength={7}
+                    />
+                  </View>
+                </View>
+              </View>
+
+              <View style={styles.splitFooterRow}>
+                <Text style={styles.splitHelperText}>
+                  Total: {formatRupee(totalAmount)} · Auto-balanced
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* Mode: Partial Pay (Compact 1 text field, auto-calculate balance due) */}
           {paymentMode === 'Partial Pay' && (
             <View style={styles.splitBox}>
-              <View style={styles.splitValuesRow}>
-                <View style={styles.splitValTag}>
-                  <Text style={[styles.splitValLabel, { color: '#059669' }]}>Paid Now</Text>
-                  <Text style={[styles.splitValAmount, { color: '#059669' }]}>
-                    {formatRupee(partialPaidAmt)}
-                  </Text>
-                </View>
-                <View style={[styles.splitValTag, { alignItems: 'flex-end' }]}>
-                  <Text style={[styles.splitValLabel, { color: '#DC2626' }]}>Due on Ledger</Text>
-                  <Text style={[styles.splitValAmount, { color: '#DC2626' }]}>
-                    {formatRupee(partialDueAmt)}
-                  </Text>
+              <View style={styles.partialInputRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.splitInputLabel}>Paid Now (₹)</Text>
+                  <View style={styles.splitInputWrapper}>
+                    <Text style={styles.rupeeSymbol}>₹</Text>
+                    <TextInput
+                      style={styles.splitTextInput}
+                      keyboardType="number-pad"
+                      value={partialPaidInput}
+                      onChangeText={handlePartialPaidChange}
+                      placeholder="0"
+                      placeholderTextColor={isDark ? '#71717A' : '#A1A1AA'}
+                      maxLength={7}
+                    />
+                  </View>
                 </View>
               </View>
 
-              {/* Paid / Due Progress Bar */}
-              <View style={styles.partialBarTrack}>
-                <View
-                  style={[
-                    styles.partialBarFill,
-                    {
-                      width: totalAmount > 0 ? `${Math.min(100, (partialPaidAmt / totalAmount) * 100)}%` : '0%',
-                    },
-                  ]}
-                />
-              </View>
-
-              {/* Stepper Controls */}
-              <View style={styles.sliderControlRow}>
-                <TouchableOpacity
-                  onPress={() => setPartialPaidAmt(prev => Math.max(0, prev - 5))}
-                  style={styles.stepCtrlBtn}
-                >
-                  <Text style={styles.stepCtrlBtnText}>− ₹5</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => setPartialPaidAmt(Math.round((totalAmount * 0.5) / 5) * 5)}
-                  style={styles.stepCtrlBtn}
-                >
-                  <Text style={styles.stepCtrlBtnText}>50%</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => setPartialPaidAmt(Math.round((totalAmount * 0.8) / 5) * 5)}
-                  style={styles.stepCtrlBtn}
-                >
-                  <Text style={styles.stepCtrlBtnText}>80%</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => setPartialPaidAmt(prev => Math.min(totalAmount, prev + 5))}
-                  style={styles.stepCtrlBtn}
-                >
-                  <Text style={styles.stepCtrlBtnText}>+ ₹5</Text>
-                </TouchableOpacity>
+              <View style={styles.partialSummaryRow}>
+                <View style={styles.partialDueBadge}>
+                  <Text style={styles.partialDueLabel}>Balance Due on Ledger:</Text>
+                  <Text style={styles.partialDueAmount}>{formatRupee(partialDueAmt)}</Text>
+                </View>
               </View>
             </View>
           )}
@@ -1117,6 +997,49 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
           <Text style={styles.shareWhatsappBtnText}>Share WhatsApp</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Shop UPI Prompt Modal */}
+      <Modal
+        visible={isUpiPromptOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsUpiPromptOpen(false)}
+      >
+        <View style={styles.upiModalBackdrop}>
+          <View style={styles.upiModalCard}>
+            <View style={styles.upiModalIconWrap}>
+              <Ionicons name="qr-code" size={26} color="#FF5F00" />
+            </View>
+            <Text style={styles.upiModalTitle}>Shop UPI ID</Text>
+            <Text style={styles.upiModalDesc}>
+              Add your UPI ID so customers can easily pay their balance due via WhatsApp receipts.
+            </Text>
+            <TextInput
+              style={styles.upiTextInput}
+              value={shopUpiInput}
+              onChangeText={setShopUpiInput}
+              placeholder="e.g. yourshop@okhdfcbank"
+              placeholderTextColor={isDark ? '#71717A' : '#A1A1AA'}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <View style={styles.upiModalActions}>
+              <TouchableOpacity
+                onPress={() => setIsUpiPromptOpen(false)}
+                style={styles.upiModalCancelBtn}
+              >
+                <Text style={styles.upiModalCancelText}>Skip</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleSaveShopUpi}
+                style={styles.upiModalSaveBtn}
+              >
+                <Text style={styles.upiModalSaveText}>Save UPI ID</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 };
@@ -1381,108 +1304,40 @@ const createStyles = (theme: Theme, isDark: boolean) => {
       marginBottom: 8,
       letterSpacing: 0.3,
     },
-    dropdownContainer: {
-      marginBottom: 10,
-      borderRadius: 18,
-      backgroundColor: isDark ? 'rgba(23, 23, 23, 0.85)' : 'rgba(255, 255, 255, 0.85)',
+    // ─── Payment Chips Selection ───────────────────────────────────────────
+    paymentChipsContainer: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginBottom: 12,
+    },
+    paymentChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 9,
+      paddingHorizontal: 13,
+      borderRadius: 14,
+      backgroundColor: surface,
       borderWidth: 1,
       borderColor: line,
-      overflow: 'hidden',
-      ...shadows.card,
+      ...shadows.sm,
     },
-    dropdownHeaderCard: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      padding: 12,
-      borderRadius: 18,
-      backgroundColor: 'transparent',
-    },
-    dropdownHeaderCardActive: {
-      borderWidth: 1,
+    paymentChipSelected: {
       borderColor: orange,
-      shadowColor: orange,
-      shadowOpacity: 0.25,
-      shadowRadius: 5,
-      elevation: 4,
-    },
-    modeIconTile: {
-      width: 42,
-      height: 42,
-      borderRadius: 14,
-      backgroundColor: orangeSoft,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginRight: 12,
-    },
-    dropdownHeaderInfo: {
-      flex: 1,
-    },
-    selectedCaption: {
-      fontFamily: typography.fonts.heading,
-      fontSize: 10.5,
-      fontWeight: '700',
-      color: muted,
-      letterSpacing: 0.5,
-      textTransform: 'uppercase',
-    },
-    selectedModeName: {
-      fontFamily: typography.fonts.heading,
-      fontSize: 16,
-      fontWeight: '800',
-      color: ink,
-      marginTop: 1,
-    },
-    dropdownOptionsList: {
-      borderTopWidth: 1,
-      borderTopColor: line,
-      paddingVertical: 4,
-    },
-    dropdownOptionRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      minHeight: 56,
-      paddingHorizontal: 14,
-      paddingVertical: 8,
-    },
-    dropdownOptionRowSelected: {
       backgroundColor: orangeSoft,
     },
-    optionIconTile: {
-      width: 42,
-      height: 42,
-      borderRadius: 14,
-      backgroundColor: alt,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginRight: 12,
-    },
-    optionIconTileSelected: {
-      backgroundColor: orangeSoft,
-    },
-    optionTextWrap: {
-      flex: 1,
-    },
-    optionName: {
+    paymentChipText: {
       fontFamily: typography.fonts.heading,
-      fontSize: 14.5,
+      fontSize: 13,
       fontWeight: '700',
       color: ink,
     },
-    optionNameSelected: {
+    paymentChipTextSelected: {
       color: orangeText,
       fontWeight: '800',
     },
-    optionDesc: {
-      fontFamily: typography.fonts.body,
-      fontSize: 11.5,
-      color: muted,
-      marginTop: 1,
-    },
-    selectedCheckWrap: {
-      marginLeft: 8,
-    },
 
-    // ─── Contextual Panel ───────────────────────────────────────────────────
+    // ─── Contextual Payment Panel ───────────────────────────────────────────
     contextualPanel: {
       marginBottom: 16,
     },
@@ -1494,6 +1349,10 @@ const createStyles = (theme: Theme, isDark: boolean) => {
       backgroundColor: orangeSoft,
       borderWidth: 1,
       borderColor: isDark ? 'rgba(255, 95, 0, 0.3)' : 'rgba(255, 95, 0, 0.25)',
+    },
+    pendingNoteCard: {
+      backgroundColor: isDark ? 'rgba(220, 38, 38, 0.12)' : '#FEE2E2',
+      borderColor: isDark ? 'rgba(220, 38, 38, 0.3)' : '#FCA5A5',
     },
     noteText: {
       fontFamily: typography.fonts.body,
@@ -1508,89 +1367,180 @@ const createStyles = (theme: Theme, isDark: boolean) => {
     },
     splitBox: {
       borderRadius: 18,
-      padding: 16,
+      padding: 14,
       backgroundColor: surface,
       borderWidth: 1,
       borderColor: line,
-      gap: 12,
       ...shadows.sm,
     },
-    splitValuesRow: {
+    splitInputsRow: {
       flexDirection: 'row',
-      justifyContent: 'space-between',
+      gap: 10,
+      alignItems: 'center',
     },
-    splitValTag: {
+    splitInputCol: {
       flex: 1,
     },
-    splitValLabel: {
+    splitInputLabel: {
       fontFamily: typography.fonts.heading,
-      fontSize: 11,
+      fontSize: 11.5,
       fontWeight: '700',
       color: muted,
-      letterSpacing: 0.4,
+      marginBottom: 4,
     },
-    splitValAmount: {
-      fontFamily: typography.fonts.numbers,
-      fontSize: 17,
-      fontWeight: '800',
-      color: ink,
-      marginTop: 2,
-    },
-    splitBarTrack: {
-      height: 12,
-      borderRadius: 6,
+    splitInputWrapper: {
       flexDirection: 'row',
-      overflow: 'hidden',
-      backgroundColor: '#111111',
+      alignItems: 'center',
+      backgroundColor: alt,
+      borderRadius: 12,
+      borderWidth: 1.5,
+      borderColor: line,
+      paddingHorizontal: 10,
+      height: 44,
     },
-    splitBarCash: {
-      height: '100%',
-      backgroundColor: '#111111',
+    rupeeSymbol: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 15,
+      fontWeight: '700',
+      color: muted,
+      marginRight: 4,
     },
-    splitBarGpay: {
-      height: '100%',
-      backgroundColor: orange,
+    splitTextInput: {
+      flex: 1,
+      fontFamily: typography.fonts.numbers,
+      fontSize: 16,
+      fontWeight: '700',
+      color: ink,
+      padding: 0,
     },
-    partialBarTrack: {
-      height: 12,
-      borderRadius: 6,
-      backgroundColor: orangeSoft,
-      overflow: 'hidden',
+    splitFooterRow: {
+      marginTop: 8,
+      alignItems: 'center',
     },
-    partialBarFill: {
-      height: '100%',
-      backgroundColor: orange,
-      borderRadius: 6,
+    splitHelperText: {
+      fontFamily: typography.fonts.body,
+      fontSize: 11.5,
+      color: muted,
     },
-    sliderControlRow: {
+    partialInputRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    partialSummaryRow: {
+      marginTop: 10,
+    },
+    partialDueBadge: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      gap: 8,
-    },
-    stepCtrlBtn: {
-      flex: 1,
-      paddingVertical: 7,
+      backgroundColor: isDark ? 'rgba(220, 38, 38, 0.12)' : '#FEE2E2',
+      paddingVertical: 8,
+      paddingHorizontal: 12,
       borderRadius: 10,
-      backgroundColor: alt,
-      alignItems: 'center',
-      justifyContent: 'center',
       borderWidth: 1,
-      borderColor: line,
+      borderColor: isDark ? 'rgba(220, 38, 38, 0.25)' : '#FCA5A5',
     },
-    stepCtrlBtnActive: {
-      backgroundColor: orange,
-      borderColor: orange,
-    },
-    stepCtrlBtnText: {
+    partialDueLabel: {
       fontFamily: typography.fonts.heading,
       fontSize: 12,
       fontWeight: '700',
-      color: ink,
+      color: isDark ? '#FCA5A5' : '#B91C1C',
     },
-    stepCtrlBtnTextActive: {
+    partialDueAmount: {
+      fontFamily: typography.fonts.numbers,
+      fontSize: 15,
+      fontWeight: '800',
+      color: isDark ? '#EF4444' : '#DC2626',
+    },
+
+    // ─── UPI Prompt Modal ───────────────────────────────────────────────────
+    upiModalBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.6)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    upiModalCard: {
+      width: '100%',
+      maxWidth: 360,
+      backgroundColor: surface,
+      borderRadius: 20,
+      padding: 22,
+      ...shadows.card,
+      borderWidth: 1,
+      borderColor: line,
+    },
+    upiModalIconWrap: {
+      width: 48,
+      height: 48,
+      borderRadius: 14,
+      backgroundColor: orangeSoft,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 12,
+    },
+    upiModalTitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 18,
+      fontWeight: '800',
+      color: ink,
+      marginBottom: 6,
+    },
+    upiModalDesc: {
+      fontFamily: typography.fonts.body,
+      fontSize: 13,
+      color: muted,
+      marginBottom: 16,
+      lineHeight: 18,
+    },
+    upiTextInput: {
+      backgroundColor: alt,
+      borderWidth: 1.5,
+      borderColor: line,
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      height: 46,
+      fontFamily: typography.fonts.body,
+      fontSize: 14.5,
+      color: ink,
+      marginBottom: 18,
+    },
+    upiModalActions: {
+      flexDirection: 'row',
+      gap: 10,
+    },
+    upiModalCancelBtn: {
+      flex: 1,
+      height: 44,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: line,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: alt,
+    },
+    upiModalCancelText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 13.5,
+      fontWeight: '700',
+      color: muted,
+    },
+    upiModalSaveBtn: {
+      flex: 1.5,
+      height: 44,
+      borderRadius: 12,
+      backgroundColor: orange,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    upiModalSaveText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 13.5,
+      fontWeight: '700',
       color: '#FFFFFF',
     },
+
 
     // ─── Customer Card Section ──────────────────────────────────────────────
     customerCardSection: {

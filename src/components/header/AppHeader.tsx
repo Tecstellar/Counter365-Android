@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform, Image, Animated } f
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { colors, typography, radii, shadows, useTheme } from '../../theme';
+import { colors, typography, radii, shadows, useTheme, Theme } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
 import { useShop } from '../../context/ShopContext';
 
@@ -17,6 +17,7 @@ const UniqueAnimatedHeaderMenuButton: React.FC<{
   onPress: () => void;
   theme: any;
 }> = ({ onPress, theme }) => {
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
   const scaleAnim = React.useRef(new Animated.Value(1)).current;
   const rotateAnim = React.useRef(new Animated.Value(0)).current;
 
@@ -51,13 +52,7 @@ const UniqueAnimatedHeaderMenuButton: React.FC<{
           } catch {}
           onPress();
         }}
-        style={[
-          styles.menuButton,
-          {
-            backgroundColor: theme.colors.surface,
-            borderColor: theme.colors.border,
-          },
-        ]}
+        style={styles.menuButton}
         accessibilityLabel="Open Navigation Menu"
       >
         {/* Unique Staggered Hamburger Lines */}
@@ -80,6 +75,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
   const { currentRole, can, profile } = useAuth();
   const { shop } = useShop();
 
@@ -147,104 +143,107 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    backgroundColor: colors.bg,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.divider,
-    gap: 12,
-  },
-  menuButton: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 14,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: colors.divider,
-    position: 'relative',
-    ...shadows.card,
-  },
-  menuLinesWrapper: {
-    width: 22,
-    height: 18,
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  menuLine: {
-    height: 2.5,
-    borderRadius: 2,
-  },
-  menuLineTop: {
-    width: 16,
-  },
-  menuLineMiddle: {
-    width: 22,
-  },
-  menuLineBottom: {
-    width: 12,
-  },
-  menuCornerDot: {
-    position: 'absolute',
-    top: 6,
-    right: 6,
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#FF5F00',
-    opacity: 0.8,
-  },
-  avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#FF5F00',
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-    ...shadows.sm,
-  },
-  avatarImage: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-  },
-  avatarText: {
-    fontFamily: typography.fonts.heading,
-    fontSize: 17,
-    color: '#FFFFFF',
-    fontWeight: '800',
-  },
-  info: {
-    flex: 1,
-    minWidth: 0,
-  },
-  shopName: {
-    fontFamily: typography.fonts.heading,
-    fontSize: 16,
-    color: colors.text,
-    fontWeight: '700',
-  },
-  subtitle: {
-    fontSize: 12.5,
-    color: colors.textMuted,
-    marginTop: 2,
-    fontFamily: typography.fonts.body,
-  },
-  reportsButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.divider,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
-    ...shadows.card,
-  },
-});
+const createStyles = (theme: Theme) => {
+  const colors = theme.colors;
+  return StyleSheet.create({
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 12,
+      paddingHorizontal: 20,
+      backgroundColor: colors.bg,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.divider,
+      gap: 12,
+    },
+    menuButton: {
+      width: 44,
+      height: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 14,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      position: 'relative',
+      ...shadows.card,
+    },
+    menuLinesWrapper: {
+      width: 22,
+      height: 18,
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+    },
+    menuLine: {
+      height: 2.5,
+      borderRadius: 2,
+    },
+    menuLineTop: {
+      width: 16,
+    },
+    menuLineMiddle: {
+      width: 22,
+    },
+    menuLineBottom: {
+      width: 12,
+    },
+    menuCornerDot: {
+      position: 'absolute',
+      top: 6,
+      right: 6,
+      width: 4,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: '#FF5F00',
+      opacity: 0.8,
+    },
+    avatar: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: '#FF5F00',
+      alignItems: 'center',
+      justifyContent: 'center',
+      overflow: 'hidden',
+      ...shadows.sm,
+    },
+    avatarImage: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+    },
+    avatarText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 17,
+      color: '#FFFFFF',
+      fontWeight: '800',
+    },
+    info: {
+      flex: 1,
+      minWidth: 0,
+    },
+    shopName: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 16,
+      color: colors.text,
+      fontWeight: '700',
+    },
+    subtitle: {
+      fontSize: 12.5,
+      color: colors.textSecondary,
+      marginTop: 2,
+      fontFamily: typography.fonts.body,
+    },
+    reportsButton: {
+      width: 44,
+      height: 44,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surface,
+      ...shadows.card,
+    },
+  });
+};

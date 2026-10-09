@@ -340,7 +340,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 }) => {
   const { theme, isDark } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
-  const { currentRole, can, profile } = useAuth();
+  const { currentRole, can, profile, currentMember } = useAuth();
   const { shop, refreshSubscription } = useShop();
   const { flash } = useCart();
 
@@ -494,6 +494,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
   const handleConfirmDeleteBill = async () => {
     if (!billToDelete || !shop.id) return;
+    if (currentRole === 'Biller') {
+      flash('Only Owner or Supervisor can delete bills');
+      setBillToDelete(null);
+      return;
+    }
     setIsDeletingBill(true);
     try {
       await billingService.deleteBill(shop.id, billToDelete.id, {
@@ -690,7 +695,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       return;
     }
 
-    const newExp = await expenseService.addExpense(shop.id, name, amt);
+    const userMeta = {
+      name: profile?.fullName || currentMember?.fullName || currentRole,
+      role: currentRole,
+      id: profile?.id || currentMember?.id,
+    };
+
+    const newExp = await expenseService.addExpense(shop.id, name, amt, { creator: userMeta });
     setExpenses(prev => [newExp, ...prev]);
     setExpenseNameInput('');
     setExpenseAmountInput('');
@@ -712,7 +723,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   };
 
   const handleSaveEditExpense = async (expenseId: string, description: string, amount: number) => {
-    const updated = await expenseService.updateExpense(shop.id, expenseId, description, amount);
+    const userMeta = {
+      name: profile?.fullName || currentMember?.fullName || currentRole,
+      role: currentRole,
+      id: profile?.id || currentMember?.id,
+    };
+    const updated = await expenseService.updateExpense(shop.id, expenseId, description, amount, userMeta);
     setExpenses(updated);
     flash('Expense updated');
   };
@@ -727,7 +743,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
-            const updated = await expenseService.deleteExpense(shop.id, exp.id);
+            const userMeta = {
+              name: profile?.fullName || currentMember?.fullName || currentRole,
+              role: currentRole,
+              id: profile?.id || currentMember?.id,
+            };
+            const updated = await expenseService.deleteExpense(shop.id, exp.id, userMeta);
             setExpenses(updated);
             flash('Expense deleted');
           },
@@ -750,11 +771,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     amountToCollect: number,
     paymentMode: PaymentMethod
   ) => {
+    const userMeta = {
+      name: profile?.fullName || currentMember?.fullName || currentRole,
+      role: currentRole,
+      id: profile?.id || currentMember?.id,
+    };
     const updated = await billingService.clearPendingPayment(
       shop.id,
       record.billId || record.id,
       amountToCollect,
-      paymentMode
+      paymentMode,
+      userMeta
     );
     setPendingList(updated);
     const refreshedBills = await billingService.getBills(shop.id);

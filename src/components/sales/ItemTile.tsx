@@ -13,9 +13,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, typography, radii, shadows, useTheme, Theme } from '../../theme';
 import { MenuItem } from '../../types/models';
 import { formatRupee } from '../../lib/money';
-import { getDishFoodIcon } from '../../constants/dishIcons';
 import { getDishImageUrl } from '../../constants/dishImages';
-import { DishVectorIcon } from '../common/DishVectorIcon';
+
+const LOCAL_FALLBACK_DISH_IMAGE = require('../../../assets/images/fast_billing.jpg');
 
 interface ItemTileProps {
   item: MenuItem;
@@ -47,6 +47,7 @@ export const ItemTile: React.FC<ItemTileProps> = ({
   const photoHeight = Math.round(size * 0.52);
 
   const [imageError, setImageError] = useState(false);
+  const [catalogError, setCatalogError] = useState(false);
 
   const handlePress = () => {
     if (!item.isAvailable) {
@@ -77,14 +78,8 @@ export const ItemTile: React.FC<ItemTileProps> = ({
     formatRupee(item.price) +
     (item.hasHalf && item.halfPrice ? ` · ½${formatRupee(item.halfPrice)}` : '');
 
-  const photoUri = item.imageUrl || getDishImageUrl(item.name, categoryName);
-  const hasPhoto = Boolean(
-    photoUri &&
-      (photoUri.startsWith('file:') ||
-        photoUri.startsWith('http') ||
-        photoUri.startsWith('data:') ||
-        photoUri.startsWith('content:'))
-  );
+  const catalogPhotoUri = getDishImageUrl(item.name, categoryName);
+  const photoUri = !imageError && item.imageUrl ? item.imageUrl : catalogPhotoUri;
 
   const isGenerating = item.imageStatus === 'generating';
 
@@ -106,28 +101,32 @@ export const ItemTile: React.FC<ItemTileProps> = ({
         onLongPress={handleLongPress}
         style={styles.tilePressable}
       >
-        {/* Photo / Icon Container */}
+        {/* Photo Container - Guaranteed Dish Photography Image, Zero Vector Icons */}
         <View style={[styles.photoBox, { height: photoHeight }]}>
           {isGenerating ? (
             <View style={styles.generatingBox}>
               <ActivityIndicator size="small" color="#FD5E03" />
               <Text style={styles.generatingText}>AI Photo...</Text>
             </View>
-          ) : !imageError && hasPhoto ? (
+          ) : catalogError ? (
+            <Image
+              source={LOCAL_FALLBACK_DISH_IMAGE}
+              style={styles.photoImage}
+              resizeMode="cover"
+            />
+          ) : (
             <Image
               source={{ uri: photoUri }}
               style={styles.photoImage}
               resizeMode="cover"
-              onError={() => setImageError(true)}
+              onError={() => {
+                if (!imageError && item.imageUrl) {
+                  setImageError(true);
+                } else {
+                  setCatalogError(true);
+                }
+              }}
             />
-          ) : (
-            <View style={styles.photoFallback}>
-              <DishVectorIcon
-                dishName={item.name}
-                categoryName={categoryName}
-                size={Math.max(22, Math.round(photoHeight * 0.50))}
-              />
-            </View>
           )}
         </View>
 

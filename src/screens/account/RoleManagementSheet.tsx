@@ -45,6 +45,7 @@ export const RoleManagementSheet: React.FC<RoleManagementSheetProps> = ({
   onRemoveUser,
 }) => {
   const { theme } = useTheme();
+  const colors = theme.colors;
   const styles = React.useMemo(() => createStyles(theme), [theme]);
   if (!member) return null;
 
@@ -138,13 +139,21 @@ export const RoleManagementSheet: React.FC<RoleManagementSheetProps> = ({
           })}
         </View>
 
-        {/* Remove User Action */}
-        <AppButton
-          title="Remove this user"
-          variant="ghost"
-          onPress={onRemoveUser}
-          style={styles.removeBtn}
-        />
+        {/* Deactivate User Action */}
+        {member?.isActive === false ? (
+          <View style={{ paddingVertical: 12, alignItems: 'center' }}>
+            <Text style={{ fontSize: typography.sizes.body, color: colors.textMuted, fontFamily: typography.fonts.body }}>
+              Staff member deactivated. Past billing history & records preserved.
+            </Text>
+          </View>
+        ) : (
+          <AppButton
+            title="Deactivate this staff member"
+            variant="ghost"
+            onPress={onRemoveUser}
+            style={styles.removeBtn}
+          />
+        )}
       </ScrollView>
     </ModalSheet>
   );

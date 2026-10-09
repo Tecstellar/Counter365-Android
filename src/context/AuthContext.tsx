@@ -3,6 +3,8 @@ import { UserProfile, ShopMember, UserRole, PermissionKey } from '../types/model
 import { authService } from '../services/authService';
 import { shopService } from '../services/shopService';
 import { SendOtpResult } from '../services/twoFactorService';
+import { storage } from '../lib/storage';
+import { generateUUID } from '../lib/uuid';
 
 const ROLE_DEFAULT_PERMISSIONS: Record<UserRole, Record<PermissionKey, boolean>> = {
   Owner: { bill: true, total: true, exp: true, pend: true, report: true, menu: true, users: true, subscription: true },
@@ -38,8 +40,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loadSession = async () => {
     try {
-      const savedProfile = await authService.getCurrentProfile();
-      const savedMember = await authService.getCurrentMember();
+      let savedProfile = await authService.getCurrentProfile();
+      let savedMember = await authService.getCurrentMember();
+
+      // Resilient fallback for Expo Go / restarts: If profile is missing but active_shop exists, restore session
+      if (!savedProfile) {
+        const savedShop = await storage.getObject<any>('@counterpro/active_shop', null);
+        if (savedShop && savedShop.id && savedShop.phone) {
+          savedProfile = {
+            id: generateUUID(),
+            fullName: savedShop.ownerName || `${savedShop.name} Owner`,
+            phone: savedShop.phone,
+          };
+          await authService.saveCurrentProfile(savedProfile);
+        }
+      }
+
+      if (!savedMember && savedProfile) {
+        const savedShop = await storage.getObject<any>('@counterpro/active_shop', null);
+        if (savedShop && savedShop.id) {
+          savedMember = {
+            id: `m_${savedProfile.id}`,
+            shopId: savedShop.id,
+            userId: savedProfile.id,
+            fullName: savedProfile.fullName,
+            phone: savedProfile.phone,
+            role: 'Owner',
+            isActive: true,
+          };
+          await authService.saveCurrentMember(savedMember);
+        }
+      }
+
       if (savedProfile) {
         setProfile(savedProfile);
       }
@@ -57,6 +89,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const can = (perm: PermissionKey): boolean => {
+    // Inactive staff members have ZERO permissions across the application
+    if (currentMember && currentMember.isActive === false) {
+      return false;
+    }
+
     if (currentRole === 'Owner') return true;
     
     // Check if user has active override

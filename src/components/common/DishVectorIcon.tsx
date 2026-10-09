@@ -1,7 +1,8 @@
-import React from 'react';
-import { View, StyleSheet, StyleProp, ViewStyle } from 'react-native';
-import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
-import { getDishVectorIconConfig } from '../../constants/dishIcons';
+import React, { useState } from 'react';
+import { View, StyleSheet, StyleProp, ViewStyle, Image } from 'react-native';
+import { getDishImageUrl } from '../../constants/dishImages';
+
+const LOCAL_DISH_FALLBACK = require('../../../assets/images/fast_billing.jpg');
 
 interface DishVectorIconProps {
   dishName?: string;
@@ -13,27 +14,26 @@ interface DishVectorIconProps {
 }
 
 export const DishVectorIcon: React.FC<DishVectorIconProps> = ({
-  dishName,
+  dishName = '',
   categoryName,
   size = 24,
-  color,
   showBadge = true,
   style,
 }) => {
-  const config = getDishVectorIconConfig(dishName, categoryName);
-  const iconColor = color || config.color;
-
+  const [loadError, setLoadError] = useState(false);
+  const imageUrl = getDishImageUrl(dishName, categoryName);
   const badgeSize = Math.max(34, Math.round(size * 1.55));
   const badgeRadius = Math.round(badgeSize / 2);
 
   if (!showBadge) {
     return (
       <View style={[styles.container, style]}>
-        {config.family === 'Ionicons' ? (
-          <Ionicons name={config.name as any} size={size} color={iconColor} />
-        ) : (
-          <MaterialCommunityIcons name={config.name as any} size={size} color={iconColor} />
-        )}
+        <Image
+          source={loadError ? LOCAL_DISH_FALLBACK : { uri: imageUrl }}
+          style={{ width: size, height: size, borderRadius: 4 }}
+          resizeMode="cover"
+          onError={() => setLoadError(true)}
+        />
       </View>
     );
   }
@@ -47,16 +47,16 @@ export const DishVectorIcon: React.FC<DishVectorIconProps> = ({
             width: badgeSize,
             height: badgeSize,
             borderRadius: badgeRadius,
-            backgroundColor: `${iconColor}15`,
-            borderColor: `${iconColor}25`,
+            overflow: 'hidden',
           },
         ]}
       >
-        {config.family === 'Ionicons' ? (
-          <Ionicons name={config.name as any} size={size} color={iconColor} />
-        ) : (
-          <MaterialCommunityIcons name={config.name as any} size={size} color={iconColor} />
-        )}
+        <Image
+          source={loadError ? LOCAL_DISH_FALLBACK : { uri: imageUrl }}
+          style={{ width: '100%', height: '100%' }}
+          resizeMode="cover"
+          onError={() => setLoadError(true)}
+        />
       </View>
     </View>
   );

@@ -101,6 +101,127 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlanConfig[] = [
   },
 ];
 
+export interface LaunchOfferPlanConfig {
+  id: SubscriptionPlanId;
+  name: string;
+  durationDays: number;
+  durationMonths: number;
+  durationLabel: string;
+  regularPrice: number;
+  launchPrice: number;
+  pricePerDay: number;
+  savings: number;
+  discountPercentage: number;
+  savingsLabel: string | null;
+  popular?: boolean;
+  features: string[];
+}
+
+export const LAUNCH_OFFER_DURATION_DAYS = 30;
+
+export function calculatePricePerDay(price: number, days: number): number {
+  if (days <= 0) return 0;
+  return Math.round(price / days);
+}
+
+export const LAUNCH_OFFER_PLANS: LaunchOfferPlanConfig[] = [
+  {
+    id: '3_months',
+    name: '3 Months',
+    durationDays: 90,
+    durationMonths: 3,
+    durationLabel: '90 Days Access',
+    regularPrice: 2999,
+    launchPrice: 2999,
+    pricePerDay: calculatePricePerDay(2999, 90),
+    savings: 0,
+    discountPercentage: 0,
+    savingsLabel: null,
+    popular: false,
+    features: [
+      'Full Point of Sale & Billing',
+      'Daily Closing & Cloud Sync',
+      'Unlimited Menu Items',
+      'Customer Directory & Due Tracking',
+      'Expense Tracking & Reports',
+    ],
+  },
+  {
+    id: '6_months',
+    name: '6 Months',
+    durationDays: 180,
+    durationMonths: 6,
+    durationLabel: '180 Days Access',
+    regularPrice: 5999,
+    launchPrice: 4799,
+    pricePerDay: calculatePricePerDay(4799, 180),
+    savings: 1200,
+    discountPercentage: 20,
+    savingsLabel: 'Save ₹1,200 (20% OFF)',
+    popular: false,
+    features: [
+      'Everything in 3 Months',
+      'Save ₹1,200 on half-year billing',
+      'Multi-User Staff Roles (Biller/Supervisor)',
+      'WhatsApp Receipt Sharing',
+      'Priority Phone Support',
+    ],
+  },
+  {
+    id: '1_year',
+    name: '12 Months',
+    durationDays: 365,
+    durationMonths: 12,
+    durationLabel: '365 Days Access',
+    regularPrice: 11999,
+    launchPrice: 5999,
+    pricePerDay: calculatePricePerDay(5999, 365),
+    savings: 6000,
+    discountPercentage: 50,
+    savingsLabel: 'Save ₹6,000 (50% OFF) • BEST VALUE',
+    popular: true,
+    features: [
+      'Best Value — 50% Savings for full year',
+      'Only ₹16 per day',
+      'All Pro Features Included',
+      'Automatic Cloud Backups',
+      'Multi-Terminal Sync & Staff Management',
+    ],
+  },
+];
+
+export function isShopEligibleForLaunchOffer(
+  shopCreatedAt?: string | null,
+  now: Date = new Date()
+): {
+  isEligible: boolean;
+  daysRemaining: number;
+  hoursRemaining: number;
+  secondsRemaining: number;
+  eligibleUntil: Date;
+} {
+  const regTimestamp = shopCreatedAt ? new Date(shopCreatedAt).getTime() : now.getTime();
+  const validRegTime = isNaN(regTimestamp) ? now.getTime() : regTimestamp;
+  const eligibleUntil = new Date(validRegTime + LAUNCH_OFFER_DURATION_DAYS * 24 * 60 * 60 * 1000);
+  const remainingMs = eligibleUntil.getTime() - now.getTime();
+  const isEligible = remainingMs > 0;
+  const secondsRemaining = Math.max(0, Math.floor(remainingMs / 1000));
+  const hoursRemaining = Math.max(0, Math.ceil(remainingMs / (60 * 60 * 1000)));
+  const daysRemaining = Math.max(0, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)));
+
+  return {
+    isEligible,
+    daysRemaining,
+    hoursRemaining,
+    secondsRemaining,
+    eligibleUntil,
+  };
+}
+
+export function getLaunchOfferPlanById(planId: string): LaunchOfferPlanConfig | undefined {
+  return LAUNCH_OFFER_PLANS.find(p => p.id === planId);
+}
+
 export function getSubscriptionPlanById(planId: string): SubscriptionPlanConfig | undefined {
   if (planId === '1_month') {
     return {

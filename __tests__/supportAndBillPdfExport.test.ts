@@ -126,10 +126,10 @@ describe('Support Screen & Bill PDF Export Requirements', () => {
     expect(waText).toContain('Bill 1042');
     expect(waText).toContain('Table: 3');
     expect(waText).toContain('Karthik');
-    expect(waText).toContain('Masala Chai x2');
-    expect(waText).toContain('Cash: ₹50');
-    expect(waText).toContain('GPay:');
+    expect(waText).toContain('TOTAL AMOUNT: ₹89');
+    expect(waText).toContain('Cash ₹50');
+    expect(waText).toContain('GPay ₹39');
     expect(waText).toContain('https://counter365.tecstellar.com/b/');
-    expect(waText).toContain('PDF copy available');
+    expect(waText).toContain('Official Bill & PDF Receipt:');
   });
 });

@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   StyleSheet,
   StatusBar,
   ActivityIndicator,
+  Animated,
 } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
@@ -21,6 +22,9 @@ import { BillSavedModal } from './src/components/sales/BillSavedModal';
 import { ShareModal } from './src/components/sales/ShareModal';
 import { TrialExpiredLockModal } from './src/components/subscription/TrialExpiredLockModal';
 import { SubscriptionPlansModal } from './src/components/subscription/SubscriptionPlansModal';
+import { AppReviewModal, STORAGE_KEY_REVIEWED, STORAGE_KEY_REVIEW_SNOOZE } from './src/components/common/AppReviewModal';
+import { storage } from './src/lib/storage';
+import { billingService } from './src/services/billingService';
 
 import { SplashScreen } from './src/screens/onb/SplashScreen';
 import { IntroScreen } from './src/screens/onb/IntroScreen';
@@ -51,8 +55,8 @@ import { imageService } from './src/services/imageService';
 
 const MainApp: React.FC = () => {
   const { theme, isDark } = useTheme();
-  const { currentRole, setRole, can, sendOtp, login, profile } = useAuth();
-  const { shop, updateShop, registerNewShop, setActiveShop, subscriptionStatus } = useShop();
+  const { currentRole, setRole, can, sendOtp, login, profile, isLoading: isAuthLoading } = useAuth();
+  const { shop, updateShop, registerNewShop, setActiveShop, clearShop, subscriptionStatus, isLoading: isShopLoading } = useShop();
   const { toastMessage, flash, startEditingBill } = useCart();
 
   const handleEditBill = (bill: Bill) => {
@@ -64,10 +68,68 @@ const MainApp: React.FC = () => {
   // Subscription Plans Modal State
   const [isSubscriptionPlansOpen, setIsSubscriptionPlansOpen] = useState(false);
 
+  // Play Store Review Prompt State (Triggered after 10 bills)
+  const [isReviewModalVisible, setIsReviewModalVisible] = useState(false);
+  const [reviewBillsCount, setReviewBillsCount] = useState(0);
+
+  const checkAndPromptReview = async () => {
+    if (!shop?.id) return;
+    try {
+      const alreadyReviewed = await storage.getItem(STORAGE_KEY_REVIEWED);
+      if (alreadyReviewed === 'true') return;
+
+      const snoozeUntil = await storage.getItem(STORAGE_KEY_REVIEW_SNOOZE);
+      if (snoozeUntil && Number(snoozeUntil) > Date.now()) return;
+
+      const count = await billingService.getTotalBillsCreated(shop.id);
+      if (count >= 10) {
+        setReviewBillsCount(count);
+        setIsReviewModalVisible(true);
+      }
+    } catch (err) {
+      console.warn('Review prompt check notice:', err);
+    }
+  };
+
   // Route & Navigation State
   const [currentRoute, setCurrentRoute] = useState<AppRoute>('splash');
   const [salesSubView, setSalesSubView] = useState<SalesSubView>('menu');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [splashFinished, setSplashFinished] = useState(false);
+  const drawerProgress = useRef(new Animated.Value(0)).current;
+
+  // Persistent Login Auto-Restore Effect (Only runs during initial launch from splash screen)
+  useEffect(() => {
+    if (currentRoute === 'splash' && splashFinished && !isAuthLoading && !isShopLoading) {
+      const isFullyRegistered = Boolean(
+        shop && shop.id &&
+        profile && (profile.id || profile.phone)
+      );
+      if (isFullyRegistered) {
+        setCurrentRoute('home');
+      } else {
+        setCurrentRoute('intro');
+      }
+    }
+  }, [shop?.id, profile?.id, profile?.phone, isAuthLoading, isShopLoading, splashFinished, currentRoute]);
+
+  useEffect(() => {
+    if (isDrawerOpen) {
+      Animated.spring(drawerProgress, {
+        toValue: 1,
+        tension: 42,
+        friction: 6.8,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      Animated.timing(drawerProgress, {
+        toValue: 0,
+        duration: 260,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [isDrawerOpen]);
+
   const [tourStepIndex, setTourStepIndex] = useState<number | null>(null);
 
   // Onboarding Form States
@@ -77,6 +139,7 @@ const MainApp: React.FC = () => {
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
   const [phoneError, setPhoneError] = useState<string | null>(null);
   const [otpError, setOtpError] = useState<string | null>(null);
+  const [onbOwnerName, setOnbOwnerName] = useState('');
   const [onbShopName, setOnbShopName] = useState('');
   const [onbShopAddress, setOnbShopAddress] = useState('');
   const [onbShopState, setOnbShopState] = useState('');
@@ -122,9 +185,14 @@ const MainApp: React.FC = () => {
 
   // Splash Completion Handler — Direct Dashboard if already registered on this device
   const handleSplashComplete = () => {
-    if (shop && shop.id && (profile?.id || profile?.phone)) {
+    setSplashFinished(true);
+    const isFullyRegistered = Boolean(
+      shop && shop.id &&
+      profile && (profile.id || profile.phone)
+    );
+    if (isFullyRegistered) {
       setCurrentRoute('home');
-    } else {
+    } else if (!isAuthLoading && !isShopLoading) {
       setCurrentRoute('intro');
     }
   };
@@ -187,7 +255,7 @@ const MainApp: React.FC = () => {
           flash(`Welcome back to ${res.shop.name}!`);
           setCurrentRoute('home');
         } else {
-          flash('Verified successfully');
+          flash("OTP verified! Let's setup your shop");
           setCurrentRoute('onb_shop');
         }
       } else {
@@ -247,6 +315,7 @@ const MainApp: React.FC = () => {
     const cleanPhone = onbPhone.replace(/\D/g, '') || onbPhone;
     await registerNewShop({
       name: onbShopName.trim() || 'My Shop',
+      ownerName: onbOwnerName.trim() || undefined,
       shopType: onbShopKind,
       phone: cleanPhone,
       address: onbShopAddress.trim(),
@@ -336,8 +405,33 @@ const MainApp: React.FC = () => {
         translucent={false}
       />
 
-      {/* Main Shell Header */}
-      {isMainShell && (
+      {/* Main Content with Background Push Animation (scale: 0.965, translateX: 26, borderRadius: 28) */}
+      <Animated.View
+        style={[
+          styles.mainShellContent,
+          {
+            backgroundColor: theme.colors.bg,
+            transform: [
+              {
+                scale: drawerProgress.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [1, 0.965],
+                }),
+              },
+              {
+                translateX: drawerProgress.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0, 26],
+                }),
+              },
+            ],
+            borderRadius: isDrawerOpen ? 28 : 0,
+            overflow: 'hidden',
+          },
+        ]}
+      >
+        {/* Main Shell Header */}
+        {isMainShell && (
         <AppHeader
           onOpenMenu={() => setIsDrawerOpen(true)}
           onOpenReports={() => {
@@ -402,6 +496,7 @@ const MainApp: React.FC = () => {
         {currentRoute === 'onb_shop' && (
           <ShopDetailsStep
             shopName={onbShopName}
+            ownerName={onbOwnerName}
             shopAddress={onbShopAddress}
             shopState={onbShopState}
             shopCity={onbShopCity}
@@ -415,6 +510,7 @@ const MainApp: React.FC = () => {
             isExtractingGps={isExtractingGps}
             isUploadingLogo={isUploadingLogo}
             onChangeName={setOnbShopName}
+            onChangeOwnerName={setOnbOwnerName}
             onChangeAddress={setOnbShopAddress}
             onChangeState={setOnbShopState}
             onChangeCity={setOnbShopCity}
@@ -443,10 +539,12 @@ const MainApp: React.FC = () => {
             shopKind={onbShopKind || shop.shopType}
             phone={onbPhone || shop.phone}
             isGeoTagged={isGeoTagged}
+            onGoToDashboard={() => setCurrentRoute('home')}
             onStartTour={() => startTour(0)}
             onRestart={() => {
               setOnbPhone('');
               setOnbOtp('');
+              setOnbOwnerName('');
               setOnbShopName('');
               setOnbShopAddress('');
               setOnbShopCity('');
@@ -496,7 +594,7 @@ const MainApp: React.FC = () => {
                 onBillSaved={async (bill, share, autoPrint) => {
                   setSavedBill(bill);
                   if (share) {
-                    const waText = whatsappService.formatCustomerBill(bill, shop.name);
+                    const waText = whatsappService.formatCustomerBill(bill, shop.name, shop.upiId);
                     whatsappService.shareViaWhatsApp(waText, bill.customerPhone);
                   }
                   if (autoPrint) {
@@ -506,6 +604,9 @@ const MainApp: React.FC = () => {
                       console.warn('Print error:', e);
                     }
                   }
+                  setTimeout(() => {
+                    checkAndPromptReview();
+                  }, 800);
                 }}
               />
             )}
@@ -520,7 +621,10 @@ const MainApp: React.FC = () => {
         )}
 
         {currentRoute === 'reports' && (
-          <MonthlyReportsScreen onBackToHome={() => setCurrentRoute('home')} />
+          <MonthlyReportsScreen
+            onBackToHome={() => setCurrentRoute('home')}
+            onNavigateToUpgrade={() => setCurrentRoute('account')}
+          />
         )}
 
         {currentRoute === 'pending' && (
@@ -531,7 +635,7 @@ const MainApp: React.FC = () => {
               setCurrentRoute('contacts');
             }}
             onSendReminder={record => {
-              const msg = whatsappService.formatPendingReminder(record, shop.name);
+              const msg = whatsappService.formatPendingReminder(record, shop.name, shop.upiId);
               whatsappService.shareViaWhatsApp(msg, record.customerPhone);
               flash(`Reminder sent to ${record.customerName}`);
             }}
@@ -548,7 +652,15 @@ const MainApp: React.FC = () => {
         {currentRoute === 'account' && (
           <AccountScreen
             onBackToHome={() => setCurrentRoute('home')}
-            onLogout={() => setCurrentRoute('onb_phone')}
+            onLogout={async () => {
+              await clearShop();
+              setOnbPhone('');
+              setOnbOtp('');
+              setOnbOwnerName('');
+              setOnbShopName('');
+              setOnbShopAddress('');
+              setCurrentRoute('onb_phone');
+            }}
             onNavigateToSupport={() => setCurrentRoute('support')}
           />
         )}
@@ -559,25 +671,38 @@ const MainApp: React.FC = () => {
           />
         )}
       </View>
+      </Animated.View>
 
       {/* Main Shell Bottom Navigation Tab Bar */}
       {isMainShell && (
-        <BottomTabBar
-          currentRoute={currentRoute}
-          onNavigate={route => {
-            setCurrentRoute(route);
-            if (route === 'sales') {
-              setSalesSubView('menu');
-            }
+        <Animated.View
+          style={{
+            opacity: drawerProgress.interpolate({
+              inputRange: [0, 1],
+              outputRange: [1, 0.25],
+            }),
           }}
-        />
+        >
+          <BottomTabBar
+            currentRoute={currentRoute}
+            onNavigate={route => {
+              setCurrentRoute(route);
+              if (route === 'sales') {
+                setSalesSubView('menu');
+              }
+            }}
+          />
+        </Animated.View>
       )}
 
-      {/* Drawer Menu Modal */}
+      {/* Drawer Menu */}
       <DrawerMenu
         visible={isDrawerOpen}
         currentRoute={currentRoute}
+        salesSubView={salesSubView}
+        drawerProgress={drawerProgress}
         onClose={() => setIsDrawerOpen(false)}
+        onOpen={() => setIsDrawerOpen(true)}
         onNavigate={route => setCurrentRoute(route)}
         onNavigateSubView={(route, subView) => {
           setCurrentRoute(route);
@@ -599,11 +724,12 @@ const MainApp: React.FC = () => {
         bill={savedBill}
         onSendWhatsApp={() => {
           if (!savedBill) return;
-          const msg = whatsappService.formatCustomerBill(savedBill, shop.name);
+          const msg = whatsappService.formatCustomerBill(savedBill, shop.name, shop.upiId);
           whatsappService.shareViaWhatsApp(msg, savedBill.customerPhone);
           setSavedBill(null);
           setSalesSubView('menu');
           flash(`Bill ${savedBill.billNumber} sent on WhatsApp`);
+          checkAndPromptReview();
         }}
         onPrint={async () => {
           if (!savedBill) return;
@@ -613,10 +739,12 @@ const MainApp: React.FC = () => {
           } else {
             flash('Could not open print service');
           }
+          checkAndPromptReview();
         }}
         onNewBill={() => {
           setSavedBill(null);
           setSalesSubView('menu');
+          checkAndPromptReview();
         }}
         onEdit={() => {
           if (savedBill) {
@@ -656,6 +784,13 @@ const MainApp: React.FC = () => {
         visible={isSubscriptionPlansOpen}
         onClose={() => setIsSubscriptionPlansOpen(false)}
         canDismiss={!subscriptionStatus.requiresSubscription}
+      />
+
+      {/* Play Store Review Modal (Triggered after 10 bills) */}
+      <AppReviewModal
+        visible={isReviewModalVisible}
+        totalBills={reviewBillsCount}
+        onClose={() => setIsReviewModalVisible(false)}
       />
 
       {/* Toast Notification Banner */}
@@ -723,6 +858,9 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.bg,
+  },
+  mainShellContent: {
+    flex: 1,
   },
   screenContainer: {
     flex: 1,

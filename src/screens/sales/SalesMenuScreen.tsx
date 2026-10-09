@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { ItemTile } from '../../components/sales/ItemTile';
 import { CartBar } from '../../components/sales/CartBar';
+import { TableManagementModal } from '../../components/sales/TableManagementModal';
 import { AppButton } from '../../components/common/AppButton';
 import { useCart } from '../../context/CartContext';
 import { useShop } from '../../context/ShopContext';
@@ -418,102 +419,11 @@ export const SalesMenuScreen: React.FC<SalesMenuScreenProps> = ({
         onGoToBill={handleProceedToBill}
       />
 
-      {/* Table Selection Modal */}
-      <Modal
+      {/* Premium Dining Table Management Modal */}
+      <TableManagementModal
         visible={isTableModalOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setIsTableModalOpen(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.tableModalCard}>
-            <View style={styles.tableModalHeader}>
-              <View>
-                <Text style={styles.tableModalTitle}>Dining Tables</Text>
-                <Text style={styles.tableModalSub}>
-                  Select a table for this customer's dining order:
-                </Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setIsTableModalOpen(false)}
-                style={styles.modalCloseBtn}
-              >
-                <Ionicons name="close" size={18} color={colors.textMuted} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView contentContainerStyle={styles.tableGrid}>
-              {Array.from({ length: Math.max(1, shop.tableCount || 4) }, (_, idx) => idx + 1).map(num => {
-                const tableName = `Table ${num}`;
-                const isSelected = selectedTable === tableName;
-
-                return (
-                  <View
-                    key={tableName}
-                    style={[
-                      styles.tableCard,
-                      isSelected && styles.tableCardSelected,
-                    ]}
-                  >
-                    <View style={styles.tableCardHeader}>
-                      <Ionicons
-                        name="restaurant-outline"
-                        size={22}
-                        color={isSelected ? colors.accent : colors.textSecondary}
-                      />
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.tableCardNumber}>{tableName}</Text>
-                        <Text style={styles.tableCardSeat}>
-                          {isSelected ? 'Assigned Dining Table' : 'Available Table'}
-                        </Text>
-                      </View>
-                      {isSelected && (
-                        <View style={styles.activeTableBadge}>
-                          <Text style={styles.activeTableBadgeText}>Active Order</Text>
-                        </View>
-                      )}
-                    </View>
-
-                    {/* Table Action Button with PLUS button */}
-                    <TouchableOpacity
-                      activeOpacity={0.8}
-                      onPress={() => {
-                        setSelectedTable(tableName);
-                        setIsTableModalOpen(false);
-                        flash(`${tableName} selected — add items to bill`);
-                      }}
-                      style={[
-                        styles.tableCardPlusBtn,
-                        isSelected && styles.tableCardPlusBtnActive,
-                      ]}
-                    >
-                      <Text style={styles.tablePlusIcon}>+</Text>
-                      <Text style={styles.tablePlusText}>
-                        {isSelected ? 'Continue Menu' : 'Select Table'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                );
-              })}
-            </ScrollView>
-
-            {selectedTable && (
-              <TouchableOpacity
-                onPress={() => {
-                  setSelectedTable(null);
-                  setIsTableModalOpen(false);
-                  flash('Switched to Counter / Takeaway');
-                }}
-                style={styles.clearTableModalBtn}
-              >
-                <Text style={styles.clearTableModalText}>
-                  Clear Table (Switch to Counter Takeaway)
-                </Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-      </Modal>
+        onClose={() => setIsTableModalOpen(false)}
+      />
     </View>
   );
 };

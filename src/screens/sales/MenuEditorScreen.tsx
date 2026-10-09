@@ -33,7 +33,7 @@ import { getDishImageUrl } from '../../constants/dishImages';
 import { DishVectorIcon } from '../../components/common/DishVectorIcon';
 import { MenuItem, MenuCategory } from '../../types/models';
 import { formatRupee } from '../../lib/money';
-import { generateUUID } from '../../lib/uuid';
+import { generateUUID, isValidUUID } from '../../lib/uuid';
 import { supabase } from '../../lib/supabase';
 
 interface MenuEditorScreenProps {
@@ -81,6 +81,8 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
   const [isFav, setIsFav] = useState(false);
   const [isAvailable, setIsAvailable] = useState(true);
   const [itemPhotoUrl, setItemPhotoUrl] = useState<string | null>(null);
+  const [isSavingItem, setIsSavingItem] = useState(false);
+  const [isSavingCategory, setIsSavingCategory] = useState(false);
 
   // Gemini AI Menu Import States (Horizontal Progress Bar)
   const [showImportOptions, setShowImportOptions] = useState(false);
@@ -150,9 +152,11 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
   };
 
   const handleStartNewItem = () => {
-    const defaultCat = categories.length > 0 ? categories[0].id : '';
+    Keyboard.dismiss();
+    const validCat = categories.find(c => isValidUUID(c.id));
+    const defaultCat = validCat ? validCat.id : (categories[0]?.id || '');
     setEditingItem({
-      id: `new_${Date.now()}`,
+      id: generateUUID(),
       shopId: shop.id,
       categoryId: defaultCat,
       name: '',
@@ -255,50 +259,84 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
   };
 
   const handleSaveItem = async () => {
-    if (!itemNameInput.trim() || !fullPriceInput.trim()) {
+    Keyboard.dismiss();
+    const cleanName = itemNameInput.trim();
+    const cleanPriceStr = fullPriceInput.trim();
+
+    if (!cleanName || !cleanPriceStr) {
       flash('Name and full price needed');
       return;
     }
 
-    const full = Number(fullPriceInput.replace(/[^0-9]/g, ''));
+    const full = Number(cleanPriceStr.replace(/[^0-9]/g, ''));
+    if (isNaN(full) || full <= 0) {
+      flash('Please enter a valid price');
+      return;
+    }
+
     const half = Number(halfPriceInput.replace(/[^0-9]/g, ''));
 
-    const itemId =
-      editingItem?.id && !editingItem.id.startsWith('new_') && !editingItem.id.startsWith('item_')
-        ? editingItem.id
-        : generateUUID();
+    setIsSavingItem(true);
+    try {
+      // Find a valid UUID category
+      let catId = selectedCatId;
+      if (!catId || !isValidUUID(catId)) {
+        const existingValidCat = categories.find(c => isValidUUID(c.id));
+        if (existingValidCat) {
+          catId = existingValidCat.id;
+        } else {
+          // If no categories exist, create default
+          const newCat = await menuService.addCategory(shop.id, 'General');
+          setCategories(prev => [...prev, newCat]);
+          catId = newCat.id;
+        }
+      }
 
-    const catId = selectedCatId || categories[0]?.id || 'cat_1';
-    const finalImageUrl = itemPhotoUrl || null;
+      const itemId =
+        editingItem?.id && isValidUUID(editingItem.id)
+          ? editingItem.id
+          : generateUUID();
 
-    const catName = categories.find(c => c.id === catId)?.name || 'General';
-    const resolvedPrompt =
-      editingItem?.imagePrompt ||
-      generatePhotorealisticFoodPrompt(itemNameInput.trim(), catName);
+      const finalImageUrl = itemPhotoUrl || null;
+      const catName = categories.find(c => c.id === catId)?.name || 'General';
+      const resolvedPrompt =
+        editingItem?.imagePrompt ||
+        generatePhotorealisticFoodPrompt(cleanName, catName);
 
-    const itemRecord: MenuItem = {
-      id: itemId,
-      shopId: shop.id,
-      categoryId: catId,
-      name: itemNameInput.trim(),
-      price: full,
-      halfPrice: half > 0 ? half : undefined,
-      hasHalf: half > 0,
-      isFavorite: isFav,
-      isAvailable: isAvailable,
-      imageUrl: finalImageUrl,
-      imagePrompt: resolvedPrompt,
-      imageStatus: finalImageUrl ? 'completed' : (editingItem?.imageStatus || null),
-      sortOrder: editingItem?.sortOrder ?? items.length,
-    };
+      const itemRecord: MenuItem = {
+        id: itemId,
+        shopId: shop.id,
+        categoryId: catId,
+        name: cleanName,
+        price: full,
+        halfPrice: half > 0 ? half : undefined,
+        hasHalf: half > 0,
+        isFavorite: isFav,
+        isAvailable: isAvailable,
+        imageUrl: finalImageUrl,
+        imagePrompt: resolvedPrompt,
+        imageStatus: finalImageUrl ? 'completed' : (editingItem?.imageStatus || null),
+        sortOrder: editingItem?.sortOrder ?? items.length,
+      };
 
-    const updated = await menuService.saveMenuItem(itemRecord);
-    setItems(updated);
-    setEditingItem(null);
-    flash(`${itemRecord.name} saved`);
+      const updated = await menuService.saveMenuItem(itemRecord);
+      setItems(updated);
+      setEditingItem(null);
+      setItemNameInput('');
+      setFullPriceInput('');
+      setHalfPriceInput('');
+      setItemPhotoUrl(null);
+      flash(`${itemRecord.name} saved`);
+    } catch (err: any) {
+      console.error('handleSaveItem error:', err);
+      flash('Failed to save item: ' + (err?.message || 'Please check fields'));
+    } finally {
+      setIsSavingItem(false);
+    }
   };
 
   const handleSaveCategory = async () => {
+    Keyboard.dismiss();
     const name = categoryNameInput.trim();
     if (!name) {
       flash('Give the category a name');
@@ -310,25 +348,40 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
       return;
     }
 
-    const newCat = await menuService.addCategory(shop.id, name);
-    setCategories(prev => [...prev, newCat]);
-    setIsCreatingCategory(false);
-    setCategoryNameInput('');
-    flash(`${name} created — add its first item`);
+    setIsSavingCategory(true);
+    try {
+      const newCat = await menuService.addCategory(shop.id, name);
+      setCategories(prev => [...prev, newCat]);
+      setIsCreatingCategory(false);
+      setCategoryNameInput('');
+      flash(`${name} created — add its first item`);
 
-    setEditingItem({
-      id: `new_${Date.now()}`,
-      shopId: shop.id,
-      categoryId: newCat.id,
-      name: '',
-      price: 0,
-      halfPrice: 0,
-      hasHalf: false,
-      isFavorite: false,
-      isAvailable: true,
-      sortOrder: items.length,
-    });
-    setSelectedCatId(newCat.id);
+      setItemNameInput('');
+      setFullPriceInput('');
+      setHalfPriceInput('');
+      setItemPhotoUrl(null);
+      setIsFav(false);
+      setIsAvailable(true);
+      setSelectedCatId(newCat.id);
+
+      setEditingItem({
+        id: generateUUID(),
+        shopId: shop.id,
+        categoryId: newCat.id,
+        name: '',
+        price: 0,
+        halfPrice: 0,
+        hasHalf: false,
+        isFavorite: false,
+        isAvailable: true,
+        sortOrder: items.length,
+      });
+    } catch (err: any) {
+      console.error('handleSaveCategory error:', err);
+      flash('Failed to create category: ' + (err?.message || 'Please try again'));
+    } finally {
+      setIsSavingCategory(false);
+    }
   };
 
   const handleDeleteItem = (itemId: string, itemName: string) => {
@@ -608,12 +661,18 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
               <AppButton
                 title="Cancel"
                 variant="secondary"
-                onPress={() => setIsCreatingCategory(false)}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setIsCreatingCategory(false);
+                  setCategoryNameInput('');
+                }}
                 style={styles.cancelBtn}
               />
               <AppButton
                 title="Create & add item"
                 variant="primary"
+                loading={isSavingCategory}
+                disabled={isSavingCategory}
                 onPress={handleSaveCategory}
                 style={styles.createCatBtn}
               />
@@ -782,12 +841,21 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
               <AppButton
                 title="Cancel"
                 variant="secondary"
-                onPress={() => setEditingItem(null)}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setEditingItem(null);
+                  setItemNameInput('');
+                  setFullPriceInput('');
+                  setHalfPriceInput('');
+                  setItemPhotoUrl(null);
+                }}
                 style={styles.cancelBtn}
               />
               <AppButton
                 title="Save item"
                 variant="primary"
+                loading={isSavingItem}
+                disabled={isSavingItem}
                 onPress={handleSaveItem}
                 style={styles.saveItemBtn}
               />
@@ -803,8 +871,13 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
               <View style={styles.categoryHeaderRow}>
                 <Text style={styles.categoryHeaderTitle}>CATEGORIES</Text>
                 <TouchableOpacity
-                  onPress={() => setIsCreatingCategory(true)}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setIsCreatingCategory(true);
+                    setCategoryNameInput('');
+                  }}
                   style={styles.addCategoryHeaderBtn}
+                  activeOpacity={0.7}
                 >
                   <Text style={styles.addCategoryHeaderBtnText}>+ Add Category</Text>
                 </TouchableOpacity>
@@ -918,21 +991,11 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                         !item.isAvailable && styles.itemRowDisabled,
                       ]}
                     >
-                      {hasCustomPhoto ? (
-                        <Image
-                          source={{ uri: photoUri }}
-                          style={styles.itemListPhoto}
-                          resizeMode="cover"
-                        />
-                      ) : (
-                        <View style={styles.itemListIconBox}>
-                          <DishVectorIcon
-                            dishName={item.name}
-                            categoryName={catName}
-                            size={24}
-                          />
-                        </View>
-                      )}
+                      <Image
+                        source={{ uri: photoUri }}
+                        style={styles.itemListPhoto}
+                        resizeMode="cover"
+                      />
 
                       <TouchableOpacity
                         onPress={() => handleStartEdit(item)}

@@ -2,7 +2,8 @@ import * as Contacts from 'expo-contacts/legacy';
 import { storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { CustomerRecord, VendorRecord } from '../types/models';
-import { generateUUID } from '../lib/uuid';
+import { generateUUID, isValidUUID } from '../lib/uuid';
+import { shopService } from './shopService';
 
 const LOCAL_CUSTOMERS_KEY = '@counterpro/customers';
 const LOCAL_VENDORS_KEY = '@counterpro/vendors';
@@ -11,6 +12,16 @@ export interface DeviceContactItem {
   id: string;
   name: string;
   phone?: string;
+  email?: string;
+}
+
+export type ContactPermissionStatus = 'granted' | 'denied' | 'blocked' | 'undetermined';
+
+export interface DeviceContactsResponse {
+  status: ContactPermissionStatus;
+  contacts: DeviceContactItem[];
+  canAskAgain: boolean;
+  errorMessage?: string;
 }
 
 export const contactService = {
@@ -19,6 +30,10 @@ export const contactService = {
    */
   async getCustomers(shopId: string): Promise<CustomerRecord[]> {
     if (!shopId) return [];
+
+    const saved = await storage.getObject<CustomerRecord[]>(LOCAL_CUSTOMERS_KEY, []);
+    const localFiltered = saved.filter(c => c.shopId === shopId);
+    let allCandidates = [...localFiltered];
 
     try {
       const { data: dbCustomers } = await (supabase.from('customers') as any)
@@ -49,47 +64,37 @@ export const contactService = {
             isVip,
           };
         });
-
-        // Strict deduplication by 10-digit phone number (preserve active pending balance and max bills)
-        const phoneMap = new Map<string, CustomerRecord>();
-        const uniqueLoaded: CustomerRecord[] = [];
-        for (const c of loaded) {
-          const clean = c.phone ? c.phone.replace(/[^0-9]/g, '').slice(-10) : '';
-          if (clean && clean.length === 10) {
-            if (phoneMap.has(clean)) {
-              const existing = phoneMap.get(clean)!;
-              if (c.pendingBalance > existing.pendingBalance) {
-                existing.pendingBalance = c.pendingBalance;
-              }
-              existing.totalBills = Math.max(existing.totalBills, c.totalBills);
-              continue;
-            }
-            phoneMap.set(clean, c);
-          }
-          uniqueLoaded.push(c);
-        }
-
-        await storage.setObject(LOCAL_CUSTOMERS_KEY, uniqueLoaded);
-        return uniqueLoaded;
+        // Local cache contains most recent device mutations (payments/cancellations)
+        allCandidates = [...localFiltered, ...loaded];
       }
     } catch (err) {
       console.warn('getCustomers Supabase notice:', err);
     }
 
-    const saved = await storage.getObject<CustomerRecord[]>(LOCAL_CUSTOMERS_KEY, []);
-    const filtered = saved.filter(c => c.shopId === shopId);
-    // Deduplicate cached records
-    const cachedMap = new Map<string, CustomerRecord>();
-    const uniqueCached: CustomerRecord[] = [];
-    for (const c of filtered) {
+    // Strict deduplication by 10-digit phone number and name
+    const phoneMap = new Map<string, CustomerRecord>();
+    const nameMap = new Map<string, CustomerRecord>();
+    const uniqueLoaded: CustomerRecord[] = [];
+
+    for (const c of allCandidates) {
       const clean = c.phone ? c.phone.replace(/[^0-9]/g, '').slice(-10) : '';
       if (clean && clean.length === 10) {
-        if (cachedMap.has(clean)) continue;
-        cachedMap.set(clean, c);
+        if (phoneMap.has(clean)) {
+          continue;
+        }
+        phoneMap.set(clean, c);
+      } else {
+        const lowerName = c.name.trim().toLowerCase();
+        if (nameMap.has(lowerName)) {
+          continue;
+        }
+        nameMap.set(lowerName, c);
       }
-      uniqueCached.push(c);
+      uniqueLoaded.push(c);
     }
-    return uniqueCached;
+
+    await storage.setObject(LOCAL_CUSTOMERS_KEY, uniqueLoaded);
+    return uniqueLoaded;
   },
 
   /**
@@ -131,6 +136,7 @@ export const contactService = {
     await storage.setObject(LOCAL_CUSTOMERS_KEY, updated);
 
     try {
+      await shopService.ensureShopExists(newCust.shopId);
       await (supabase.from('customers') as any).insert({
         id: newCust.id,
         shop_id: newCust.shopId,
@@ -152,13 +158,72 @@ export const contactService = {
   },
 
   /**
-   * Batch add multiple customers
+   * Ensures that a customer exists in Supabase so foreign key constraints (bills_customer_id_fkey) are satisfied.
+   * If customer row does not exist in Supabase, attempts to upsert it.
+   * Returns true if customer exists / was verified in Supabase, or false if missing.
    */
-  async addMultipleCustomers(
+  async ensureCustomerExists(
+    customerId: string,
+    shopId: string,
+    name?: string | null,
+    phone?: string | null
+  ): Promise<boolean> {
+    if (!customerId || !isValidUUID(customerId) || !shopId || !isValidUUID(shopId)) {
+      return false;
+    }
+
+    try {
+      // 1. Check if customer already exists in Supabase
+      const { data: existing, error: checkError } = await (supabase.from('customers') as any)
+        .select('id')
+        .eq('id', customerId)
+        .maybeSingle();
+
+      if (!checkError && existing?.id) {
+        return true;
+      }
+
+      // 2. Ensure parent shop exists first so customers_shop_id_fkey is satisfied
+      await shopService.ensureShopExists(shopId);
+
+      // 3. Upsert customer into Supabase
+      const { error: upsertErr } = await (supabase.from('customers') as any)
+        .upsert(
+          {
+            id: customerId,
+            shop_id: shopId,
+            name: name ? name.trim() : 'Customer',
+            phone: phone ? phone.replace(/[^0-9]/g, '').slice(-10) : '',
+            status_tag: 'Regular',
+            is_active: true,
+            total_bills: 0,
+            pending_balance: 0,
+          },
+          { onConflict: 'id' }
+        );
+
+      if (!upsertErr) {
+        return true;
+      }
+
+      console.warn('ensureCustomerExists upsert notice:', upsertErr.message);
+      return false;
+    } catch (err) {
+      console.warn('ensureCustomerExists check notice:', err);
+      return false;
+    }
+  },
+
+  /**
+   * Batch add multiple customers with detailed result metrics
+   */
+  async importCustomersWithResult(
     shopId: string,
     items: Array<{ name: string; phone?: string; location?: string }>
-  ): Promise<CustomerRecord[]> {
-    if (!items || items.length === 0) return [];
+  ): Promise<{ added: CustomerRecord[]; alreadyExistingCount: number; invalidCount: number }> {
+    if (!items || items.length === 0) {
+      return { added: [], alreadyExistingCount: 0, invalidCount: 0 };
+    }
     const list = await this.getCustomers(shopId);
 
     const existingPhones = new Set(
@@ -166,58 +231,89 @@ export const contactService = {
     );
 
     const newRecords: CustomerRecord[] = [];
+    let alreadyExistingCount = 0;
+    let invalidCount = 0;
+
     for (const item of items) {
-      const clean = item.phone ? item.phone.replace(/[^0-9]/g, '').slice(-10) : '';
-      if (clean && clean.length === 10) {
+      const trimmedName = item.name ? item.name.trim() : '';
+      if (!trimmedName) {
+        invalidCount++;
+        continue;
+      }
+
+      let finalPhone: string | null = null;
+      if (item.phone && item.phone.trim()) {
+        const clean = item.phone.replace(/[^0-9]/g, '').slice(-10);
+        if (clean.length !== 10) {
+          invalidCount++;
+          continue;
+        }
         if (existingPhones.has(clean)) {
+          alreadyExistingCount++;
           continue; // Duplicate phone — skip
         }
         existingPhones.add(clean);
+        finalPhone = clean;
       }
 
       newRecords.push({
         id: generateUUID(),
         shopId,
-        name: item.name.trim(),
-        phone: clean ? clean : (item.phone?.trim() || null),
+        name: trimmedName,
+        phone: finalPhone,
         location: item.location?.trim() || null,
         notes: item.location ? `Location: ${item.location}` : null,
         totalBills: 0,
         pendingBalance: 0,
         statusTag: 'Regular',
+        isActive: true,
       });
     }
 
-    if (newRecords.length === 0) return [];
+    if (newRecords.length > 0) {
+      const updated = [...newRecords, ...list];
+      await storage.setObject(LOCAL_CUSTOMERS_KEY, updated);
 
-    const updated = [...newRecords, ...list];
-    await storage.setObject(LOCAL_CUSTOMERS_KEY, updated);
+      try {
+        const inserts = newRecords.map(r => ({
+          id: r.id,
+          shop_id: r.shopId,
+          name: r.name,
+          phone: r.phone,
+          location: r.location || null,
+          notes: r.notes,
+          total_bills: 0,
+          pending_balance: 0,
+          status_tag: r.statusTag || 'Regular',
+          is_active: true,
+          is_vip: false,
+        }));
 
-    try {
-      const inserts = newRecords.map(r => ({
-        id: r.id,
-        shop_id: r.shopId,
-        name: r.name,
-        phone: r.phone,
-        location: r.location || null,
-        notes: r.notes,
-        total_bills: 0,
-        pending_balance: 0,
-        status_tag: r.statusTag || 'Regular',
-        is_active: true,
-        is_vip: false,
-      }));
-
-      // Insert in chunks of 50 to prevent network payload or database timeouts
-      for (let i = 0; i < inserts.length; i += 50) {
-        const chunk = inserts.slice(i, i + 50);
-        await (supabase.from('customers') as any).insert(chunk);
+        for (let i = 0; i < inserts.length; i += 50) {
+          const chunk = inserts.slice(i, i + 50);
+          await (supabase.from('customers') as any).insert(chunk);
+        }
+      } catch (err) {
+        console.warn('importCustomersWithResult Supabase notice:', err);
       }
-    } catch (err) {
-      console.warn('addMultipleCustomers Supabase notice:', err);
     }
 
-    return newRecords;
+    return {
+      added: newRecords,
+      alreadyExistingCount,
+      invalidCount,
+    };
+  },
+
+  /**
+   * Batch add multiple customers
+   */
+  async addMultipleCustomers(
+    shopId: string,
+    items: Array<{ name: string; phone?: string; location?: string }>
+  ): Promise<CustomerRecord[]> {
+    const res = await this.importCustomersWithResult(shopId, items);
+    return res.added;
   },
 
   /**
@@ -361,42 +457,105 @@ export const contactService = {
   },
 
   /**
-   * Fetch real device contacts via expo-contacts/legacy
+   * Find existing customer in shop by normalized phone number
    */
-  async getDeviceContacts(): Promise<DeviceContactItem[]> {
+  async findExistingCustomerByPhone(shopId: string, phone: string): Promise<CustomerRecord | null> {
+    if (!shopId || !phone) return null;
+    const cleanPhone = phone.replace(/[^0-9]/g, '').slice(-10);
+    if (!cleanPhone || cleanPhone.length !== 10) return null;
+    const customers = await this.getCustomers(shopId);
+    return customers.find(c => c.phone && c.phone.replace(/[^0-9]/g, '').slice(-10) === cleanPhone) || null;
+  },
+
+  /**
+   * Check contact permission and fetch real device contacts with full state tracking
+   */
+  async fetchDeviceContactsWithPermission(): Promise<DeviceContactsResponse> {
     try {
-      const { status } = await Contacts.requestPermissionsAsync();
-      if (status !== 'granted') {
-        console.warn('Contacts permission was not granted by the user.');
-        return [];
+      const perm = await Contacts.getPermissionsAsync();
+      let status = perm.status;
+      let canAskAgain = perm.canAskAgain !== false;
+
+      if (status !== 'granted' && canAskAgain) {
+        const req = await Contacts.requestPermissionsAsync();
+        status = req?.status || 'denied';
+        canAskAgain = req?.canAskAgain !== false;
       }
 
-      const { data } = await Contacts.getContactsAsync({
-        fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name],
-      });
+      if (status !== 'granted') {
+        return {
+          status: !canAskAgain ? 'blocked' : 'denied',
+          canAskAgain,
+          contacts: [],
+          errorMessage: !canAskAgain
+            ? 'Contact permission is blocked in device settings. Please enable contact access to import.'
+            : 'Contact permission was not granted by user.',
+        };
+      }
+
+      const fields = [
+        Contacts.Fields?.PhoneNumbers || 'phoneNumbers',
+        Contacts.Fields?.Name || 'name',
+        Contacts.Fields?.Emails || 'emails',
+      ];
+      const { data } = await Contacts.getContactsAsync({ fields });
 
       if (data && data.length > 0) {
         const list: DeviceContactItem[] = [];
         for (const c of data) {
-          const name = c.name?.trim();
+          const name = c.name?.trim() || `${c.firstName || ''} ${c.lastName || ''}`.trim();
           if (!name) continue;
           let phone = '';
-          if (c.phoneNumbers && c.phoneNumbers.length > 0 && c.phoneNumbers[0]?.number) {
-            phone = c.phoneNumbers[0].number.replace(/\D/g, '').slice(-10);
+          if (c.phoneNumbers && c.phoneNumbers.length > 0) {
+            const validMobile = c.phoneNumbers.find((p: any) => {
+              const digits = (p?.number || '').replace(/\D/g, '').slice(-10);
+              return digits.length === 10 && /^[6-9]/.test(digits);
+            });
+            const chosen = validMobile || c.phoneNumbers[0];
+            if (chosen?.number) {
+              phone = chosen.number.replace(/\D/g, '').slice(-10);
+            }
+          }
+          let email: string | undefined = undefined;
+          if (c.emails && c.emails.length > 0 && c.emails[0]?.email) {
+            email = c.emails[0].email.trim();
           }
           list.push({
             id: c.id || generateUUID(),
             name,
             phone: phone || undefined,
+            email: email || undefined,
           });
         }
-        return list.sort((a, b) => a.name.localeCompare(b.name));
+        return {
+          status: 'granted',
+          canAskAgain: true,
+          contacts: list.sort((a, b) => a.name.localeCompare(b.name)),
+        };
       }
-    } catch (err) {
-      console.warn('getDeviceContacts error:', err);
-    }
 
-    return [];
+      return {
+        status: 'granted',
+        canAskAgain: true,
+        contacts: [],
+      };
+    } catch (err: any) {
+      console.warn('fetchDeviceContactsWithPermission error:', err);
+      return {
+        status: 'denied',
+        canAskAgain: true,
+        contacts: [],
+        errorMessage: err?.message || 'Could not access device contacts',
+      };
+    }
+  },
+
+  /**
+   * Fetch real device contacts via expo-contacts/legacy (backward compatibility wrapper)
+   */
+  async getDeviceContacts(): Promise<DeviceContactItem[]> {
+    const res = await this.fetchDeviceContactsWithPermission();
+    return res.contacts;
   },
 
   /**

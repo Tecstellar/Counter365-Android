@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, ViewStyle, TextStyle } from 'react-native';
-import { colors, typography, radii } from '../../theme';
+import { typography, radii, useTheme, Theme } from '../../theme';
 
 interface AppTagProps {
   label: string;
@@ -15,6 +15,9 @@ export const AppTag: React.FC<AppTagProps> = ({
   style,
   textStyle,
 }) => {
+  const { theme } = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+
   const getVariantStyle = () => {
     switch (variant) {
       case 'accent':  return styles.accent;
@@ -46,62 +49,65 @@ export const AppTag: React.FC<AppTagProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
-  base: {
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderRadius: radii.pill,
-    alignSelf: 'flex-start',
-  },
-  baseText: {
-    fontFamily: typography.fonts.bodySemiBold,
-    fontSize: typography.sizes.sm,
-    letterSpacing: 0.2,
-    fontWeight: '700',
-  },
+const createStyles = (theme: Theme) => {
+  const colors = theme.colors;
+  return StyleSheet.create({
+    base: {
+      paddingHorizontal: 9,
+      paddingVertical: 4,
+      borderRadius: radii.pill,
+      alignSelf: 'flex-start',
+    },
+    baseText: {
+      fontFamily: typography.fonts.bodySemiBold,
+      fontSize: typography.sizes.sm,
+      letterSpacing: 0.2,
+      fontWeight: '700',
+    },
 
-  // Variants
-  accent: {
-    backgroundColor: colors.accent100,
-  },
-  accentText: {
-    color: colors.accent700,
-  },
+    // Variants
+    accent: {
+      backgroundColor: colors.accent100,
+    },
+    accentText: {
+      color: colors.accent700,
+    },
 
-  neutral: {
-    backgroundColor: colors.neutral200,
-  },
-  neutralText: {
-    color: colors.textMuted,
-  },
+    neutral: {
+      backgroundColor: colors.neutral200,
+    },
+    neutralText: {
+      color: colors.textMuted,
+    },
 
-  outline: {
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: colors.divider,
-  },
-  outlineText: {
-    color: colors.textMuted,
-  },
+    outline: {
+      backgroundColor: 'transparent',
+      borderWidth: 1,
+      borderColor: colors.divider,
+    },
+    outlineText: {
+      color: colors.textMuted,
+    },
 
-  danger: {
-    backgroundColor: '#FDEAEA',
-  },
-  dangerText: {
-    color: colors.danger,
-  },
+    danger: {
+      backgroundColor: colors.dangerBg,
+    },
+    dangerText: {
+      color: colors.dangerText,
+    },
 
-  success: {
-    backgroundColor: '#E8F5EF',
-  },
-  successText: {
-    color: '#0D6E40',
-  },
+    success: {
+      backgroundColor: colors.successBg,
+    },
+    successText: {
+      color: colors.successText,
+    },
 
-  warning: {
-    backgroundColor: '#FEF3E2',
-  },
-  warningText: {
-    color: '#9A5C00',
-  },
-});
+    warning: {
+      backgroundColor: colors.warningBg,
+    },
+    warningText: {
+      color: colors.warningText,
+    },
+  });
+};

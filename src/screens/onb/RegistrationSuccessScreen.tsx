@@ -15,6 +15,7 @@ interface RegistrationSuccessScreenProps {
   isGeoTagged: boolean;
   onStartTour: () => void;
   onRestart: () => void;
+  onGoToDashboard: () => void;
 }
 
 export const RegistrationSuccessScreen: React.FC<RegistrationSuccessScreenProps> = ({
@@ -26,6 +27,7 @@ export const RegistrationSuccessScreen: React.FC<RegistrationSuccessScreenProps>
   isGeoTagged,
   onStartTour,
   onRestart,
+  onGoToDashboard,
 }) => {
   const insets = useSafeAreaInsets();
   const topPadding = Math.max(insets.top, Platform.OS === 'android' ? 14 : 16);
@@ -55,14 +57,29 @@ export const RegistrationSuccessScreen: React.FC<RegistrationSuccessScreenProps>
           </View>
         </View>
 
+        {/* Welcome Offer Card */}
+        <View style={styles.offerCard}>
+          <Text style={styles.offerBadge}>🎁 REGISTRATION OFFER ACTIVATED</Text>
+          <Text style={styles.offerTitle}>100 Free Bills Plan Active!</Text>
+          <Text style={styles.offerDetails}>
+            Your shop is unlocked with 100 Free Bills, instant WhatsApp receipts, thermal printing, and udhar ledger with zero monthly fees.
+          </Text>
+        </View>
+
         <Text style={styles.description}>
-          Your shop is live and this number is the owner ID — only it can create Supervisors and Billers. Free subscription included.
+          Your shop is live and this phone number is the owner ID — only this number can create Supervisors and Billers.
         </Text>
 
         <View style={styles.actions}>
           <AppButton
-            title="Show me around the app"
+            title="Start Billing / Go to Dashboard"
             variant="primary"
+            onPress={onGoToDashboard}
+            style={styles.dashboardBtn}
+          />
+          <AppButton
+            title="Show me around the app"
+            variant="secondary"
             onPress={onStartTour}
             style={styles.tourBtn}
           />
@@ -104,6 +121,33 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
   },
+  offerCard: {
+    padding: 18,
+    backgroundColor: '#FFF7F0',
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: '#FF5F00',
+    gap: 4,
+  },
+  offerBadge: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FF5F00',
+    fontFamily: typography.fonts.heading,
+    letterSpacing: 0.8,
+  },
+  offerTitle: {
+    fontFamily: typography.fonts.heading,
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#111111',
+  },
+  offerDetails: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#4B5563',
+    fontFamily: typography.fonts.body,
+  },
   cardKicker: {
     fontFamily: typography.fonts.heading,
     fontSize: 11,
@@ -141,12 +185,16 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: 10,
   },
-  tourBtn: {
+  dashboardBtn: {
     minHeight: 52,
     borderRadius: 16,
   },
+  tourBtn: {
+    minHeight: 48,
+    borderRadius: 14,
+  },
   restartBtn: {
-    minHeight: 46,
+    minHeight: 44,
     borderRadius: 14,
   },
 });

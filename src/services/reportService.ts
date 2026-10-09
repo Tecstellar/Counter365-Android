@@ -26,11 +26,16 @@ export const reportService = {
 
     // Filter bills and expenses belonging to this specific month & year
     const monthBills = bills.filter(b => {
+      if (b.isDeleted || b.status === 'deleted' || b.status === 'cancelled') return false;
       const d = new Date(b.createdAt);
       const s = b.settledAt ? new Date(b.settledAt) : null;
       const createdInMonth = d.getFullYear() === year && d.getMonth() === month;
       const settledInMonth = s ? (s.getFullYear() === year && s.getMonth() === month) : false;
-      return (createdInMonth || settledInMonth) && b.status === 'completed';
+      const collectionsInMonth = b.collections && b.collections.some(c => {
+        const cd = new Date(c.paidAt);
+        return cd.getFullYear() === year && cd.getMonth() === month;
+      });
+      return (createdInMonth || settledInMonth || collectionsInMonth) && (b.status === 'completed' || b.status === 'edited');
     });
 
     const monthExpenses = expenses.filter(e => {
@@ -52,7 +57,11 @@ export const reportService = {
         const sd = b.settledAt ? new Date(b.settledAt) : null;
         const createdOnDay = bd.getFullYear() === year && bd.getMonth() === month && bd.getDate() === d;
         const settledOnDay = sd ? (sd.getFullYear() === year && sd.getMonth() === month && sd.getDate() === d) : false;
-        return createdOnDay || settledOnDay;
+        const collectionsOnDay = b.collections && b.collections.some(c => {
+          const cd = new Date(c.paidAt);
+          return cd.getFullYear() === year && cd.getMonth() === month && cd.getDate() === d;
+        });
+        return createdOnDay || settledOnDay || collectionsOnDay;
       });
 
       // Filter expenses for day d
@@ -100,6 +109,13 @@ export const reportService = {
     }
 
     const totalSales = monthBills.reduce((sum, b) => {
+      if (b.collections && b.collections.length > 0) {
+        const colSum = b.collections.reduce((cSum, c) => {
+          const cd = new Date(c.paidAt);
+          return (cd.getFullYear() === year && cd.getMonth() === month) ? cSum + c.amount : cSum;
+        }, 0);
+        return sum + colSum;
+      }
       const paid = b.paidAmount !== undefined ? b.paidAmount : (b.paymentMode === 'Pending' ? 0 : b.totalAmount);
       return sum + paid;
     }, 0);
@@ -239,7 +255,12 @@ export const reportService = {
   ): DayClosingReport {
     const todayStr = new Date().toISOString().split('T')[0];
 
-    const todaySales = todayBills.reduce((sum, b) => {
+    // Filter out cancelled and deleted bills
+    const activeTodayBills = todayBills.filter(
+      b => !b.isDeleted && b.status !== 'deleted' && b.status !== 'cancelled'
+    );
+
+    const todaySales = activeTodayBills.reduce((sum, b) => {
       if (b.collections && b.collections.length > 0) {
         const todayCols = b.collections.reduce((cSum, c) => {
           if (c.paidAt && c.paidAt.startsWith(todayStr)) {
@@ -257,7 +278,7 @@ export const reportService = {
     let gpaySales = 0;
     let pendingSales = 0;
 
-    todayBills.forEach(b => {
+    activeTodayBills.forEach(b => {
       if (b.collections && b.collections.length > 0) {
         b.collections.forEach(c => {
           if (c.paidAt && c.paidAt.startsWith(todayStr)) {

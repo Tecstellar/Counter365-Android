@@ -113,7 +113,7 @@ export const DayClosingModal: React.FC<DayClosingModalProps> = ({
             <View style={styles.waIconContainer}>
               <Ionicons name="logo-whatsapp" size={20} color="#FFFFFF" />
             </View>
-            <Text style={styles.waBtnText}>Send to my WhatsApp</Text>
+            <Text style={styles.waBtnText} numberOfLines={1} adjustsFontSizeToFit>Send to my WhatsApp</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -349,15 +349,16 @@ const createStyles = (theme: Theme) => {
       gap: 10,
     },
     waBtn: {
-      flex: 1.4,
+      flex: 1.5,
       minHeight: 48,
       borderRadius: radii.pill,
       backgroundColor: '#16A34A',
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      paddingHorizontal: 16,
-      gap: 8,
+      paddingHorizontal: 12,
+      gap: 6,
+      flexShrink: 1,
       shadowColor: '#16A34A',
       shadowOffset: { width: 0, height: 4 },
       shadowOpacity: 0.35,
@@ -365,16 +366,17 @@ const createStyles = (theme: Theme) => {
       elevation: 4,
     },
     waIconContainer: {
-      width: 24,
-      height: 24,
+      width: 22,
+      height: 22,
       alignItems: 'center',
       justifyContent: 'center',
     },
     waBtnText: {
       fontFamily: typography.fonts.heading,
-      fontSize: 14,
+      fontSize: 13,
       fontWeight: '700',
       color: '#FFFFFF',
+      flexShrink: 1,
     },
     printBtn: {
       flex: 1,

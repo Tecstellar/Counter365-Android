@@ -7,7 +7,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, typography, radii, spacing, shadows } from '../../theme';
+import { colors, typography, radii, spacing, shadows, useTheme, Theme } from '../../theme';
 
 interface DateRangeCalendarProps {
   startDate: Date;
@@ -30,6 +30,8 @@ export const DateRangeCalendar: React.FC<DateRangeCalendarProps> = ({
   onApplyRange,
   onClose,
 }) => {
+  const { theme, isDark } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const [currentMonth, setCurrentMonth] = useState(startDate.getMonth());
   const [currentYear, setCurrentYear] = useState(startDate.getFullYear());
   const [rangeStart, setRangeStart] = useState<Date>(startDate);
@@ -303,221 +305,224 @@ export const DateRangeCalendar: React.FC<DateRangeCalendarProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
-  calendarCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#EFECE6',
-    padding: 16,
-    marginVertical: 6,
-    ...shadows.card,
-  },
-  rangeHeaderBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderBottomWidth: 1,
-    borderBottomColor: '#FAF7F2',
-    paddingBottom: 10,
-    marginBottom: 10,
-  },
-  rangeInfo: {
-    flex: 1,
-  },
-  rangeKicker: {
-    fontFamily: typography.fonts.heading,
-    fontSize: 11,
-    letterSpacing: 1.1,
-    color: '#FD5E03',
-    fontWeight: '700',
-  },
-  rangeLabel: {
-    fontFamily: typography.fonts.heading,
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.text,
-    marginTop: 2,
-  },
-  closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    backgroundColor: '#FAF7F2',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 8,
-  },
-  closeBtnText: {
-    fontSize: 16,
-    color: colors.textMuted,
-    fontWeight: '700',
-  },
-  presetRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 12,
-  },
-  presetPill: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#EFECE6',
-    backgroundColor: '#FAF7F2',
-  },
-  presetPillText: {
-    fontSize: 11.5,
-    fontFamily: typography.fonts.heading,
-    fontWeight: '700',
-    color: colors.text,
-  },
-  monthNavRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 4,
-    marginBottom: 8,
-  },
-  monthNavBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#EFECE6',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FAF7F2',
-  },
-  monthNavArrow: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: colors.text,
-    lineHeight: 22,
-  },
-  monthTitle: {
-    fontFamily: typography.fonts.heading,
-    fontSize: 15,
-    fontWeight: '800',
-    color: colors.text,
-  },
-  weekDaysHeader: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: '#FAF7F2',
-    paddingBottom: 6,
-    marginBottom: 4,
-  },
-  weekDayCol: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  weekDayText: {
-    fontFamily: typography.fonts.heading,
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.textSecondary,
-  },
-  gridContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: 2,
-  },
-  cellWrapper: {
-    width: '14.28%',
-    height: 42,
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-    marginVertical: 1,
-  },
-  snakeRibbon: {
-    position: 'absolute',
-    top: 5,
-    bottom: 5,
-    backgroundColor: 'rgba(253, 94, 3, 0.12)',
-    height: 32,
-  },
-  snakeLeft: {
-    left: 0,
-    right: '50%',
-  },
-  snakeRight: {
-    left: '50%',
-    right: 0,
-  },
-  snakeStartEdge: {
-    borderTopLeftRadius: 16,
-    borderBottomLeftRadius: 16,
-    left: '10%',
-  },
-  snakeEndEdge: {
-    borderTopRightRadius: 16,
-    borderBottomRightRadius: 16,
-    right: '10%',
-  },
-  dayDot: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 2,
-  },
-  dayDotSelected: {
-    backgroundColor: '#FD5E03',
-    ...shadows.sm,
-  },
-  dayDotToday: {
-    borderWidth: 1.5,
-    borderColor: '#FD5E03',
-  },
-  dayText: {
-    fontFamily: typography.fonts.body,
-    fontSize: 13,
-    color: colors.text,
-  },
-  dayTextSelected: {
-    fontFamily: typography.fonts.heading,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  dayTextInRange: {
-    fontFamily: typography.fonts.heading,
-    fontWeight: '700',
-    color: '#FD5E03',
-  },
-  dayTextToday: {
-    fontWeight: '700',
-    color: '#FD5E03',
-  },
-  helperRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 8,
-  },
-  helperText: {
-    fontSize: 11.5,
-    color: colors.textSecondary,
-    fontFamily: typography.fonts.heading,
-    fontWeight: '600',
-  },
-  applyBtn: {
-    backgroundColor: '#FD5E03',
-    borderRadius: 14,
-    height: 46,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 4,
-    ...shadows.card,
-  },
-  applyBtnText: {
-    fontFamily: typography.fonts.heading,
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-});
+const createStyles = (theme: Theme, isDark: boolean) => {
+  const colors = theme.colors;
+  return StyleSheet.create({
+    calendarCard: {
+      backgroundColor: colors.surface,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: colors.border,
+      padding: 16,
+      marginVertical: 6,
+      ...shadows.card,
+    },
+    rangeHeaderBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      paddingBottom: 10,
+      marginBottom: 10,
+    },
+    rangeInfo: {
+      flex: 1,
+    },
+    rangeKicker: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 11,
+      letterSpacing: 1.1,
+      color: colors.accent,
+      fontWeight: '700',
+    },
+    rangeLabel: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 14,
+      fontWeight: '700',
+      color: colors.text,
+      marginTop: 2,
+    },
+    closeBtn: {
+      width: 32,
+      height: 32,
+      borderRadius: 10,
+      backgroundColor: isDark ? colors.surfaceSecondary : '#FAF7F2',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginLeft: 8,
+    },
+    closeBtnText: {
+      fontSize: 16,
+      color: colors.textMuted,
+      fontWeight: '700',
+    },
+    presetRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+      marginBottom: 12,
+    },
+    presetPill: {
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: isDark ? colors.surfaceSecondary : '#FAF7F2',
+    },
+    presetPillText: {
+      fontSize: 11.5,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    monthNavRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 4,
+      marginBottom: 8,
+    },
+    monthNavBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: isDark ? colors.surfaceSecondary : '#FAF7F2',
+    },
+    monthNavArrow: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: colors.text,
+      lineHeight: 22,
+    },
+    monthTitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 15,
+      fontWeight: '800',
+      color: colors.text,
+    },
+    weekDaysHeader: {
+      flexDirection: 'row',
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      paddingBottom: 6,
+      marginBottom: 4,
+    },
+    weekDayCol: {
+      flex: 1,
+      alignItems: 'center',
+    },
+    weekDayText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 11,
+      fontWeight: '700',
+      color: colors.textSecondary,
+    },
+    gridContainer: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      marginTop: 2,
+    },
+    cellWrapper: {
+      width: '14.28%',
+      height: 42,
+      alignItems: 'center',
+      justifyContent: 'center',
+      position: 'relative',
+      marginVertical: 1,
+    },
+    snakeRibbon: {
+      position: 'absolute',
+      top: 5,
+      bottom: 5,
+      backgroundColor: isDark ? 'rgba(255, 95, 0, 0.22)' : 'rgba(253, 94, 3, 0.12)',
+      height: 32,
+    },
+    snakeLeft: {
+      left: 0,
+      right: '50%',
+    },
+    snakeRight: {
+      left: '50%',
+      right: 0,
+    },
+    snakeStartEdge: {
+      borderTopLeftRadius: 16,
+      borderBottomLeftRadius: 16,
+      left: '10%',
+    },
+    snakeEndEdge: {
+      borderTopRightRadius: 16,
+      borderBottomRightRadius: 16,
+      right: '10%',
+    },
+    dayDot: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 2,
+    },
+    dayDotSelected: {
+      backgroundColor: colors.accent,
+      ...shadows.sm,
+    },
+    dayDotToday: {
+      borderWidth: 1.5,
+      borderColor: colors.accent,
+    },
+    dayText: {
+      fontFamily: typography.fonts.body,
+      fontSize: 13,
+      color: colors.text,
+    },
+    dayTextSelected: {
+      fontFamily: typography.fonts.heading,
+      fontWeight: '800',
+      color: '#FFFFFF',
+    },
+    dayTextInRange: {
+      fontFamily: typography.fonts.heading,
+      fontWeight: '700',
+      color: colors.accent,
+    },
+    dayTextToday: {
+      fontWeight: '700',
+      color: colors.accent,
+    },
+    helperRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingVertical: 8,
+    },
+    helperText: {
+      fontSize: 11.5,
+      color: colors.textSecondary,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '600',
+    },
+    applyBtn: {
+      backgroundColor: colors.accent,
+      borderRadius: 14,
+      height: 46,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 4,
+      ...shadows.card,
+    },
+    applyBtnText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 14,
+      fontWeight: '800',
+      color: '#FFFFFF',
+    },
+  });
+};

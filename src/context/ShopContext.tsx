@@ -3,6 +3,7 @@ import { Shop, ShopMember, ShopType, UserRole, PermissionKey, SubscriptionRecord
 import { shopService, INITIAL_EMPTY_SHOP } from '../services/shopService';
 import { subscriptionService } from '../services/subscriptionService';
 import { billingService } from '../services/billingService';
+import { storage } from '../lib/storage';
 
 interface ShopContextType {
   shop: Shop;
@@ -26,11 +27,15 @@ interface ShopContextType {
     hasLogo?: boolean;
     logoUrl?: string;
     ownerUserId?: string;
+    ownerName?: string;
+    invoicePrefix?: string;
+    invoiceResetCycle?: 'monthly' | 'yearly';
   }) => Promise<Shop>;
   addMember: (name: string, role: UserRole, phone?: string) => Promise<ShopMember>;
   updateMemberRole: (memberId: string, role: UserRole) => Promise<void>;
   updateMemberOverride: (memberId: string, permKey: PermissionKey, val: boolean) => Promise<void>;
   removeMember: (memberId: string) => Promise<void>;
+  setMemberActive: (memberId: string, isActive: boolean) => Promise<void>;
   deleteShopPermanently: (params?: {
     ownerUserId?: string;
     reason: string;
@@ -40,6 +45,7 @@ interface ShopContextType {
     phone?: string;
   } | string) => Promise<void>;
   refreshShop: () => Promise<void>;
+  clearShop: () => Promise<void>;
 }
 
 const ShopContext = createContext<ShopContextType>({} as any);
@@ -77,6 +83,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setShop(activeShop);
       setMembers(shopMembers);
       if (activeShop.id) {
+        await shopService.ensureShopExists(activeShop.id);
         await refreshSubscription(activeShop);
       }
     } finally {
@@ -131,6 +138,11 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setMembers(updated);
   };
 
+  const setMemberActive = async (memberId: string, isActive: boolean) => {
+    const updated = await shopService.setMemberActive(shop.id, memberId, isActive);
+    setMembers(updated);
+  };
+
   const deleteShopPermanently = async (
     paramOrOwnerId?:
       | {
@@ -172,6 +184,14 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await loadShop();
   };
 
+  const clearShop = async () => {
+    setShop(INITIAL_EMPTY_SHOP);
+    setMembers([]);
+    setSubscription(null);
+    setSubscriptionStatus(subscriptionService.calculateSubscriptionStatus(null, null));
+    await storage.removeItem('@counterpro/active_shop');
+  };
+
   return (
     <ShopContext.Provider
       value={{
@@ -188,8 +208,10 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updateMemberRole,
         updateMemberOverride,
         removeMember,
+        setMemberActive,
         deleteShopPermanently,
         refreshShop,
+        clearShop,
       }}
     >
       {children}

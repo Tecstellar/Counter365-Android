@@ -46,16 +46,8 @@ export const PhoneStep: React.FC<PhoneStepProps> = ({
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [reduceMotion, setReduceMotion] = useState(false);
 
-  // Raw digits state for smooth typing on all mobile keyboards
-  const [digits, setDigits] = useState<string>(phone.replace(/\D/g, '').slice(0, 10));
-
-  // Sync external phone prop
-  useEffect(() => {
-    const clean = phone.replace(/\D/g, '').slice(0, 10);
-    if (clean !== digits) {
-      setDigits(clean);
-    }
-  }, [phone]);
+  // Authoritative digits derived directly from phone prop to prevent double-updates
+  const digits = phone.replace(/\D/g, '').slice(0, 10);
 
   // Check accessibility reduce motion
   useEffect(() => {
@@ -239,14 +231,12 @@ export const PhoneStep: React.FC<PhoneStepProps> = ({
     return () => floatLoop.stop();
   }, [reduceMotion]);
 
-  // Clean text change handler
+  // Clean text change handler - calls exactly ONE updater to eliminate double-typing
   const handleChangeText = (text: string) => {
     const raw = text.replace(/\D/g, '').slice(0, 10);
-    setDigits(raw);
     if (onChangePhone) {
       onChangePhone(raw);
-    }
-    if (onKeyPress) {
+    } else if (onKeyPress) {
       if (raw.length < digits.length) {
         onKeyPress('⌫');
       } else {

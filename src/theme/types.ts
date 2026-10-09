@@ -101,6 +101,9 @@ export interface ThemeColors {
   ok: string;      // Paid or settled only
   okSoft: string;  // Background behind success icons
   err: string;     // Delete and overdue only
+  gl: string;      // Glass base surface
+  glb: string;     // Glass border (1px white 75% light, 9% dark)
+  gc: string;      // Glass card surface (74% light, 62% dark)
 }
 
 export interface Theme {

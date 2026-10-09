@@ -101,6 +101,9 @@ export const darkColors: ThemeColors = {
   ok: '#3DD68C',
   okSoft: '#12301F',
   err: '#FF6B4D',
+  gl: 'rgba(24, 24, 24, 0.6)',
+  glb: 'rgba(255, 255, 255, 0.09)',
+  gc: 'rgba(28, 28, 28, 0.62)',
 };
 
 export const darkTheme: Theme = {

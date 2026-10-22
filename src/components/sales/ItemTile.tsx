@@ -1,26 +1,24 @@
-import React, { useState } from 'react';
+import React, { useRef } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
-  Image,
-  ActivityIndicator,
   useWindowDimensions,
+  Animated,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, typography, radii, shadows, useTheme, Theme } from '../../theme';
 import { MenuItem } from '../../types/models';
 import { formatRupee } from '../../lib/money';
-import { getDishImageUrl } from '../../constants/dishImages';
-
-const LOCAL_FALLBACK_DISH_IMAGE = require('../../../assets/images/fast_billing.jpg');
+import { getPhosphorIconConfig } from '../../constants/phosphorDishIcons';
 
 interface ItemTileProps {
   item: MenuItem;
   categoryName?: string;
   quantity: number;
+  isMostlyUsed?: boolean;
   onAddFull: () => void;
   onAddHalf: () => void;
   onDecrease?: () => void;
@@ -32,6 +30,7 @@ export const ItemTile: React.FC<ItemTileProps> = ({
   item,
   categoryName,
   quantity,
+  isMostlyUsed,
   onAddFull,
   onAddHalf,
   onDecrease,
@@ -44,10 +43,28 @@ export const ItemTile: React.FC<ItemTileProps> = ({
   // 3 columns with 16px side padding and 10px gaps
   const defaultTileSize = Math.floor((windowWidth - 52) / 3);
   const size = customTileSize || defaultTileSize;
-  const photoHeight = Math.round(size * 0.52);
+  const photoHeight = Math.round(size * 0.46);
 
-  const [imageError, setImageError] = useState(false);
-  const [catalogError, setCatalogError] = useState(false);
+  // Subtle tap scale animation (scale to 0.96)
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+
+  const handlePressIn = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 0.96,
+      useNativeDriver: true,
+      speed: 50,
+      bounciness: 4,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      useNativeDriver: true,
+      speed: 40,
+      bounciness: 6,
+    }).start();
+  };
 
   const handlePress = () => {
     if (!item.isAvailable) {
@@ -78,56 +95,56 @@ export const ItemTile: React.FC<ItemTileProps> = ({
     formatRupee(item.price) +
     (item.hasHalf && item.halfPrice ? ` · ½${formatRupee(item.halfPrice)}` : '');
 
-  const catalogPhotoUri = getDishImageUrl(item.name, categoryName);
-  const photoUri = !imageError && item.imageUrl ? item.imageUrl : catalogPhotoUri;
-
-  const isGenerating = item.imageStatus === 'generating';
+  const iconConfig = getPhosphorIconConfig(item.name, categoryName, item.icon);
+  const PhosphorIcon = iconConfig.IconComponent;
+  const isDark = theme.isDark;
 
   return (
-    <View
+    <Animated.View
       style={[
         styles.tileContainer,
-        { width: size, minHeight: size },
+        { width: size, minHeight: size, transform: [{ scale: scaleAnim }] },
         hasQty && styles.tileInCart,
         isSoldOut && styles.tileSoldOut,
       ]}
     >
       <TouchableOpacity
-        activeOpacity={0.72}
-        delayPressIn={60}
+        activeOpacity={0.88}
+        delayPressIn={0}
         delayLongPress={430}
-        pressRetentionOffset={{ top: 4, left: 4, right: 4, bottom: 4 }}
+        pressRetentionOffset={{ top: 6, left: 6, right: 6, bottom: 6 }}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
         onPress={handlePress}
         onLongPress={handleLongPress}
         style={styles.tilePressable}
       >
-        {/* Photo Container - Guaranteed Dish Photography Image, Zero Vector Icons */}
-        <View style={[styles.photoBox, { height: photoHeight }]}>
-          {isGenerating ? (
-            <View style={styles.generatingBox}>
-              <ActivityIndicator size="small" color="#FD5E03" />
-              <Text style={styles.generatingText}>AI Photo...</Text>
-            </View>
-          ) : catalogError ? (
-            <Image
-              source={LOCAL_FALLBACK_DISH_IMAGE}
-              style={styles.photoImage}
-              resizeMode="cover"
+        {/* Phosphor Duotone Vector Icon Stage */}
+        <View
+          style={[
+            styles.iconBanner,
+            {
+              height: photoHeight,
+              backgroundColor: isDark ? iconConfig.darkBg : iconConfig.pastelBg,
+            },
+          ]}
+        >
+          <View
+            style={[
+              styles.iconCircle,
+              {
+                backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#FFFFFF',
+                borderColor: isDark ? iconConfig.darkBorder : iconConfig.borderColor,
+                shadowColor: isDark ? '#000000' : iconConfig.tintColor,
+              },
+            ]}
+          >
+            <PhosphorIcon
+              size={20}
+              weight="duotone"
+              color={iconConfig.tintColor}
             />
-          ) : (
-            <Image
-              source={{ uri: photoUri }}
-              style={styles.photoImage}
-              resizeMode="cover"
-              onError={() => {
-                if (!imageError && item.imageUrl) {
-                  setImageError(true);
-                } else {
-                  setCatalogError(true);
-                }
-              }}
-            />
-          )}
+          </View>
         </View>
 
         {/* Name and Price */}
@@ -141,7 +158,7 @@ export const ItemTile: React.FC<ItemTileProps> = ({
             </Text>
             {/* Small + action button */}
             <View style={styles.addMiniBtn}>
-              <Ionicons name="add" size={13} color="#FD5E03" />
+              <Ionicons name="add" size={12} color="#FD5E03" />
             </View>
           </View>
         </View>
@@ -151,6 +168,13 @@ export const ItemTile: React.FC<ItemTileProps> = ({
       {hasQty && (
         <View style={styles.qtyBadge}>
           <Text style={styles.qtyText}>{quantity}</Text>
+        </View>
+      )}
+
+      {/* Mostly Used Flame Badge: compact fire icon badge */}
+      {isMostlyUsed && !hasQty && (
+        <View style={styles.mostlyUsedBadge}>
+          <Ionicons name="flame" size={11} color="#FFFFFF" />
         </View>
       )}
 
@@ -172,7 +196,7 @@ export const ItemTile: React.FC<ItemTileProps> = ({
           <Text style={styles.soldOutText}>SOLD OUT</Text>
         </View>
       )}
-    </View>
+    </Animated.View>
   );
 };
 
@@ -200,46 +224,33 @@ const createStyles = (theme: Theme) => {
   tileSoldOut: {
     opacity: 0.55,
   },
-  photoBox: {
+  iconBanner: {
     width: '100%',
-    backgroundColor: colors.accent100,
-    overflow: 'hidden',
-    borderTopLeftRadius: 17,
-    borderTopRightRadius: 17,
-  },
-  photoImage: {
-    width: '100%',
-    height: '100%',
-  },
-  photoFallback: {
-    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.accent100,
   },
-  generatingBox: {
-    flex: 1,
+  iconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.accent100,
-    gap: 4,
-  },
-  generatingText: {
-    fontFamily: typography.fonts.heading,
-    fontSize: 9.5,
-    fontWeight: '700',
-    color: '#FF5F00',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
   infoBox: {
-    paddingHorizontal: 9,
-    paddingTop: 8,
-    paddingBottom: 9,
-    gap: 4,
+    paddingHorizontal: 6,
+    paddingTop: 5,
+    paddingBottom: 6,
+    gap: 2,
   },
   name: {
     fontFamily: typography.fonts.heading,
-    fontSize: 13,
-    lineHeight: 16,
+    fontSize: 11,
+    lineHeight: 14,
     fontWeight: '700',
     color: colors.text,
   },
@@ -247,54 +258,71 @@ const createStyles = (theme: Theme) => {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 2,
+    marginTop: 1,
   },
   price: {
-    fontSize: 12.5,
-    lineHeight: 16,
+    fontSize: 11,
+    lineHeight: 14,
     color: colors.text,
     fontFamily: typography.fonts.heading,
     fontWeight: '800',
     flex: 1,
   },
   addMiniBtn: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     backgroundColor: colors.accent100,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  mostlyUsedBadge: {
+    position: 'absolute',
+    top: 5,
+    left: 5,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#FD5E03',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 8,
+    elevation: 3,
+    shadowColor: '#FD5E03',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+  },
   minusBadge: {
     position: 'absolute',
-    top: 6,
-    left: 6,
-    minWidth: 24,
-    height: 24,
-    paddingHorizontal: 6,
+    top: 5,
+    left: 5,
+    minWidth: 20,
+    height: 20,
+    paddingHorizontal: 4,
     backgroundColor: colors.danger,
-    borderRadius: 12,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
-    elevation: 6,
+    elevation: 5,
   },
   minusText: {
     fontFamily: typography.fonts.heading,
-    fontSize: 14,
-    lineHeight: 16,
+    fontSize: 12,
+    lineHeight: 14,
     fontWeight: '800',
     color: '#FFFFFF',
   },
   qtyBadge: {
     position: 'absolute',
-    top: 6,
-    right: 6,
-    minWidth: 24,
-    height: 24,
-    paddingHorizontal: 7,
+    top: 5,
+    right: 5,
+    minWidth: 20,
+    height: 20,
+    paddingHorizontal: 4,
     backgroundColor: '#FF5F00',
-    borderRadius: 12,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 9,
@@ -302,7 +330,7 @@ const createStyles = (theme: Theme) => {
   },
   qtyText: {
     fontFamily: typography.fonts.heading,
-    fontSize: 11.5,
+    fontSize: 10,
     color: '#FFFFFF',
     fontWeight: '800',
   },

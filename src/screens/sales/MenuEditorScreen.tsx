@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -23,14 +23,16 @@ import { AppTag } from '../../components/common/AppTag';
 import { CategoryActionMenuModal } from '../../components/modals/CategoryActionMenuModal';
 import { useShop } from '../../context/ShopContext';
 import { useCart } from '../../context/CartContext';
+import { useAuth } from '../../context/AuthContext';
+import { useLanguage } from '../../context/LanguageContext';
 import { menuService } from '../../services/menuService';
 import { geminiMenuScanner, ScannedMenuItem } from '../../services/geminiMenuScanner';
 import { geminiImageService } from '../../services/geminiImageService';
 import { generatePhotorealisticFoodPrompt } from '../../services/geminiImagePromptGenerator';
 import { imageStorageService } from '../../services/imageStorageService';
 import { getDishFoodIcon } from '../../constants/dishIcons';
-import { getDishImageUrl } from '../../constants/dishImages';
 import { DishVectorIcon } from '../../components/common/DishVectorIcon';
+import { AVAILABLE_PHOSPHOR_ICONS } from '../../constants/phosphorDishIcons';
 import { MenuItem, MenuCategory } from '../../types/models';
 import { formatRupee } from '../../lib/money';
 import { generateUUID, isValidUUID } from '../../lib/uuid';
@@ -51,6 +53,16 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
   const styles = React.useMemo(() => createStyles(theme), [theme]);
   const { shop } = useShop();
   const { flash } = useCart();
+  const { can } = useAuth();
+  const { t } = useLanguage();
+
+  // Immediate override protection: If owner revokes menu edit permission while menu editor is open
+  useEffect(() => {
+    if (!can('menu')) {
+      flash(t('no_access', "You don't have access for that"));
+      onBackToMenu();
+    }
+  }, [can]);
 
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [items, setItems] = useState<MenuItem[]>([]);
@@ -77,10 +89,12 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
   const [itemNameInput, setItemNameInput] = useState('');
   const [fullPriceInput, setFullPriceInput] = useState('');
   const [halfPriceInput, setHalfPriceInput] = useState('');
+  const fullPriceInputRef = useRef<TextInput>(null);
   const [selectedCatId, setSelectedCatId] = useState('');
   const [isFav, setIsFav] = useState(false);
   const [isAvailable, setIsAvailable] = useState(true);
   const [itemPhotoUrl, setItemPhotoUrl] = useState<string | null>(null);
+  const [selectedIconKey, setSelectedIconKey] = useState<string | null>(null);
   const [isSavingItem, setIsSavingItem] = useState(false);
   const [isSavingCategory, setIsSavingCategory] = useState(false);
 
@@ -102,6 +116,20 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
   const [editCategoryNameInput, setEditCategoryNameInput] = useState('');
   const [selectedCategoryForMenu, setSelectedCategoryForMenu] = useState<MenuCategory | null>(null);
   const [isCategoryMenuVisible, setIsCategoryMenuVisible] = useState(false);
+
+  // Multi-select / Bulk Delete State
+  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+  const [isDeletingBatch, setIsDeletingBatch] = useState(false);
+
+  // 3-Dot Header Menu & Bulk Price Edit State
+  const [showHeaderActionsModal, setShowHeaderActionsModal] = useState(false);
+  const [isBulkEditMode, setIsBulkEditMode] = useState(false);
+  const [bulkEditMap, setBulkEditMap] = useState<Record<string, { price: number; halfPrice: number }>>({});
+  const [isSavingBulk, setIsSavingBulk] = useState(false);
+
+  // Import Strategy Modal (Replace vs Add to Existing)
+  const [showImportStrategyModal, setShowImportStrategyModal] = useState(false);
 
   useEffect(() => {
     loadMenu();
@@ -140,6 +168,32 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
     }
   };
 
+  // Always sort favorite dishes to the very top of the list
+  const sortedItems = useMemo(() => {
+    return [...items].sort((a, b) => {
+      // 1. Favorites always first at top
+      if (a.isFavorite && !b.isFavorite) return -1;
+      if (!a.isFavorite && b.isFavorite) return 1;
+      // 2. Sort order
+      if ((a.sortOrder ?? 0) !== (b.sortOrder ?? 0)) {
+        return (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+      }
+      // 3. Alphabetical fallback
+      return a.name.localeCompare(b.name);
+    });
+  }, [items]);
+
+  const handleToggleFavorite = async (itemId: string) => {
+    try {
+      const updated = await menuService.toggleFavorite(itemId);
+      setItems(updated);
+      const target = updated.find(i => i.id === itemId);
+      flash(target?.isFavorite ? `"${target.name}" marked as Favourite ❤️ (listed at top)` : `"${target?.name}" removed from Favourites`);
+    } catch (err) {
+      flash('Failed to update favourite');
+    }
+  };
+
   const handleStartEdit = (item: MenuItem) => {
     setEditingItem(item);
     setItemNameInput(item.name);
@@ -149,6 +203,12 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
     setIsFav(item.isFavorite);
     setIsAvailable(item.isAvailable);
     setItemPhotoUrl(item.imageUrl || null);
+    setSelectedIconKey(item.icon || null);
+
+    // Auto-focus directly into the price field as requested
+    setTimeout(() => {
+      fullPriceInputRef.current?.focus();
+    }, 120);
   };
 
   const handleStartNewItem = () => {
@@ -174,7 +234,14 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
     setIsFav(false);
     setIsAvailable(true);
     setItemPhotoUrl(null);
+    setSelectedIconKey(null);
   };
+
+  useEffect(() => {
+    if (openCreateItemImmediately) {
+      handleStartNewItem();
+    }
+  }, [openCreateItemImmediately]);
 
   const handlePickItemPhoto = async () => {
     try {
@@ -260,16 +327,20 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
 
   const handleSaveItem = async () => {
     Keyboard.dismiss();
+    if (!can('menu')) {
+      flash(t('no_access', "You don't have access for that"));
+      return;
+    }
     const cleanName = itemNameInput.trim();
     const cleanPriceStr = fullPriceInput.trim();
 
-    if (!cleanName || !cleanPriceStr) {
-      flash('Name and full price needed');
+    if (!cleanName) {
+      flash('Name is required');
       return;
     }
 
-    const full = Number(cleanPriceStr.replace(/[^0-9]/g, ''));
-    if (isNaN(full) || full <= 0) {
+    const full = cleanPriceStr ? Number(cleanPriceStr.replace(/[^0-9]/g, '')) : 0;
+    if (isNaN(full) || full < 0) {
       flash('Please enter a valid price');
       return;
     }
@@ -317,6 +388,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
         imagePrompt: resolvedPrompt,
         imageStatus: finalImageUrl ? 'completed' : (editingItem?.imageStatus || null),
         sortOrder: editingItem?.sortOrder ?? items.length,
+        icon: selectedIconKey || null,
       };
 
       const updated = await menuService.saveMenuItem(itemRecord);
@@ -326,6 +398,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
       setFullPriceInput('');
       setHalfPriceInput('');
       setItemPhotoUrl(null);
+      setSelectedIconKey(null);
       flash(`${itemRecord.name} saved`);
     } catch (err: any) {
       console.error('handleSaveItem error:', err);
@@ -337,6 +410,10 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
 
   const handleSaveCategory = async () => {
     Keyboard.dismiss();
+    if (!can('menu')) {
+      flash(t('no_access', "You don't have access for that"));
+      return;
+    }
     const name = categoryNameInput.trim();
     if (!name) {
       flash('Give the category a name');
@@ -385,9 +462,13 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
   };
 
   const handleDeleteItem = (itemId: string, itemName: string) => {
+    if (!can('menu')) {
+      flash(t('no_access', "You don't have access for that"));
+      return;
+    }
     Alert.alert(
       'Delete Dish',
-      `Are you sure you want to permanently delete "${itemName}" from your menu?`,
+      `Are you sure you want to delete "${itemName}"? This dish will be permanently deleted from the database.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -411,11 +492,19 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
   };
 
   const handleStartEditCategory = (cat: MenuCategory) => {
+    if (!can('menu')) {
+      flash(t('no_access', "You don't have access for that"));
+      return;
+    }
     setEditingCategory(cat);
     setEditCategoryNameInput(cat.name);
   };
 
   const handleUpdateCategory = async () => {
+    if (!can('menu')) {
+      flash(t('no_access', "You don't have access for that"));
+      return;
+    }
     if (!editingCategory) return;
     const clean = editCategoryNameInput.trim();
     if (!clean) {
@@ -433,10 +522,14 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
   };
 
   const handleDeleteCategory = (cat: MenuCategory) => {
+    if (!can('menu')) {
+      flash(t('no_access', "You don't have access for that"));
+      return;
+    }
     const count = items.filter(i => i.categoryId === cat.id).length;
     Alert.alert(
       'Delete Category',
-      `Delete "${cat.name}"?${count > 0 ? `\n\nAll ${count} dish(es) in this category will also be deleted from Supabase.` : ''}`,
+      `Are you sure you want to delete "${cat.name}"? All dishes in this category will also be deleted from the database.${count > 0 ? ` (${count} ${count === 1 ? 'dish' : 'dishes'} will be deleted)` : ''}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -479,7 +572,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
         result = await ImagePicker.launchCameraAsync({
           mediaTypes: ['images'],
           allowsEditing: false,
-          quality: 0.8,
+          quality: 0.45,
           base64: true,
         });
       } else {
@@ -491,7 +584,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
         result = await ImagePicker.launchImageLibraryAsync({
           mediaTypes: ['images'],
           allowsEditing: false,
-          quality: 0.8,
+          quality: 0.45,
           base64: true,
         });
       }
@@ -518,7 +611,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
           setScanStageText(`Reading menu image... (${Math.round(currentProgress)}%)`);
         } else if (currentProgress < 60) {
           currentProgress += 1.8;
-          setScanStageText(`Gemini AI analyzing text & prices... (${Math.round(currentProgress)}%)`);
+          setScanStageText(`Counter365 AI analyzing text & prices... (${Math.round(currentProgress)}%)`);
         } else if (currentProgress < 85) {
           currentProgress += 1.1;
           setScanStageText(`Matching authentic dish photos... (${Math.round(currentProgress)}%)`);
@@ -549,9 +642,6 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
         const extractedItems = scanRes.items.map(it => ({ ...it, selected: true }));
         setScannedItems(extractedItems);
         setShowScannedPreview(true);
-
-        // Asynchronously generate photorealistic food images in background without blocking user
-        handleStartBatchImageGeneration(extractedItems);
       } else {
         setIsScanningMenu(false);
         flash(scanRes.error || 'No menu items could be identified. Please try a clearer photo.');
@@ -575,7 +665,22 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
     setScannedItems(prev => prev.map(it => ({ ...it, selected: hasUnchecked })));
   };
 
-  const handleConfirmImportScannedItems = async () => {
+  const handleInitiateImportScannedItems = () => {
+    const selected = scannedItems.filter(it => it.selected);
+    if (selected.length === 0) {
+      flash('Select at least one item to add');
+      return;
+    }
+
+    if (items.length > 0) {
+      setShowImportStrategyModal(true);
+    } else {
+      handleConfirmImportScannedItems('add');
+    }
+  };
+
+  const handleConfirmImportScannedItems = async (strategy: 'add' | 'replace') => {
+    setShowImportStrategyModal(false);
     const selected = scannedItems.filter(it => it.selected);
     if (selected.length === 0) {
       flash('Select at least one item to add');
@@ -584,19 +689,191 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
 
     setIsSavingScanned(true);
     try {
-      await menuService.batchAddMenuItems(shop.id, selected);
+      if (strategy === 'replace') {
+        await menuService.replaceEntireMenu(shop.id, selected);
+        flash(`Replaced entire menu with ${selected.length} items!`);
+      } else {
+        await menuService.batchAddMenuItems(shop.id, selected);
+        flash(`Added ${selected.length} items to your menu!`);
+      }
       const updatedCats = await menuService.getCategories(shop.id, shop.shopType);
       const updatedItems = await menuService.getMenuItems(shop.id, shop.shopType);
       setCategories(updatedCats);
       setItems(updatedItems);
       setShowScannedPreview(false);
-      flash(`Added ${selected.length} items to your menu!`);
     } catch (err: any) {
       console.warn('Batch add notice:', err);
       flash('Could not add items. Please try again.');
     } finally {
       setIsSavingScanned(false);
     }
+  };
+
+  const handleToggleSelectMode = () => {
+    if (isSelectMode) {
+      setIsSelectMode(false);
+      setSelectedItemIds(new Set());
+    } else {
+      setIsSelectMode(true);
+      setIsBulkEditMode(false);
+      setSelectedItemIds(new Set());
+    }
+  };
+
+  const handleStartBulkEdit = () => {
+    if (!can('menu')) {
+      flash(t('no_access', "You don't have access for that"));
+      return;
+    }
+    const initialMap: Record<string, { price: number; halfPrice: number }> = {};
+    items.forEach(i => {
+      initialMap[i.id] = {
+        price: i.price,
+        halfPrice: i.halfPrice || 0,
+      };
+    });
+    setBulkEditMap(initialMap);
+    setIsBulkEditMode(true);
+    setIsSelectMode(false);
+    setSelectedItemIds(new Set());
+  };
+
+  const handleCancelBulkEdit = () => {
+    setIsBulkEditMode(false);
+    setBulkEditMap({});
+  };
+
+  const handleStepPrice = (itemId: string, field: 'price' | 'halfPrice', delta: number) => {
+    setBulkEditMap(prev => {
+      const item = items.find(i => i.id === itemId);
+      const current = prev[itemId] || {
+        price: item?.price || 0,
+        halfPrice: item?.halfPrice || 0,
+      };
+      const oldVal = current[field];
+      const nextVal = Math.max(0, oldVal + delta);
+      return {
+        ...prev,
+        [itemId]: {
+          ...current,
+          [field]: nextVal,
+        },
+      };
+    });
+  };
+
+  const handleDirectPriceChange = (itemId: string, field: 'price' | 'halfPrice', text: string) => {
+    const cleaned = text.replace(/[^0-9]/g, '');
+    const num = cleaned ? parseInt(cleaned, 10) : 0;
+    setBulkEditMap(prev => {
+      const item = items.find(i => i.id === itemId);
+      const current = prev[itemId] || {
+        price: item?.price || 0,
+        halfPrice: item?.halfPrice || 0,
+      };
+      return {
+        ...prev,
+        [itemId]: {
+          ...current,
+          [field]: num,
+        },
+      };
+    });
+  };
+
+  const handleSaveBulkEdits = async () => {
+    if (!can('menu')) {
+      flash(t('no_access', "You don't have access for that"));
+      return;
+    }
+    Keyboard.dismiss();
+    setIsSavingBulk(true);
+    try {
+      const modifiedItems: MenuItem[] = [];
+      items.forEach(item => {
+        const edited = bulkEditMap[item.id];
+        if (edited && (edited.price !== item.price || edited.halfPrice !== (item.halfPrice || 0))) {
+          modifiedItems.push({
+            ...item,
+            price: edited.price,
+            halfPrice: edited.halfPrice > 0 ? edited.halfPrice : undefined,
+            hasHalf: item.hasHalf || edited.halfPrice > 0,
+          });
+        }
+      });
+
+      if (modifiedItems.length === 0) {
+        setIsBulkEditMode(false);
+        setBulkEditMap({});
+        flash('No price changes to save');
+        return;
+      }
+
+      const updated = await menuService.batchUpdateMenuItems(shop.id, modifiedItems);
+      setItems(updated);
+      setIsBulkEditMode(false);
+      setBulkEditMap({});
+      flash(`Saved prices for ${modifiedItems.length} ${modifiedItems.length === 1 ? 'dish' : 'dishes'}!`);
+    } catch (err: any) {
+      console.error('handleSaveBulkEdits error:', err);
+      flash('Failed to save prices: ' + (err?.message || 'Please try again'));
+    } finally {
+      setIsSavingBulk(false);
+    }
+  };
+
+  const handleToggleSelectItem = (id: string) => {
+    setSelectedItemIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllVisibleItems = (visibleList: MenuItem[]) => {
+    if (selectedItemIds.size === visibleList.length) {
+      setSelectedItemIds(new Set());
+    } else {
+      setSelectedItemIds(new Set(visibleList.map(i => i.id)));
+    }
+  };
+
+  const handleDeleteSelectedItems = () => {
+    const count = selectedItemIds.size;
+    if (count === 0) {
+      flash('Please select items to delete');
+      return;
+    }
+
+    Alert.alert(
+      'Delete Selected Dishes',
+      `Are you sure you want to delete ${count} selected ${count === 1 ? 'dish' : 'dishes'}? All selected dishes will be permanently deleted from the database.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: `Delete (${count})`,
+          style: 'destructive',
+          onPress: async () => {
+            setIsDeletingBatch(true);
+            try {
+              const updated = await menuService.deleteMenuItemsBatch(shop.id, Array.from(selectedItemIds));
+              setItems(updated);
+              setSelectedItemIds(new Set());
+              setIsSelectMode(false);
+              flash(`Deleted ${count} ${count === 1 ? 'item' : 'items'} from menu`);
+            } catch (err) {
+              flash('Failed to delete items');
+            } finally {
+              setIsDeletingBatch(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const catSuggestions = ['Milkshakes', 'Combos', 'Sweets', 'Breakfast'].filter(
@@ -619,9 +896,55 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
             <Ionicons name="arrow-back" size={20} color={colors.text} />
           </TouchableOpacity>
           <Text style={styles.title}>Menu Management</Text>
-          <Text style={styles.itemCount}>
-            {items.length} {items.length === 1 ? 'item' : 'items'}
-          </Text>
+          <View style={styles.headerRightGroup}>
+            {isBulkEditMode ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <TouchableOpacity
+                  onPress={handleCancelBulkEdit}
+                  style={styles.headerCancelEditBtn}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.headerCancelEditText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={handleSaveBulkEdits}
+                  disabled={isSavingBulk}
+                  style={styles.headerSaveEditBtn}
+                  activeOpacity={0.7}
+                >
+                  {isSavingBulk ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Ionicons name="checkmark-sharp" size={15} color="#FFFFFF" />
+                      <Text style={styles.headerSaveEditText}>Save</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            ) : isSelectMode ? (
+              <TouchableOpacity
+                onPress={handleToggleSelectMode}
+                style={styles.headerCancelEditBtn}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.headerCancelEditText}>Cancel</Text>
+              </TouchableOpacity>
+            ) : items.length > 0 ? (
+              <TouchableOpacity
+                onPress={() => setShowHeaderActionsModal(true)}
+                style={styles.headerThreeDotBtn}
+                activeOpacity={0.7}
+                accessibilityLabel="Menu options"
+              >
+                <Ionicons
+                  name="ellipsis-vertical"
+                  size={19}
+                  color={colors.text}
+                />
+              </TouchableOpacity>
+            ) : null}
+          </View>
         </View>
 
         {/* 1. Category Creation Form */}
@@ -684,47 +1007,30 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
         {editingItem && (
           <View style={styles.editBlueprintCard}>
             <View style={styles.editTopRow}>
-              {/* Photo Box with upload capability & AI photo generation */}
-              <View style={styles.photoContainerCol}>
-                <TouchableOpacity
-                  onPress={handlePickItemPhoto}
-                  style={styles.photoBox}
-                  activeOpacity={0.8}
-                >
-                  {itemPhotoUrl ? (
-                    <Image
-                      source={{ uri: itemPhotoUrl }}
-                      style={styles.photoBoxImage}
-                      resizeMode="cover"
+              {/* Photo Box with upload capability */}
+              <TouchableOpacity
+                onPress={handlePickItemPhoto}
+                style={styles.photoBox}
+                activeOpacity={0.8}
+              >
+                {itemPhotoUrl ? (
+                  <Image
+                    source={{ uri: itemPhotoUrl }}
+                    style={styles.photoBoxImage}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={styles.photoBoxEmpty}>
+                    <DishVectorIcon
+                      dishName={itemNameInput || editingItem.name}
+                      categoryName={categories.find(c => c.id === selectedCatId)?.name}
+                      overrideIconKey={selectedIconKey}
+                      size={36}
                     />
-                  ) : (
-                    <View style={styles.photoBoxEmpty}>
-                      <DishVectorIcon
-                        dishName={itemNameInput || editingItem.name}
-                        categoryName={categories.find(c => c.id === selectedCatId)?.name}
-                        size={36}
-                      />
-                      <Text style={styles.photoBoxLabel}>Add Photo</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={handleGenerateAiPhoto}
-                  style={styles.aiPhotoGenBtn}
-                  disabled={isGeneratingAiPhoto}
-                  activeOpacity={0.8}
-                >
-                  {isGeneratingAiPhoto ? (
-                    <ActivityIndicator size="small" color="#FD5E03" />
-                  ) : (
-                    <>
-                      <Ionicons name="sparkles" size={12} color="#FD5E03" />
-                      <Text style={styles.aiPhotoGenBtnText}>AI Photo</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              </View>
+                    <Text style={styles.photoBoxLabel}>Add Photo</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
 
               <View style={styles.editFields}>
                 <Text style={styles.cardKicker}>
@@ -739,6 +1045,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                 />
                 <View style={styles.priceRow}>
                   <TextInput
+                    ref={fullPriceInputRef}
                     style={[styles.formInput, styles.priceField]}
                     placeholder="Full ₹"
                     placeholderTextColor={colors.textSecondary}
@@ -758,8 +1065,12 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
               </View>
             </View>
 
-            {/* Category Select Chips */}
-            <View style={styles.catChipsRow}>
+            {/* Category Select Chips (Horizontal Swipeable) */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.catChipsScroll}
+            >
               {categories.map(c => {
                 const isSelected = c.id === selectedCatId;
                 return (
@@ -767,6 +1078,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                     key={c.id}
                     onPress={() => setSelectedCatId(c.id)}
                     style={[styles.catChip, isSelected && styles.catChipSelected]}
+                    activeOpacity={0.75}
                   >
                     <Text
                       style={[
@@ -779,6 +1091,59 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                   </TouchableOpacity>
                 );
               })}
+            </ScrollView>
+
+            {/* Phosphor Icon Picker */}
+            <View style={styles.iconPickerSection}>
+              <View style={styles.iconPickerHeader}>
+                <Text style={styles.iconPickerTitle}>ITEM ICON</Text>
+                <TouchableOpacity
+                  onPress={() => setSelectedIconKey(null)}
+                  style={styles.iconPickerAutoBtn}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.iconPickerAutoText, !selectedIconKey && styles.iconPickerAutoTextActive]}>
+                    {!selectedIconKey ? 'Auto (from name) ✓' : 'Reset to Auto'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.iconChipsScroll}
+              >
+                {AVAILABLE_PHOSPHOR_ICONS.map((opt) => {
+                  const isSelected = selectedIconKey === opt.key;
+                  const IconCmp = opt.IconComponent;
+                  return (
+                    <TouchableOpacity
+                      key={opt.key}
+                      onPress={() => setSelectedIconKey(isSelected ? null : opt.key)}
+                      style={[
+                        styles.iconChip,
+                        isSelected && styles.iconChipSelected,
+                      ]}
+                      activeOpacity={0.75}
+                    >
+                      <IconCmp
+                        size={20}
+                        weight="duotone"
+                        color={isSelected ? '#FD5E03' : colors.textSecondary}
+                      />
+                      <Text
+                        style={[
+                          styles.iconChipText,
+                          isSelected && styles.iconChipTextSelected,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {opt.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
             </View>
 
             {/* Toggles */}
@@ -789,7 +1154,10 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                 style={styles.toggleRow}
               >
                 <View style={styles.toggleInfo}>
-                  <Text style={styles.toggleTitle}>Favourite</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Ionicons name={isFav ? "heart" : "heart-outline"} size={16} color={isFav ? "#EF4444" : colors.textSecondary} />
+                    <Text style={styles.toggleTitle}>Favourite</Text>
+                  </View>
                   <Text style={styles.toggleSub}>shows in the first tiles</Text>
                 </View>
                 <View style={[styles.toggleTrack, isFav && styles.toggleTrackActive]}>
@@ -835,7 +1203,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                   activeOpacity={0.8}
                 >
                   <Ionicons name="trash-outline" size={16} color="#DC2626" />
-                  <Text style={styles.deleteFormBtnText}>Delete</Text>
+                  <Text numberOfLines={1} style={styles.deleteFormBtnText}>Delete</Text>
                 </TouchableOpacity>
               )}
               <AppButton
@@ -852,7 +1220,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                 style={styles.cancelBtn}
               />
               <AppButton
-                title="Save item"
+                title="Save Item"
                 variant="primary"
                 loading={isSavingItem}
                 disabled={isSavingItem}
@@ -866,6 +1234,35 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
         {/* 3. Items List (When not editing) */}
         {!editingItem && !isCreatingCategory && (
           <View>
+            {/* Top Primary Actions: Add Item & Import From Menu */}
+            <View style={styles.topActionRow}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={handleStartNewItem}
+                style={styles.topAddItemBtn}
+              >
+                <View style={styles.topAddItemIconWrap}>
+                  <Ionicons name="add" size={18} color="#FFFFFF" />
+                </View>
+                <Text style={styles.topAddItemText} numberOfLines={1} adjustsFontSizeToFit>
+                  Add Item
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => setShowImportOptions(true)}
+                style={styles.topImportBtn}
+              >
+                <View style={styles.topImportIconWrap}>
+                  <Ionicons name="camera" size={16} color="#FF5F00" />
+                </View>
+                <Text style={styles.topImportText} numberOfLines={1} adjustsFontSizeToFit>
+                  Import From Menu
+                </Text>
+              </TouchableOpacity>
+            </View>
+
             {/* Category Filter & Manager Bar */}
             <View style={styles.categoryManagerContainer}>
               <View style={styles.categoryHeaderRow}>
@@ -951,108 +1348,250 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
             </View>
 
             <View style={styles.hintBox}>
-              <Ionicons name="create-outline" size={18} color="#FF5F00" />
+              <Ionicons name="options-outline" size={18} color="#FF5F00" />
               <Text style={styles.hintText}>
-                Tap any item to edit price, category or photo. Tap the bin to delete.
+                Tap any item to edit details, or use the 3-dot menu at top to bulk edit prices or delete dishes.
               </Text>
             </View>
 
             <View style={styles.itemList}>
               {(() => {
                 const displayedItems = selectedFilterCatId === 'all'
-                  ? items
-                  : items.filter(i => i.categoryId === selectedFilterCatId);
+                  ? sortedItems
+                  : sortedItems.filter(i => i.categoryId === selectedFilterCatId);
 
-                if (displayedItems.length === 0) {
-                  return (
-                    <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-                      <Text style={{ fontSize: typography.sizes.body, color: colors.textMuted }}>
-                        No items in this category yet.
-                      </Text>
-                    </View>
-                  );
-                }
+                return (
+                  <>
+                    {/* Bulk Selection Action Bar */}
+                    {isSelectMode && (
+                      <View style={styles.bulkActionBar}>
+                        <TouchableOpacity
+                          onPress={() => handleSelectAllVisibleItems(displayedItems)}
+                          style={styles.bulkSelectAllBtn}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons
+                            name={selectedItemIds.size === displayedItems.length && displayedItems.length > 0 ? "checkbox" : "square-outline"}
+                            size={20}
+                            color={colors.accent}
+                          />
+                          <Text style={styles.bulkSelectAllText}>
+                            {selectedItemIds.size === displayedItems.length && displayedItems.length > 0 ? 'Deselect All' : 'Select All'}
+                          </Text>
+                        </TouchableOpacity>
 
-                return displayedItems.map(item => {
-                  const catName =
-                    categories.find(c => c.id === item.categoryId)?.name || '';
-                  const subtext = `${catName}${
-                    item.halfPrice ? ` — half ${formatRupee(item.halfPrice)}` : ''
-                  }${!item.isAvailable ? ' — sold out' : ''}`;
+                        <View style={styles.bulkRightActions}>
+                          <Text style={styles.bulkCountText}>
+                            {selectedItemIds.size} of {displayedItems.length} selected
+                          </Text>
+                          <TouchableOpacity
+                            onPress={handleDeleteSelectedItems}
+                            disabled={selectedItemIds.size === 0 || isDeletingBatch}
+                            style={[
+                              styles.bulkDeleteBtn,
+                              selectedItemIds.size === 0 && styles.bulkDeleteBtnDisabled,
+                            ]}
+                            activeOpacity={0.8}
+                          >
+                            <Ionicons name="trash-outline" size={15} color="#FFFFFF" />
+                            <Text style={styles.bulkDeleteBtnText}>
+                              {isDeletingBatch ? 'Deleting...' : `Delete (${selectedItemIds.size})`}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
 
-                  const photoUri = item.imageUrl || getDishImageUrl(item.name, catName);
-                  const hasCustomPhoto = Boolean(photoUri);
+                    {/* Bulk Edit Banner */}
+                    {isBulkEditMode && (
+                      <View style={styles.bulkEditBanner}>
+                        <View style={styles.bulkEditBannerLeft}>
+                          <View style={styles.bulkEditIconBadge}>
+                            <Ionicons name="options-outline" size={18} color="#FF5F00" />
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.bulkEditBannerTitle}>Bulk Price Editor Active</Text>
+                            <Text style={styles.bulkEditBannerSub}>
+                              Use − / + to step prices or type custom price directly
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                    )}
 
-                  return (
-                    <View
-                      key={item.id}
-                      style={[
-                        styles.itemRow,
-                        !item.isAvailable && styles.itemRowDisabled,
-                      ]}
-                    >
-                      <Image
-                        source={{ uri: photoUri }}
-                        style={styles.itemListPhoto}
-                        resizeMode="cover"
-                      />
+                    {displayedItems.length === 0 ? (
+                      <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                        <Text style={{ fontSize: typography.sizes.body, color: colors.textMuted }}>
+                          No items in this category yet.
+                        </Text>
+                      </View>
+                    ) : (
+                      displayedItems.map(item => {
+                        const isSelected = selectedItemIds.has(item.id);
+                        const catName =
+                          categories.find(c => c.id === item.categoryId)?.name || '';
+                        const currentEditedPrice = bulkEditMap[item.id]?.price ?? item.price;
+                        const currentEditedHalf = bulkEditMap[item.id]?.halfPrice ?? (item.halfPrice || 0);
 
-                      <TouchableOpacity
-                        onPress={() => handleStartEdit(item)}
-                        style={styles.itemRowInfo}
-                      >
-                        <Text style={styles.itemRowName}>{item.name}</Text>
-                        <Text style={styles.itemRowSub}>{subtext}</Text>
-                      </TouchableOpacity>
+                        const subtext = `${catName}${
+                          !isBulkEditMode && item.halfPrice ? ` — half ${formatRupee(item.halfPrice)}` : ''
+                        }${!item.isAvailable ? ' — sold out' : ''}`;
 
-                      <Text style={styles.itemRowPrice}>
-                        {formatRupee(item.price)}
-                      </Text>
-                      {item.isFavorite && <AppTag label="FAV" variant="accent" />}
+                        return (
+                          <View
+                            key={item.id}
+                            style={[
+                              styles.itemRow,
+                              !item.isAvailable && styles.itemRowDisabled,
+                              isSelectMode && isSelected && styles.itemRowSelected,
+                              isBulkEditMode && styles.itemRowBulkEdit,
+                            ]}
+                          >
+                            {isSelectMode && (
+                              <TouchableOpacity
+                                onPress={() => handleToggleSelectItem(item.id)}
+                                style={styles.rowSelectCheckbox}
+                              >
+                                <Ionicons
+                                  name={isSelected ? "checkbox" : "square-outline"}
+                                  size={22}
+                                  color={isSelected ? colors.accent : colors.textMuted}
+                                />
+                              </TouchableOpacity>
+                            )}
 
-                      <TouchableOpacity
-                        onPress={() => handleDeleteItem(item.id, item.name)}
-                        style={styles.itemRowDeleteBtn}
-                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                      >
-                        <Ionicons name="trash-outline" size={17} color="#DC2626" />
-                      </TouchableOpacity>
-                    </View>
-                  );
-                });
+                            <DishVectorIcon
+                              dishName={item.name}
+                              categoryName={catName}
+                              overrideIconKey={item.icon}
+                              size={22}
+                              showBadge={true}
+                              style={{ marginRight: 10 }}
+                            />
+
+                            <TouchableOpacity
+                              disabled={isBulkEditMode}
+                              onPress={() => (isSelectMode ? handleToggleSelectItem(item.id) : handleStartEdit(item))}
+                              style={styles.itemRowInfo}
+                            >
+                              <Text style={styles.itemRowName}>{item.name}</Text>
+                              <Text style={styles.itemRowSub}>{subtext}</Text>
+                            </TouchableOpacity>
+
+                            {/* Normal / Select Mode Price & Fav */}
+                            {!isBulkEditMode ? (
+                              <>
+                                {/* Price display: if price is 0, show Set Price pill! */}
+                                {item.price > 0 ? (
+                                  <Text style={styles.itemRowPrice}>
+                                    {formatRupee(item.price)}
+                                  </Text>
+                                ) : (
+                                  <TouchableOpacity
+                                    onPress={() => (isSelectMode ? handleToggleSelectItem(item.id) : handleStartEdit(item))}
+                                    style={styles.setPricePill}
+                                    activeOpacity={0.8}
+                                  >
+                                    <Ionicons name="pricetag-outline" size={11} color="#FF5F00" />
+                                    <Text style={styles.setPricePillText}>Set Price</Text>
+                                  </TouchableOpacity>
+                                )}
+
+                                {!isSelectMode && (
+                                  <TouchableOpacity
+                                    onPress={() => handleToggleFavorite(item.id)}
+                                    style={[
+                                      styles.itemRowFavBtn,
+                                      item.isFavorite && styles.itemRowFavBtnActive,
+                                    ]}
+                                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                    activeOpacity={0.7}
+                                  >
+                                    <Ionicons
+                                      name={item.isFavorite ? 'heart' : 'heart-outline'}
+                                      size={18}
+                                      color={item.isFavorite ? '#EF4444' : colors.textMuted}
+                                    />
+                                    {item.isFavorite && (
+                                      <Text style={styles.itemRowFavBadgeText}>FAV</Text>
+                                    )}
+                                  </TouchableOpacity>
+                                )}
+                              </>
+                            ) : (
+                              /* Bulk Edit Stepper Mode */
+                              <View style={styles.bulkRowControls}>
+                                <View style={styles.priceStepperWrap}>
+                                  <TouchableOpacity
+                                    onPress={() => handleStepPrice(item.id, 'price', -5)}
+                                    style={styles.stepperBtn}
+                                    activeOpacity={0.6}
+                                  >
+                                    <Ionicons name="remove" size={16} color={colors.text} />
+                                  </TouchableOpacity>
+                                  
+                                  <View style={styles.stepperInputBox}>
+                                    <Text style={styles.stepperCurrencyText}>₹</Text>
+                                    <TextInput
+                                      style={styles.stepperTextInput}
+                                      keyboardType="number-pad"
+                                      value={String(currentEditedPrice)}
+                                      onChangeText={txt => handleDirectPriceChange(item.id, 'price', txt)}
+                                      selectTextOnFocus
+                                    />
+                                  </View>
+
+                                  <TouchableOpacity
+                                    onPress={() => handleStepPrice(item.id, 'price', 5)}
+                                    style={styles.stepperBtn}
+                                    activeOpacity={0.6}
+                                  >
+                                    <Ionicons name="add" size={16} color={colors.text} />
+                                  </TouchableOpacity>
+                                </View>
+
+                                {(item.hasHalf || (item.halfPrice && item.halfPrice > 0)) && (
+                                  <View style={styles.halfStepperWrap}>
+                                    <Text style={styles.halfStepperLabel}>Half:</Text>
+                                    <TouchableOpacity
+                                      onPress={() => handleStepPrice(item.id, 'halfPrice', -5)}
+                                      style={styles.stepperBtnSmall}
+                                      activeOpacity={0.6}
+                                    >
+                                      <Ionicons name="remove" size={12} color={colors.text} />
+                                    </TouchableOpacity>
+                                    <View style={styles.stepperInputBoxSmall}>
+                                      <Text style={styles.stepperCurrencyTextSmall}>₹</Text>
+                                      <TextInput
+                                        style={styles.stepperTextInputSmall}
+                                        keyboardType="number-pad"
+                                        value={String(currentEditedHalf)}
+                                        onChangeText={txt => handleDirectPriceChange(item.id, 'halfPrice', txt)}
+                                        selectTextOnFocus
+                                      />
+                                    </View>
+                                    <TouchableOpacity
+                                      onPress={() => handleStepPrice(item.id, 'halfPrice', 5)}
+                                      style={styles.stepperBtnSmall}
+                                      activeOpacity={0.6}
+                                    >
+                                      <Ionicons name="add" size={12} color={colors.text} />
+                                    </TouchableOpacity>
+                                  </View>
+                                )}
+                              </View>
+                            )}
+                          </View>
+                        );
+                      })
+                    )}
+                  </>
+                );
               })()}
             </View>
 
-            {/* Bottom Actions Row */}
-            <View style={styles.listBottomActions}>
-              <AppButton
-                title="+ Add item"
-                variant="primary"
-                onPress={handleStartNewItem}
-                style={styles.addItemBtn}
-              />
-            </View>
-
-            {/* Import From Menu (Gemini AI) Feature Button */}
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={() => setShowImportOptions(true)}
-              style={styles.importFromMenuCard}
-            >
-              <View style={styles.importIconCircle}>
-                <Ionicons name="camera-outline" size={20} color={colors.accent} />
-              </View>
-              <View style={styles.importCardTexts}>
-                <Text style={styles.importCardTitle}>Import from menu</Text>
-                <Text style={styles.importCardSub}>
-                  Scan menu card with Gemini AI — auto-detects dishes, half/full prices & categories
-                </Text>
-              </View>
-              <Ionicons name="arrow-forward" size={18} color={colors.accent} />
-            </TouchableOpacity>
-
             <Text style={styles.listFooterNote}>
-              Add item drops into any existing category. Import from menu uses Google Gemini Vision to automatically extract your full printed menu in seconds.
+              Add item drops into any existing category. Import from menu uses Counter365 AI to automatically extract your full printed menu in seconds.
             </Text>
           </View>
         )}
@@ -1132,7 +1671,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
               <View style={styles.loaderTitleBox}>
                 <Text style={styles.horizontalLoaderTitle}>Extracting Menu</Text>
                 <Text style={styles.horizontalLoaderSubtitle}>
-                  Google Gemini AI analyzing dishes & portions
+                  Counter365 AI analyzing dishes & portions
                 </Text>
               </View>
             </View>
@@ -1195,15 +1734,6 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                 </Text>
               </View>
               <View style={styles.previewHeaderActions}>
-                {!isGeneratingBatchImages && scannedItems.some(it => !it.imageUrl) && (
-                  <TouchableOpacity
-                    onPress={() => handleStartBatchImageGeneration()}
-                    style={styles.batchAiGenTriggerBtn}
-                  >
-                    <Ionicons name="sparkles" size={12} color="#FD5E03" />
-                    <Text style={styles.batchAiGenTriggerText}>AI Photos</Text>
-                  </TouchableOpacity>
-                )}
                 <TouchableOpacity
                   onPress={handleToggleSelectAllScanned}
                   style={styles.selectAllBtn}
@@ -1215,22 +1745,9 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
               </View>
             </View>
 
-            {/* Asynchronous AI Image Generation Banner */}
-            {isGeneratingBatchImages && (
-              <View style={styles.batchGeneratingBanner}>
-                <ActivityIndicator size="small" color="#FD5E03" />
-                <Text style={styles.batchGeneratingBannerText}>
-                  Synthesizing photorealistic food images ({batchImageProgress.done}/{batchImageProgress.total})...
-                </Text>
-              </View>
-            )}
-
             <ScrollView style={styles.scannedScroll} contentContainerStyle={styles.scannedList}>
               {scannedItems.map((item, idx) => {
                 const isChecked = !!item.selected;
-                const photoUri = item.imageUrl || getDishImageUrl(item.name, item.category);
-                const hasPhoto = Boolean(photoUri);
-                const isGenerating = item.imageStatus === 'generating';
 
                 return (
                   <TouchableOpacity
@@ -1243,25 +1760,14 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                       {isChecked && <Ionicons name="checkmark" size={13} color="#FFFFFF" />}
                     </View>
 
-                    {hasPhoto ? (
-                      <Image
-                        source={{ uri: photoUri }}
-                        style={styles.scannedItemImg}
-                        resizeMode="cover"
+                    <View style={styles.scannedItemIconBox}>
+                      <DishVectorIcon
+                        dishName={item.name}
+                        categoryName={item.category}
+                        size={24}
+                        showBadge={true}
                       />
-                    ) : (
-                      <View style={styles.scannedItemIconBox}>
-                        {isGenerating ? (
-                          <ActivityIndicator size="small" color="#FD5E03" />
-                        ) : (
-                          <DishVectorIcon
-                            dishName={item.name}
-                            categoryName={item.category}
-                            size={24}
-                          />
-                        )}
-                      </View>
-                    )}
+                    </View>
 
                     <View style={styles.scannedItemInfo}>
                       <Text style={styles.scannedItemName}>{item.name}</Text>
@@ -1274,16 +1780,16 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                             ½ {formatRupee(item.halfPrice)}
                           </Text>
                         )}
-                        {hasPhoto && (
-                          <View style={styles.photoReadyBadge}>
-                            <Ionicons name="image" size={10} color="#16A34A" />
-                            <Text style={styles.photoReadyBadgeText}>AI Photo</Text>
-                          </View>
-                        )}
                       </View>
                     </View>
 
-                    <Text style={styles.scannedPrice}>{formatRupee(item.price)}</Text>
+                    {item.price > 0 ? (
+                      <Text style={styles.scannedPrice}>{formatRupee(item.price)}</Text>
+                    ) : (
+                      <View style={styles.unpricedBadge}>
+                        <Text style={styles.unpricedBadgeText}>No price (Set later)</Text>
+                      </View>
+                    )}
                   </TouchableOpacity>
                 );
               })}
@@ -1299,15 +1805,89 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
               <AppButton
                 title={
                   isSavingScanned
-                    ? 'Adding...'
-                    : `Add (${scannedItems.filter(it => it.selected).length}) to menu`
+                    ? 'Importing...'
+                    : `Import (${scannedItems.filter(it => it.selected).length}) dishes`
                 }
                 variant="primary"
-                onPress={handleConfirmImportScannedItems}
+                onPress={handleInitiateImportScannedItems}
                 disabled={isSavingScanned || scannedItems.filter(it => it.selected).length === 0}
                 style={styles.previewAddBtn}
               />
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL: Import Strategy (Add to existing vs Replace entire menu) */}
+      <Modal
+        visible={showImportStrategyModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowImportStrategyModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.strategyModalCard}>
+            <View style={styles.strategyIconCircle}>
+              <Ionicons name="restaurant" size={28} color="#FF5F00" />
+            </View>
+
+            <Text style={styles.strategyTitle}>Import Menu Options</Text>
+            <Text style={styles.strategyDesc}>
+              You currently have <Text style={{ fontWeight: '700', color: colors.text }}>{items.length} dishes</Text> in your menu.
+              How would you like to import these <Text style={{ fontWeight: '700', color: '#FF5F00' }}>{scannedItems.filter(it => it.selected).length} scanned items</Text>?
+            </Text>
+
+            <View style={styles.strategyButtonsCol}>
+              {/* Option 1: Add to Existing */}
+              <TouchableOpacity
+                style={styles.strategyOptionCard}
+                activeOpacity={0.8}
+                onPress={() => handleConfirmImportScannedItems('add')}
+              >
+                <View style={[styles.strategyOptionIcon, { backgroundColor: 'rgba(34, 197, 94, 0.12)' }]}>
+                  <Ionicons name="add-circle" size={24} color="#16A34A" />
+                </View>
+                <View style={styles.strategyOptionTexts}>
+                  <Text style={styles.strategyOptionTitle}>Add to Existing Menu</Text>
+                  <Text style={styles.strategyOptionSub}>Keep all your current dishes and append the new items</Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Option 2: Replace Entire Menu */}
+              <TouchableOpacity
+                style={[styles.strategyOptionCard, styles.strategyOptionCardDanger]}
+                activeOpacity={0.8}
+                onPress={() => {
+                  Alert.alert(
+                    'Replace Entire Menu?',
+                    `This will clear your ${items.length} existing dishes and categories, replacing them entirely with the ${scannedItems.filter(it => it.selected).length} scanned items.`,
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Replace Menu',
+                        style: 'destructive',
+                        onPress: () => handleConfirmImportScannedItems('replace'),
+                      },
+                    ]
+                  );
+                }}
+              >
+                <View style={[styles.strategyOptionIcon, { backgroundColor: 'rgba(239, 68, 68, 0.12)' }]}>
+                  <Ionicons name="swap-horizontal" size={24} color="#DC2626" />
+                </View>
+                <View style={styles.strategyOptionTexts}>
+                  <Text style={[styles.strategyOptionTitle, { color: '#DC2626' }]}>Replace Entire Menu</Text>
+                  <Text style={styles.strategyOptionSub}>Clear preset/old items and only keep the newly imported menu</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            <AppButton
+              title="Cancel"
+              variant="secondary"
+              onPress={() => setShowImportStrategyModal(false)}
+              style={styles.strategyCancelBtn}
+            />
           </View>
         </View>
       </Modal>
@@ -1417,14 +1997,14 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                         style={styles.catModalCancelBtn}
                         activeOpacity={0.75}
                       >
-                        <Text style={styles.catModalCancelText}>Cancel</Text>
+                        <Text numberOfLines={1} adjustsFontSizeToFit style={styles.catModalCancelText}>Cancel</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
                         onPress={handleUpdateCategory}
                         style={styles.catModalUpdateBtn}
                         activeOpacity={0.8}
                       >
-                        <Text style={styles.catModalUpdateText}>Update Category</Text>
+                        <Text numberOfLines={1} adjustsFontSizeToFit style={styles.catModalUpdateText}>Update Category</Text>
                       </TouchableOpacity>
                     </View>
 
@@ -1444,12 +2024,84 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
           </View>
         </TouchableWithoutFeedback>
       </Modal>
+
+      {/* MODAL: Header 3-Dot Actions (Bulk Edit & Bulk Delete) */}
+      <Modal
+        visible={showHeaderActionsModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowHeaderActionsModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.menuActionsModalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowHeaderActionsModal(false)}
+        >
+          <TouchableWithoutFeedback>
+            <View style={styles.menuActionsModalCard}>
+              <View style={styles.menuActionsHeader}>
+                <Text style={styles.menuActionsTitle}>Menu Actions</Text>
+                <TouchableOpacity
+                  onPress={() => setShowHeaderActionsModal(false)}
+                  style={styles.menuActionsCloseBtn}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="close" size={20} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity
+                style={styles.menuActionItem}
+                activeOpacity={0.7}
+                onPress={() => {
+                  setShowHeaderActionsModal(false);
+                  handleStartBulkEdit();
+                }}
+              >
+                <View style={[styles.menuActionIconBadge, { backgroundColor: 'rgba(255, 95, 0, 0.12)' }]}>
+                  <Ionicons name="options-outline" size={20} color="#FF5F00" />
+                </View>
+                <View style={styles.menuActionTextWrap}>
+                  <Text style={styles.menuActionLabel}>Edit Menu & Prices</Text>
+                  <Text style={styles.menuActionSub}>
+                    Bulk edit prices with stepper (+ / −) across all dishes
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+              </TouchableOpacity>
+
+              <View style={styles.menuActionDivider} />
+
+              <TouchableOpacity
+                style={styles.menuActionItem}
+                activeOpacity={0.7}
+                onPress={() => {
+                  setShowHeaderActionsModal(false);
+                  handleToggleSelectMode();
+                }}
+              >
+                <View style={[styles.menuActionIconBadge, { backgroundColor: 'rgba(220, 38, 38, 0.12)' }]}>
+                  <Ionicons name="trash-outline" size={20} color="#DC2626" />
+                </View>
+                <View style={styles.menuActionTextWrap}>
+                  <Text style={[styles.menuActionLabel, { color: '#DC2626' }]}>Delete Items</Text>
+                  <Text style={styles.menuActionSub}>
+                    Select dishes to delete in bulk
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+          </TouchableWithoutFeedback>
+        </TouchableOpacity>
+      </Modal>
     </KeyboardAvoidingView>
   );
 };
 
 const createStyles = (theme: Theme) => {
   const colors = theme.colors;
+  const isDark = theme.isDark;
   return StyleSheet.create({
   container: {
     flex: 1,
@@ -1463,6 +2115,7 @@ const createStyles = (theme: Theme) => {
   header: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 4,
   },
   backBtn: {
@@ -1481,10 +2134,11 @@ const createStyles = (theme: Theme) => {
     color: colors.text,
   },
   title: {
+    flex: 1,
     fontFamily: typography.fonts.heading,
     fontSize: 18,
     color: colors.text,
-    marginLeft: 10,
+    marginLeft: 12,
     fontWeight: '800',
     letterSpacing: -0.3,
   },
@@ -1557,44 +2211,133 @@ const createStyles = (theme: Theme) => {
     marginTop: 6,
     fontFamily: typography.fonts.body,
   },
+  topActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 16,
+    width: '100%',
+  },
+  topAddItemBtn: {
+    flex: 1,
+    height: 50,
+    backgroundColor: '#FF5F00',
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    gap: 8,
+    ...shadows.md,
+  },
+  topAddItemIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.28)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  topAddItemText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontFamily: typography.fonts.heading,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  topImportBtn: {
+    flex: 1.35,
+    height: 50,
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1.5,
+    borderColor: '#FDBA74',
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    gap: 8,
+    ...shadows.sm,
+  },
+  topImportIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#FFEDD5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  topImportText: {
+    color: '#EA580C',
+    fontSize: 13.5,
+    fontFamily: typography.fonts.heading,
+    fontWeight: '800',
+    letterSpacing: 0.1,
+  },
+  itemRowFavBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: 'transparent',
+  },
+  itemRowFavBtnActive: {
+    backgroundColor: '#FFF7ED',
+  },
+  itemRowFavBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FF5F00',
+    fontFamily: typography.fonts.heading,
+  },
   formActionsRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
-    marginTop: 14,
+    marginTop: 16,
+    width: '100%',
   },
   cancelBtn: {
     flex: 1,
-    minHeight: 44,
-    borderRadius: 14,
+    height: 44,
+    minWidth: 76,
+    paddingHorizontal: 8,
+    borderRadius: 12,
   },
   createCatBtn: {
-    flex: 1.3,
-    minHeight: 44,
-    borderRadius: 14,
+    flex: 1.4,
+    height: 44,
+    minWidth: 120,
+    paddingHorizontal: 10,
+    borderRadius: 12,
   },
   saveItemBtn: {
-    flex: 1.3,
-    minHeight: 44,
-    borderRadius: 14,
+    flex: 1.4,
+    height: 44,
+    minWidth: 96,
+    paddingHorizontal: 10,
+    borderRadius: 12,
   },
   editBlueprintCard: {
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 20,
-    padding: 18,
-    gap: 12,
+    borderRadius: 16,
+    padding: 12,
+    gap: 8,
     ...shadows.card,
   },
   editTopRow: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
   },
   photoBox: {
-    width: 72,
-    height: 72,
+    width: 62,
+    height: 62,
     backgroundColor: colors.accent100,
-    borderRadius: 16,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.accent200,
     overflow: 'hidden',
@@ -1621,7 +2364,7 @@ const createStyles = (theme: Theme) => {
   },
   editFields: {
     flex: 1,
-    gap: 8,
+    gap: 6,
   },
   priceRow: {
     flexDirection: 'row',
@@ -1634,6 +2377,11 @@ const createStyles = (theme: Theme) => {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 7,
+  },
+  catChipsScroll: {
+    flexDirection: 'row',
+    gap: 6,
+    paddingVertical: 2,
   },
   catChip: {
     minHeight: 34,
@@ -2276,19 +3024,19 @@ const createStyles = (theme: Theme) => {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 4,
     backgroundColor: '#FEE2E2',
     borderWidth: 1,
     borderColor: '#FCA5A5',
-    borderRadius: radii.md,
-    paddingHorizontal: 12,
-    minHeight: 40,
-    marginRight: 'auto',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    height: 44,
   },
   deleteFormBtnText: {
     color: '#DC2626',
     fontFamily: typography.fonts.heading,
-    fontSize: typography.sizes.sm,
+    fontSize: 13,
+    fontWeight: '700',
   },
   itemRowDeleteBtn: {
     padding: 6,
@@ -2482,17 +3230,18 @@ const createStyles = (theme: Theme) => {
     alignItems: 'center',
     gap: 10,
     width: '100%',
-    marginTop: 8,
+    marginTop: 12,
   },
   catModalCancelBtn: {
     flex: 1,
-    height: 44,
+    height: 46,
     borderRadius: radii.pill,
     backgroundColor: colors.surfaceSecondary,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 10,
   },
   catModalCancelText: {
     fontSize: 14,
@@ -2501,12 +3250,13 @@ const createStyles = (theme: Theme) => {
     color: colors.text,
   },
   catModalUpdateBtn: {
-    flex: 1.4,
-    height: 44,
+    flex: 1.35,
+    height: 46,
     borderRadius: radii.pill,
-    backgroundColor: colors.accent700,
+    backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 12,
     ...shadows.sm,
   },
   catModalUpdateText: {
@@ -2515,21 +3265,504 @@ const createStyles = (theme: Theme) => {
     fontWeight: '700',
     color: '#FFFFFF',
   },
-  catModalDeleteRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 10,
-    backgroundColor: 'rgba(220, 38, 38, 0.06)',
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: 'rgba(220, 38, 38, 0.2)',
-  },
-  catModalDeleteRowText: {
-    color: '#DC2626',
-    fontFamily: typography.fonts.heading,
-    fontSize: typography.sizes.xs,
-  },
+    catModalDeleteRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingVertical: 10,
+      backgroundColor: 'rgba(220, 38, 38, 0.06)',
+      borderRadius: radii.md,
+      borderWidth: 1,
+      borderColor: 'rgba(220, 38, 38, 0.2)',
+    },
+    catModalDeleteRowText: {
+      color: '#DC2626',
+      fontFamily: typography.fonts.heading,
+      fontSize: typography.sizes.xs,
+    },
+    headerRightGroup: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginLeft: 'auto',
+      gap: 10,
+    },
+    headerThreeDotBtn: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 36,
+      height: 36,
+      borderRadius: radii.pill,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+      borderWidth: 1,
+      borderColor: colors.dividerLight,
+    },
+    headerCancelEditBtn: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: radii.pill,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+      borderWidth: 1,
+      borderColor: colors.dividerLight,
+    },
+    headerCancelEditText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 12,
+      fontWeight: '600',
+      color: colors.textSecondary,
+    },
+    headerSaveEditBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: radii.pill,
+      backgroundColor: colors.accent,
+    },
+    headerSaveEditText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 12,
+      fontWeight: '700',
+      color: '#FFFFFF',
+    },
+    menuActionsModalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.48)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    menuActionsModalCard: {
+      width: '100%',
+      maxWidth: 340,
+      backgroundColor: colors.surface,
+      borderRadius: radii.xl,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: colors.dividerLight,
+      ...shadows.lg,
+    },
+    menuActionsHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 12,
+      paddingBottom: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.dividerLight,
+    },
+    menuActionsTitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: typography.sizes.base,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    menuActionsCloseBtn: {
+      padding: 4,
+    },
+    menuActionItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 10,
+      paddingHorizontal: 6,
+      borderRadius: radii.md,
+    },
+    menuActionIconBadge: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 12,
+    },
+    menuActionTextWrap: {
+      flex: 1,
+      marginRight: 8,
+    },
+    menuActionLabel: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 14,
+      fontWeight: '700',
+      color: colors.text,
+      marginBottom: 2,
+    },
+    menuActionSub: {
+      fontFamily: typography.fonts.body,
+      fontSize: 11,
+      color: colors.textMuted,
+    },
+    menuActionDivider: {
+      height: 1,
+      backgroundColor: colors.dividerLight,
+      marginVertical: 4,
+    },
+    bulkEditBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: 'rgba(255, 95, 0, 0.08)',
+      borderWidth: 1,
+      borderColor: 'rgba(255, 95, 0, 0.25)',
+      borderRadius: radii.lg,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      marginBottom: 10,
+    },
+    bulkEditBannerLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      flex: 1,
+    },
+    bulkEditIconBadge: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: 'rgba(255, 95, 0, 0.15)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    bulkEditBannerTitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 13,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    bulkEditBannerSub: {
+      fontFamily: typography.fonts.body,
+      fontSize: 11,
+      color: colors.textSecondary,
+      marginTop: 1,
+    },
+    itemRowBulkEdit: {
+      paddingVertical: 8,
+    },
+    bulkRowControls: {
+      alignItems: 'flex-end',
+      gap: 6,
+    },
+    priceStepperWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#F3F4F6',
+      borderRadius: radii.pill,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.12)' : '#E5E7EB',
+      paddingHorizontal: 2,
+      paddingVertical: 2,
+    },
+    stepperBtn: {
+      width: 28,
+      height: 28,
+      borderRadius: radii.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surface,
+      ...shadows.sm,
+    },
+    stepperInputBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      minWidth: 52,
+      paddingHorizontal: 4,
+    },
+    stepperCurrencyText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 13,
+      fontWeight: '700',
+      color: colors.accent,
+      marginRight: 1,
+    },
+    stepperTextInput: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 14,
+      fontWeight: '700',
+      color: colors.text,
+      textAlign: 'center',
+      minWidth: 32,
+      paddingVertical: 0,
+      paddingHorizontal: 2,
+    },
+    halfStepperWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+    },
+    halfStepperLabel: {
+      fontFamily: typography.fonts.body,
+      fontSize: 10,
+      color: colors.textMuted,
+      fontWeight: '600',
+    },
+    stepperBtnSmall: {
+      width: 22,
+      height: 22,
+      borderRadius: radii.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.dividerLight,
+    },
+    stepperInputBoxSmall: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      minWidth: 40,
+    },
+    stepperCurrencyTextSmall: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 10,
+      fontWeight: '700',
+      color: colors.textMuted,
+    },
+    stepperTextInputSmall: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 11,
+      fontWeight: '700',
+      color: colors.text,
+      textAlign: 'center',
+      minWidth: 24,
+      paddingVertical: 0,
+    },
+    bulkActionBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: '#F8F7F4',
+      borderWidth: 1,
+      borderColor: '#E8E5DF',
+      borderRadius: radii.lg,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      marginBottom: 10,
+    },
+    bulkSelectAllBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingVertical: 4,
+      paddingHorizontal: 4,
+    },
+    bulkSelectAllText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 13,
+      fontWeight: '600',
+      color: colors.text,
+    },
+    bulkRightActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    bulkCountText: {
+      fontFamily: typography.fonts.body,
+      fontSize: 12,
+      color: colors.textMuted,
+    },
+    bulkDeleteBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      backgroundColor: '#DC2626',
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      borderRadius: radii.pill,
+    },
+    bulkDeleteBtnDisabled: {
+      opacity: 0.4,
+    },
+    bulkDeleteBtnText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 12,
+      fontWeight: '700',
+      color: '#FFFFFF',
+    },
+    rowSelectCheckbox: {
+      marginRight: 8,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    itemRowSelected: {
+      backgroundColor: 'rgba(255, 95, 0, 0.06)',
+      borderColor: colors.accent,
+    },
+    setPricePill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      backgroundColor: 'rgba(255, 95, 0, 0.1)',
+      borderWidth: 1,
+      borderColor: 'rgba(255, 95, 0, 0.3)',
+      borderRadius: radii.pill,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+    },
+    setPricePillText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 11,
+      fontWeight: '700',
+      color: '#FF5F00',
+    },
+    unpricedBadge: {
+      backgroundColor: 'rgba(255, 95, 0, 0.08)',
+      borderWidth: 1,
+      borderColor: 'rgba(255, 95, 0, 0.25)',
+      borderRadius: radii.pill,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+    },
+    unpricedBadgeText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 10,
+      fontWeight: '700',
+      color: '#FF5F00',
+    },
+    strategyModalCard: {
+      backgroundColor: colors.surface,
+      borderRadius: radii.xl,
+      padding: 20,
+      width: '100%',
+      maxWidth: 420,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: colors.dividerLight,
+      ...shadows.lg,
+    },
+    strategyIconCircle: {
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      backgroundColor: 'rgba(255, 95, 0, 0.1)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 12,
+    },
+    strategyTitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: typography.sizes.h4,
+      color: colors.text,
+      fontWeight: '700',
+      textAlign: 'center',
+      marginBottom: 6,
+    },
+    strategyDesc: {
+      fontFamily: typography.fonts.body,
+      fontSize: 13,
+      color: colors.textSecondary,
+      textAlign: 'center',
+      lineHeight: 18,
+      marginBottom: 18,
+    },
+    strategyButtonsCol: {
+      width: '100%',
+      gap: 10,
+      marginBottom: 16,
+    },
+    strategyOptionCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.isDark ? colors.surfaceSecondary : '#FAFAFA',
+      borderWidth: 1.5,
+      borderColor: theme.isDark ? colors.border : '#E8E5DF',
+      borderRadius: radii.lg,
+      padding: 12,
+      gap: 12,
+    },
+    strategyOptionCardDanger: {
+      borderColor: theme.isDark ? 'rgba(220, 38, 38, 0.4)' : 'rgba(220, 38, 38, 0.3)',
+      backgroundColor: theme.isDark ? 'rgba(220, 38, 38, 0.12)' : 'rgba(220, 38, 38, 0.02)',
+    },
+    strategyOptionIcon: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    strategyOptionTexts: {
+      flex: 1,
+    },
+    strategyOptionTitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 14,
+      fontWeight: '700',
+      color: colors.text,
+      marginBottom: 2,
+    },
+    strategyOptionSub: {
+      fontFamily: typography.fonts.body,
+      fontSize: 11.5,
+      color: colors.textMuted,
+      lineHeight: 15,
+    },
+    strategyCancelBtn: {
+      width: '100%',
+      height: 44,
+      borderRadius: radii.pill,
+    },
+    // Phosphor Icon Picker Styles
+    iconPickerSection: {
+      marginTop: 10,
+      marginBottom: 10,
+    },
+    iconPickerHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 8,
+      paddingHorizontal: 2,
+    },
+    iconPickerTitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 10.5,
+      fontWeight: '800',
+      letterSpacing: 0.8,
+      color: colors.textSecondary,
+    },
+    iconPickerAutoBtn: {
+      paddingVertical: 2,
+      paddingHorizontal: 6,
+    },
+    iconPickerAutoText: {
+      fontFamily: typography.fonts.body,
+      fontSize: 11,
+      color: colors.textMuted,
+    },
+    iconPickerAutoTextActive: {
+      color: '#FD5E03',
+      fontWeight: '700',
+    },
+    iconChipsScroll: {
+      gap: 8,
+      paddingVertical: 2,
+    },
+    iconChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: radii.pill,
+      backgroundColor: theme.isDark ? colors.surfaceSecondary : '#F3F4F6',
+      borderWidth: 1,
+      borderColor: theme.isDark ? colors.border : '#E5E7EB',
+    },
+    iconChipSelected: {
+      backgroundColor: theme.isDark ? 'rgba(253,94,3,0.18)' : '#FFF3EB',
+      borderColor: '#FD5E03',
+    },
+    iconChipText: {
+      fontFamily: typography.fonts.body,
+      fontSize: 12,
+      fontWeight: '600',
+      color: colors.textSecondary,
+    },
+    iconChipTextSelected: {
+      color: '#FD5E03',
+      fontWeight: '700',
+    },
   });
 };

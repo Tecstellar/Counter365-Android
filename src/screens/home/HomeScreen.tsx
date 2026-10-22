@@ -15,6 +15,8 @@ import {
   PanResponder,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path, Defs, LinearGradient, Stop } from 'react-native-svg';
 import { colors, typography, radii, spacing, shadows, useTheme, Theme } from '../../theme';
 import { SegmentedControl } from '../../components/common/SegmentedControl';
@@ -32,11 +34,13 @@ import { getExpensePresetsForShopType, ExpensePreset } from '../../constants/exp
 import { useAuth } from '../../context/AuthContext';
 import { useShop } from '../../context/ShopContext';
 import { useCart } from '../../context/CartContext';
+import { useLanguage } from '../../context/LanguageContext';
 import { expenseService } from '../../services/expenseService';
 import { billingService } from '../../services/billingService';
 import { reportService } from '../../services/reportService';
 import { exportService } from '../../services/exportService';
 import { whatsappService } from '../../services/whatsappService';
+import { printerService } from '../../services/printerService';
 import { Bill, ExpenseRecord, PendingPaymentRecord, PaymentMethod } from '../../types/models';
 import { formatRupee, calculateProfit } from '../../lib/money';
 import { AppRoute } from '../../types/navigation';
@@ -60,6 +64,7 @@ const TodaySummaryReportCard: React.FC<TodaySummaryReportCardProps> = ({
   todaySales = 0,
   todayBillsCount = 0,
 }) => {
+  const { language, t } = useLanguage();
   const panY = React.useRef(new Animated.Value(0)).current;
   const arrowBounce = React.useRef(new Animated.Value(0)).current;
   const scaleAnim = React.useRef(new Animated.Value(1)).current;
@@ -182,14 +187,14 @@ const TodaySummaryReportCard: React.FC<TodaySummaryReportCardProps> = ({
             </View>
             <View style={stylesTodayReport.todayTag}>
               <Ionicons name="bar-chart" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
-              <Text style={stylesTodayReport.todayTagText}>Today Report</Text>
+              <Text style={stylesTodayReport.todayTagText}>{t('today', 'Today')}</Text>
             </View>
           </View>
 
           <View style={stylesTodayReport.bannerTextContainer}>
-            <Text style={stylesTodayReport.bannerTitle}>Today's Summary Report</Text>
-            <Text style={stylesTodayReport.bannerSubtitle}>
-              Review today's revenue, settlement & daily register
+            <Text style={stylesTodayReport.bannerTitle}>{t('todays_summary', "Today's Summary Report")}</Text>
+            <Text style={stylesTodayReport.bannerSubtitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+              {t('sales_minus_expenses', 'Sales − Expenses')}
             </Text>
           </View>
         </View>
@@ -201,7 +206,7 @@ const TodaySummaryReportCard: React.FC<TodaySummaryReportCardProps> = ({
               <Ionicons name="chevron-down" size={16} color="#FF5F00" />
             </Animated.View>
             <Text style={[stylesTodayReport.swipeText, { color: theme.colors.textSecondary }]}>
-              Swipe down or tap to open
+              {t('tap_to_view', 'Tap to open')}
             </Text>
             <Animated.View style={{ transform: [{ translateY: arrowBounce }] }}>
               <Ionicons name="chevron-down" size={16} color="#FF5F00" />
@@ -333,24 +338,256 @@ const stylesTodayReport = StyleSheet.create({
   },
 });
 
+const StraddlingNewBillButton: React.FC<{
+  onPress: () => void;
+}> = ({ onPress }) => {
+  const { language, t } = useLanguage();
+  const pulseAnim = React.useRef(new Animated.Value(0)).current;
+  const sweepAnim = React.useRef(new Animated.Value(-120)).current;
+  const touchScaleAnim = React.useRef(new Animated.Value(1)).current;
+
+  React.useEffect(() => {
+    // 1. Gentle glow pulse animation
+    const pulseLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 1600,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0,
+          duration: 1600,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    pulseLoop.start();
+
+    // 2. Light sweep animation on mount, then recurring every 6.5 seconds
+    const runSweep = () => {
+      sweepAnim.setValue(-120);
+      Animated.timing(sweepAnim, {
+        toValue: 420,
+        duration: 1100,
+        useNativeDriver: true,
+      }).start();
+    };
+
+    const initialTimer = setTimeout(runSweep, 450);
+    const recurringInterval = setInterval(runSweep, 6500);
+
+    return () => {
+      pulseLoop.stop();
+      clearTimeout(initialTimer);
+      clearInterval(recurringInterval);
+    };
+  }, [pulseAnim, sweepAnim]);
+
+  const scalePulse = pulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.015],
+  });
+
+  const glowOpacity = pulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.3, 0.75],
+  });
+
+  const handlePressIn = () => {
+    Animated.spring(touchScaleAnim, {
+      toValue: 0.965,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.spring(touchScaleAnim, {
+      toValue: 1,
+      friction: 4,
+      tension: 40,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  return (
+    <Animated.View
+      style={[
+        stylesNewBill.wrapper,
+        {
+          transform: [
+            { scale: Animated.multiply(scalePulse, touchScaleAnim) },
+          ],
+        },
+      ]}
+    >
+      {/* Outer Glow Halo */}
+      <Animated.View
+        style={[
+          stylesNewBill.glowHalo,
+          {
+            opacity: glowOpacity,
+          },
+        ]}
+      />
+
+      <TouchableOpacity
+        activeOpacity={0.92}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        onPress={() => {
+          try {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          } catch {}
+          onPress();
+        }}
+        style={stylesNewBill.button}
+        accessibilityLabel="New Bill, Start a new sale"
+      >
+        {/* Animated Light Sweep Beam */}
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            stylesNewBill.sweepBeam,
+            {
+              transform: [{ translateX: sweepAnim }, { rotate: '20deg' }],
+            },
+          ]}
+        >
+          <View style={stylesNewBill.sweepBeamInner} />
+        </Animated.View>
+
+        {/* Left White Plus Tile */}
+        <View style={stylesNewBill.leftTile}>
+          <Ionicons name="add" size={26} color="#FF5F00" />
+        </View>
+
+        {/* Center Labels */}
+        <View style={stylesNewBill.textWrap}>
+          <Text style={stylesNewBill.title}>{t('new_bill', 'New Bill')}</Text>
+          <Text style={stylesNewBill.subtitle}>Start a new sale</Text>
+        </View>
+
+        {/* Right White Arrow Circle */}
+        <View style={stylesNewBill.arrowCircle}>
+          <Ionicons name="arrow-forward" size={19} color="#FF5F00" />
+        </View>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+};
+
+const stylesNewBill = StyleSheet.create({
+  wrapper: {
+    width: '100%',
+    position: 'relative',
+    marginTop: -26,
+    zIndex: 10,
+    elevation: 10,
+    paddingHorizontal: 8,
+  },
+  glowHalo: {
+    position: 'absolute',
+    top: -3,
+    left: 5,
+    right: 5,
+    bottom: -3,
+    borderRadius: 25,
+    backgroundColor: 'rgba(255, 95, 0, 0.45)',
+  },
+  button: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FF5F00',
+    borderRadius: 22,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    overflow: 'hidden',
+    shadowColor: '#FF5F00',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.38,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  sweepBeam: {
+    position: 'absolute',
+    top: -30,
+    bottom: -30,
+    width: 60,
+    left: 0,
+  },
+  sweepBeamInner: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: 'rgba(255, 255, 255, 0.35)',
+  },
+  leftTile: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  textWrap: {
+    flex: 1,
+    marginLeft: 14,
+  },
+  title: {
+    fontFamily: typography.fonts.heading,
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.3,
+  },
+  subtitle: {
+    fontFamily: typography.fonts.body,
+    fontSize: 12,
+    fontWeight: '500',
+    color: 'rgba(255, 255, 255, 0.92)',
+    marginTop: 1,
+  },
+  arrowCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+});
+
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   onNavigate,
   onOpenReminder,
   onEditBill,
 }) => {
   const { theme, isDark } = useTheme();
-  const styles = React.useMemo(() => createStyles(theme), [theme]);
+  const insets = useSafeAreaInsets();
+  const styles = React.useMemo(() => createStyles(theme, insets), [theme, insets]);
   const { currentRole, can, profile, currentMember } = useAuth();
   const { shop, refreshSubscription } = useShop();
   const { flash } = useCart();
+  const { language, t } = useLanguage();
 
-  const [period, setPeriod] = useState<'Day' | 'Week' | 'Month' | 'Year' | 'Custom'>('Day');
+  const [period, setPeriod] = useState<'Today' | 'Week' | 'Month' | 'Year' | 'Custom'>('Today');
   const [bills, setBills] = useState<Bill[]>([]);
   const [expenses, setExpenses] = useState<ExpenseRecord[]>([]);
   const [pendingList, setPendingList] = useState<PendingPaymentRecord[]>([]);
   const [expenseNameInput, setExpenseNameInput] = useState('');
   const [expenseAmountInput, setExpenseAmountInput] = useState('');
   const [isAddExpenseFormOpen, setIsAddExpenseFormOpen] = useState(false);
+  const [isExpenseListExpanded, setIsExpenseListExpanded] = useState(false);
   const [isDayClosingModalVisible, setIsDayClosingModalVisible] = useState(false);
 
   // Bill Deletion & Action Menu Modal State
@@ -379,11 +616,21 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const [customStartDate, setCustomStartDate] = useState<Date>(initialSevenDaysAgo);
   const [customEndDate, setCustomEndDate] = useState<Date>(initialTodayEnd);
   const [isCustomCalendarVisible, setIsCustomCalendarVisible] = useState(false);
+  const [calendarPickerMode, setCalendarPickerMode] = useState<'range' | 'single'>('range');
   const [selectedPeakHour, setSelectedPeakHour] = useState<number | null>(null);
   const [selectedDowIndex, setSelectedDowIndex] = useState<number | null>(null);
 
+  // Dropdown expansion states to view complete lists
+  const [isProductGrowthExpanded, setIsProductGrowthExpanded] = useState(false);
+  const [isExpensesExpanded, setIsExpensesExpanded] = useState(false);
+
   useEffect(() => {
     loadData();
+    // Keep data fresh when returning from billing or edits
+    const timer = setInterval(() => {
+      loadData();
+    }, 4000);
+    return () => clearInterval(timer);
   }, [shop.id]);
 
   const loadData = async () => {
@@ -398,24 +645,31 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
   // Filter bills and expenses by selected period
   const now = new Date();
-  const todayStr = now.toISOString().split('T')[0];
+  const todayYear = now.getFullYear();
+  const todayMonth = now.getMonth();
+  const todayDate = now.getDate();
+  const todayStr = `${todayYear}-${String(todayMonth + 1).padStart(2, '0')}-${String(todayDate).padStart(2, '0')}`;
 
   const isDateInPeriod = (dateIsoStr?: string | null): boolean => {
     if (!dateIsoStr) return false;
     const d = new Date(dateIsoStr);
     if (isNaN(d.getTime())) return false;
-    if (period === 'Day') {
-      return dateIsoStr.startsWith(todayStr);
+    if (period === 'Today' || (period as string) === 'Day') {
+      return (
+        d.getFullYear() === todayYear &&
+        d.getMonth() === todayMonth &&
+        d.getDate() === todayDate
+      );
     }
     if (period === 'Week') {
-      const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const oneWeekAgo = new Date(todayYear, todayMonth, todayDate - 7, 0, 0, 0);
       return d >= oneWeekAgo;
     }
     if (period === 'Month') {
-      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+      return d.getFullYear() === todayYear && d.getMonth() === todayMonth;
     }
     if (period === 'Year') {
-      return d.getFullYear() === now.getFullYear();
+      return d.getFullYear() === todayYear;
     }
     if (period === 'Custom') {
       const start = new Date(customStartDate.getFullYear(), customStartDate.getMonth(), customStartDate.getDate(), 0, 0, 0).getTime();
@@ -537,11 +791,28 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     setBillToDelete(bill);
   };
 
-  const filteredExpenses = expenses.filter(e => {
-    const eDate = new Date(e.expenseDate);
-    if (period === 'Day') {
-      return e.expenseDate === todayStr;
+  const isExpenseToday = (e: ExpenseRecord): boolean => {
+    if (e.expenseDate === todayStr) return true;
+    if (e.createdAt) {
+      const d = new Date(e.createdAt);
+      if (!isNaN(d.getTime())) {
+        const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        if (dStr === todayStr) return true;
+      }
     }
+    const ed = new Date(e.expenseDate);
+    if (!isNaN(ed.getTime())) {
+      const edStr = `${ed.getFullYear()}-${String(ed.getMonth() + 1).padStart(2, '0')}-${String(ed.getDate()).padStart(2, '0')}`;
+      if (edStr === todayStr) return true;
+    }
+    return false;
+  };
+
+  const filteredExpenses = expenses.filter(e => {
+    if (period === 'Today' || (period as string) === 'Day') {
+      return isExpenseToday(e);
+    }
+    const eDate = new Date(e.createdAt || e.expenseDate);
     if (period === 'Week') {
       const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
       return eDate >= oneWeekAgo;
@@ -566,7 +837,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const totalPending = pendingList.reduce((sum, p) => sum + p.amountDue, 0);
   const netProfit = calculateProfit(salesTotal, totalExpenses);
 
-  // Peak Hours calculation from real bills
+  // Peak Hours calculation from real bills (matches design reference: 6a, 8a, 10a, 12p, 2p, 4p, 6p, 8p, 10p)
   const hourSlots = [
     { hour: 6, label: '6a' },
     { hour: 8, label: '8a' },
@@ -580,9 +851,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   ];
 
   const hourCounts = hourSlots.map(slot => {
+    const end = slot.hour + 2;
     const count = filteredBills.filter(b => {
-      const h = new Date(b.createdAt).getHours();
-      return h >= slot.hour && h < slot.hour + 2;
+      if (!b.createdAt || !isDateInPeriod(b.createdAt)) return false;
+      const d = new Date(b.createdAt);
+      if (isNaN(d.getTime())) return false;
+      const h = d.getHours();
+      return h >= slot.hour && h < end;
     }).length;
     return { ...slot, count };
   });
@@ -592,7 +867,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     label: h.label,
     count: h.count,
     val: Math.round((h.count / maxHourCount) * 100),
-    pct: `${h.count > 0 ? Math.max(10, Math.round((h.count / maxHourCount) * 78)) : 6}%`,
+    pct: `${h.count > 0 ? Math.max(12, Math.round((h.count / maxHourCount) * 78)) : 6}%`,
+    heightPx: h.count > 0 ? Math.max(16, Math.round((h.count / maxHourCount) * 58)) : 6,
     isPeak: h.count === maxHourCount && h.count > 0,
   }));
 
@@ -611,7 +887,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     label: d.label,
     count: d.count,
     val: Math.round((d.count / maxDowCount) * 100),
-    pct: `${d.count > 0 ? Math.max(10, Math.round((d.count / maxDowCount) * 100)) : 6}%`,
+    pct: `${d.count > 0 ? Math.max(12, Math.round((d.count / maxDowCount) * 100)) : 6}%`,
+    heightPx: d.count > 0 ? Math.max(16, Math.round((d.count / maxDowCount) * 64)) : 0,
     isPeak: d.count === maxDowCount && d.count > 0,
   }));
 
@@ -626,9 +903,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     });
   });
 
-  const productList = Array.from(productMap.values())
+  const allProductList = Array.from(productMap.values())
     .sort((a, b) => b.amount - a.amount)
-    .slice(0, 5)
     .map(p => ({
       name: p.name,
       qty: `${p.quantity} sold`,
@@ -636,6 +912,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       delta: 'Active',
       isPositive: true,
     }));
+
+  const visibleProductList = isProductGrowthExpanded
+    ? allProductList
+    : allProductList.slice(0, 5);
 
   // Payment Modes breakdown from real bills
   let cashSales = 0;
@@ -685,7 +965,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
   const handleAddExpense = async () => {
     if (!can('exp')) {
-      flash('Adding expenses is locked. Ask the owner');
+      flash(t('no_access', "You don't have access for that"));
       return;
     }
     const name = expenseNameInput.trim();
@@ -710,7 +990,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
   const handleOpenExpenseMenu = (exp: ExpenseRecord) => {
     if (!can('exp')) {
-      flash('Managing expenses is locked. Ask the owner');
+      flash(t('no_access', "You don't have access for that"));
       return;
     }
     setSelectedExpenseForMenu(exp);
@@ -759,7 +1039,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
   const handleOpenCollectDue = (item: PendingPaymentRecord) => {
     if (!can('pend')) {
-      flash('Clearing pending is locked. Ask the owner');
+      flash(t('no_access', "You don't have access for that"));
       return;
     }
     setSelectedPendingRecord(item);
@@ -795,8 +1075,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     }
   };
 
-  const todayBills = bills.filter(b => b.createdAt.startsWith(todayStr) || (b.settledAt && b.settledAt.startsWith(todayStr)));
-  const todayExpensesList = expenses.filter(e => e.expenseDate === todayStr);
+  const todayBills = bills.filter(b => {
+    if (b.isDeleted || b.status === 'deleted') return false;
+    return isDateInPeriod(b.createdAt) || (b.settledAt && isDateInPeriod(b.settledAt));
+  });
+  const todayExpensesList = expenses.filter(e => isExpenseToday(e));
   const todayTotalExpenses = todayExpensesList.reduce((sum, e) => sum + e.amount, 0);
 
   const dayClosingReport = reportService.getDayClosingReport(
@@ -830,6 +1113,41 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     }
   };
 
+  const handlePrintBillFromMenu = async (bill: Bill) => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
+    if (!shop.printerEnabled || (!shop.printerName && !shop.printerUrl)) {
+      flash('Please configure printer in Account Settings');
+      return;
+    }
+    flash(`Printing Bill #${bill.billNumber}...`);
+    try {
+      const ok = await printerService.printReceipt(bill, shop, '80mm');
+      if (ok) {
+        flash(`Bill #${bill.billNumber} sent to printer`);
+      } else {
+        flash('Printer could not be reached');
+      }
+    } catch (err) {
+      console.warn('handlePrintBillFromMenu error:', err);
+      flash('Failed to print bill');
+    }
+  };
+
+  const handleShareBillFromMenu = async (bill: Bill) => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
+    // Ensure cloud PDF receipt is generated & uploaded to Supabase Storage
+    exportService.generateAndUploadBillReceipt(bill, shop).catch(err => {
+      console.warn('Background receipt sync notice:', err);
+    });
+    const msg = whatsappService.formatCustomerBill(bill, shop.name, shop.upiId, shop.phone);
+    await whatsappService.shareViaWhatsApp(msg, bill.customerPhone);
+    flash(`Bill #${bill.billNumber} sent on WhatsApp`);
+  };
+
   const SHORT_MONTHS_LIST = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
   return (
@@ -842,153 +1160,242 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
       >
-        {/* Luxury Hero Sales Card with Unique Curve Accent */}
-        {can('report') ? (
-          <View style={styles.heroCard}>
-            {/* Unique SVG Curve Accent in background */}
-            <View style={styles.heroCurveWrap} pointerEvents="none">
-              <Svg width="100%" height="90" viewBox="0 0 360 90" preserveAspectRatio="none">
-                <Defs>
-                  <LinearGradient id="heroCurveGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <Stop offset="0%" stopColor="#FF5F00" stopOpacity="0.03" />
-                    <Stop offset="50%" stopColor="#FF5F00" stopOpacity="0.22" />
-                    <Stop offset="100%" stopColor="#FF8A3D" stopOpacity="0.05" />
-                  </LinearGradient>
-                  <LinearGradient id="curveStrokeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <Stop offset="0%" stopColor="#FF5F00" stopOpacity="0.08" />
-                    <Stop offset="45%" stopColor="#FF5F00" stopOpacity="0.85" />
-                    <Stop offset="100%" stopColor="#FF8A3D" stopOpacity="0.2" />
-                  </LinearGradient>
-                </Defs>
-                <Path
-                  d="M0,55 C90,20 170,72 260,30 C300,12 335,26 360,22 L360,90 L0,90 Z"
-                  fill="url(#heroCurveGrad)"
-                />
-                <Path
-                  d="M0,55 C90,20 170,72 260,30 C300,12 335,26 360,22"
-                  stroke="url(#curveStrokeGrad)"
-                  strokeWidth="2.5"
-                  fill="none"
-                />
-              </Svg>
-            </View>
-
-            <View style={styles.heroHeaderRow}>
-              <View style={styles.heroKickerWrap}>
-                <View style={styles.heroDot} />
-                <Text style={styles.heroKicker}>SALES</Text>
+        {/* Luxury Hero Sales Card with Straddling New Bill Button */}
+        <View style={styles.heroCardContainer}>
+          {can('report') ? (
+            <View style={styles.heroCard}>
+              {/* Unique SVG Curve Accent in background */}
+              <View style={styles.heroCurveWrap} pointerEvents="none">
+                <Svg width="100%" height="90" viewBox="0 0 360 90" preserveAspectRatio="none">
+                  <Defs>
+                    <LinearGradient id="heroCurveGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <Stop offset="0%" stopColor="#FF5F00" stopOpacity="0.03" />
+                      <Stop offset="50%" stopColor="#FF5F00" stopOpacity="0.22" />
+                      <Stop offset="100%" stopColor="#FF8A3D" stopOpacity="0.05" />
+                    </LinearGradient>
+                    <LinearGradient id="curveStrokeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <Stop offset="0%" stopColor="#FF5F00" stopOpacity="0.08" />
+                      <Stop offset="45%" stopColor="#FF5F00" stopOpacity="0.85" />
+                      <Stop offset="100%" stopColor="#FF8A3D" stopOpacity="0.2" />
+                    </LinearGradient>
+                  </Defs>
+                  <Path
+                    d="M0,55 C90,20 170,72 260,30 C300,12 335,26 360,22 L360,90 L0,90 Z"
+                    fill="url(#heroCurveGrad)"
+                  />
+                  <Path
+                    d="M0,55 C90,20 170,72 260,30 C300,12 335,26 360,22"
+                    stroke="url(#curveStrokeGrad)"
+                    strokeWidth="2.5"
+                    fill="none"
+                  />
+                </Svg>
               </View>
-              <View style={styles.heroHeaderRight}>
-                <View style={styles.heroUniqueBadge}>
-                  <View style={styles.heroUniqueDot} />
-                  <Text style={styles.heroUniqueText}>LIVE</Text>
+
+              <View style={styles.heroHeaderRow}>
+                <View style={styles.heroKickerWrap}>
+                  <View style={styles.heroDot} />
+                  <Text style={styles.heroKicker}>{t('sales', 'SALES')}</Text>
+                </View>
+                <View style={styles.heroHeaderRight}>
+                  <View style={styles.heroUniqueBadge}>
+                    <View style={styles.heroUniqueDot} />
+                    <Text style={styles.heroUniqueText}>{t('live', 'LIVE')}</Text>
+                  </View>
+                  <View style={styles.heroBillsBadge}>
+                    <Text style={styles.heroBillsText}>
+                      {filteredBills.length} {filteredBills.length === 1 ? t('bill', 'bill') : t('bills', 'bills')}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              <View style={styles.heroAmountRow}>
+                <Text style={styles.heroCurrency}>₹</Text>
+                <Text style={styles.heroAmount}>
+                  {can('total') ? formatRupee(salesTotal).replace('₹', '') : '••••'}
+                </Text>
+              </View>
+
+              <View style={styles.heroPeriodWrap}>
+                <SegmentedControl
+                  options={['Today', 'Week', 'Month', 'Year', 'Custom']}
+                  selected={period}
+                  onSelect={opt => setPeriod(opt)}
+                  theme="dark"
+                  renderLabel={opt => {
+                    if (opt === 'Today') return t('period_today', 'Today');
+                    if (opt === 'Week') return t('period_week', 'Week');
+                    if (opt === 'Month') return t('period_month', 'Month');
+                    if (opt === 'Year') return t('period_year', 'Year');
+                    if (opt === 'Custom') return t('period_custom', 'Custom');
+                    return opt;
+                  }}
+                />
+              </View>
+            </View>
+          ) : (
+            <View style={styles.heroCard}>
+              <View style={styles.heroCurveWrap} pointerEvents="none">
+                <Svg width="100%" height="90" viewBox="0 0 360 90" preserveAspectRatio="none">
+                  <Defs>
+                    <LinearGradient id="billerCurveGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <Stop offset="0%" stopColor="#FF5F00" stopOpacity="0.03" />
+                      <Stop offset="50%" stopColor="#FF5F00" stopOpacity="0.18" />
+                      <Stop offset="100%" stopColor="#FF8A3D" stopOpacity="0.04" />
+                    </LinearGradient>
+                    <LinearGradient id="billerCurveStroke" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <Stop offset="0%" stopColor="#FF5F00" stopOpacity="0.08" />
+                      <Stop offset="45%" stopColor="#FF5F00" stopOpacity="0.85" />
+                      <Stop offset="100%" stopColor="#FF8A3D" stopOpacity="0.2" />
+                    </LinearGradient>
+                  </Defs>
+                  <Path
+                    d="M0,55 C90,20 170,72 260,30 C300,12 335,26 360,22 L360,90 L0,90 Z"
+                    fill="url(#billerCurveGrad)"
+                  />
+                  <Path
+                    d="M0,55 C90,20 170,72 260,30 C300,12 335,26 360,22"
+                    stroke="url(#billerCurveStroke)"
+                    strokeWidth="2.5"
+                    fill="none"
+                  />
+                </Svg>
+              </View>
+              <View style={styles.heroHeaderRow}>
+                <View style={styles.heroKickerWrap}>
+                  <View style={styles.heroDot} />
+                  <Text style={styles.heroKicker}>{t('todays_takings', "TODAY'S TAKINGS")}</Text>
                 </View>
                 <View style={styles.heroBillsBadge}>
                   <Text style={styles.heroBillsText}>
-                    {filteredBills.length} {filteredBills.length === 1 ? 'bill' : 'bills'}
+                    {filteredBills.length} {filteredBills.length === 1 ? t('bill', 'bill') : t('bills', 'bills')}
                   </Text>
                 </View>
               </View>
-            </View>
 
-            <View style={styles.heroAmountRow}>
-              <Text style={styles.heroCurrency}>₹</Text>
-              <Text style={styles.heroAmount}>
-                {can('total') ? formatRupee(salesTotal).replace('₹', '') : '••••'}
-              </Text>
-            </View>
-
-            <View style={styles.heroPeriodWrap}>
-              <SegmentedControl
-                options={['Day', 'Week', 'Month', 'Year', 'Custom']}
-                selected={period}
-                onSelect={opt => setPeriod(opt)}
-                theme="dark"
-              />
-            </View>
-          </View>
-        ) : (
-          <View style={styles.heroCard}>
-            <View style={styles.heroCurveWrap} pointerEvents="none">
-              <Svg width="100%" height="90" viewBox="0 0 360 90" preserveAspectRatio="none">
-                <Defs>
-                  <LinearGradient id="billerCurveGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <Stop offset="0%" stopColor="#FF5F00" stopOpacity="0.03" />
-                    <Stop offset="50%" stopColor="#FF5F00" stopOpacity="0.18" />
-                    <Stop offset="100%" stopColor="#FF8A3D" stopOpacity="0.04" />
-                  </LinearGradient>
-                  <LinearGradient id="billerCurveStroke" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <Stop offset="0%" stopColor="#FF5F00" stopOpacity="0.08" />
-                    <Stop offset="45%" stopColor="#FF5F00" stopOpacity="0.85" />
-                    <Stop offset="100%" stopColor="#FF8A3D" stopOpacity="0.2" />
-                  </LinearGradient>
-                </Defs>
-                <Path
-                  d="M0,55 C90,20 170,72 260,30 C300,12 335,26 360,22 L360,90 L0,90 Z"
-                  fill="url(#billerCurveGrad)"
-                />
-                <Path
-                  d="M0,55 C90,20 170,72 260,30 C300,12 335,26 360,22"
-                  stroke="url(#billerCurveStroke)"
-                  strokeWidth="2.5"
-                  fill="none"
-                />
-              </Svg>
-            </View>
-            <View style={styles.heroHeaderRow}>
-              <View style={styles.heroKickerWrap}>
-                <View style={styles.heroDot} />
-                <Text style={styles.heroKicker}>TODAY'S TAKINGS</Text>
-              </View>
-              <View style={styles.heroBillsBadge}>
-                <Text style={styles.heroBillsText}>
-                  {filteredBills.length} {filteredBills.length === 1 ? 'bill' : 'bills'}
+              <View style={styles.heroAmountRow}>
+                <Text style={styles.heroCurrency}>₹</Text>
+                <Text style={styles.heroAmount}>
+                  {can('total') ? formatRupee(salesTotal).replace('₹', '') : '••••'}
                 </Text>
               </View>
             </View>
+          )}
 
-            <View style={styles.heroAmountRow}>
-              <Text style={styles.heroCurrency}>₹</Text>
-              <Text style={styles.heroAmount}>
-                {can('total') ? formatRupee(salesTotal).replace('₹', '') : '••••'}
-              </Text>
-            </View>
-          </View>
-        )}
+          {/* Animated Orange Pill Button Straddling Bottom Edge of Black Card */}
+          <StraddlingNewBillButton
+            onPress={() => {
+              if (!can('bill')) {
+                flash(t('no_access', "You don't have access for that"));
+                return;
+              }
+              onNavigate('sales');
+            }}
+          />
+        </View>
 
         {/* Custom Calendar Expandable Section */}
         {period === 'Custom' && (
           <View style={styles.customDateSection}>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={() => setIsCustomCalendarVisible(!isCustomCalendarVisible)}
-              style={styles.customDateTrigger}
-            >
-              <Ionicons name="calendar-outline" size={16} color={colors.accent} />
-              <Text style={styles.customDateRangeText}>
-                {`${customStartDate.getDate()} ${SHORT_MONTHS_LIST[customStartDate.getMonth()]} to ${customEndDate.getDate()} ${SHORT_MONTHS_LIST[customEndDate.getMonth()]} ${customEndDate.getFullYear()}`}
-              </Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <View style={styles.customDateModulesRow}>
+              {/* FROM Date Module (Small Rectangle) */}
+              <TouchableOpacity
+                activeOpacity={0.75}
+                onPress={() => {
+                  setCalendarPickerMode('range');
+                  setIsCustomCalendarVisible(true);
+                }}
+                style={[
+                  styles.customDateBox,
+                  isCustomCalendarVisible && styles.customDateBoxHighlighted,
+                ]}
+              >
+                <View style={styles.customDateBoxHeader}>
+                  <Ionicons name="calendar" size={13} color={colors.accent} />
+                  <Text style={styles.customDateBoxLabel}>{t('from', 'FROM')}</Text>
+                </View>
+                <Text style={styles.customDateBoxValue} numberOfLines={1}>
+                  {`${customStartDate.getDate()} ${SHORT_MONTHS_LIST[customStartDate.getMonth()]} ${customStartDate.getFullYear()}`}
+                </Text>
+              </TouchableOpacity>
+
+              {/* Nearby Arrow / Connector */}
+              <View style={styles.customDateArrowWrap}>
+                <Ionicons name="arrow-forward" size={14} color={colors.accent} />
+              </View>
+
+              {/* TO Date Module (Small Rectangle) */}
+              <TouchableOpacity
+                activeOpacity={0.75}
+                onPress={() => {
+                  setCalendarPickerMode('range');
+                  setIsCustomCalendarVisible(true);
+                }}
+                style={[
+                  styles.customDateBox,
+                  isCustomCalendarVisible && styles.customDateBoxHighlighted,
+                ]}
+              >
+                <View style={styles.customDateBoxHeader}>
+                  <Ionicons name="calendar-outline" size={13} color={colors.accent} />
+                  <Text style={styles.customDateBoxLabel}>{t('to', 'TO')}</Text>
+                </View>
+                <Text style={styles.customDateBoxValue} numberOfLines={1}>
+                  {`${customEndDate.getDate()} ${SHORT_MONTHS_LIST[customEndDate.getMonth()]} ${customEndDate.getFullYear()}`}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Quick Status / Indicator Row */}
+            <View style={styles.customDateStatusRow}>
+              {customStartDate.getFullYear() === customEndDate.getFullYear() &&
+              customStartDate.getMonth() === customEndDate.getMonth() &&
+              customStartDate.getDate() === customEndDate.getDate() ? (
+                <View style={styles.singleDateBadge}>
+                  <Ionicons name="checkmark-circle" size={12} color="#15803D" />
+                  <Text style={styles.singleDateBadgeText}>{t('single_date_active', 'Single Date Active')}</Text>
+                </View>
+              ) : (
+                <Text style={styles.customDateDurationText}>
+                  {Math.round((customEndDate.getTime() - customStartDate.getTime()) / (1000 * 60 * 60 * 24)) + 1} {t('days_selected', 'Days Selected')}
+                </Text>
+              )}
+
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => setIsCustomCalendarVisible(!isCustomCalendarVisible)}
+                style={styles.customDateToggleBtn}
+              >
                 <Text style={styles.customDateChangeAction}>
-                  {isCustomCalendarVisible ? 'Hide' : 'Change Date'}
+                  {isCustomCalendarVisible ? t('close', 'Close') : t('select_date', 'Select Date')}
                 </Text>
                 <Ionicons
                   name={isCustomCalendarVisible ? 'chevron-up' : 'chevron-down'}
                   size={13}
                   color={colors.accent}
                 />
-              </View>
-            </TouchableOpacity>
+              </TouchableOpacity>
+            </View>
 
             {isCustomCalendarVisible && (
               <DateRangeCalendar
                 startDate={customStartDate}
                 endDate={customEndDate}
+                initialMode={calendarPickerMode}
                 onApplyRange={(start, end) => {
                   setCustomStartDate(start);
                   setCustomEndDate(end);
                   setIsCustomCalendarVisible(false);
-                  flash(`Custom range: ${start.getDate()} ${SHORT_MONTHS_LIST[start.getMonth()]} to ${end.getDate()} ${SHORT_MONTHS_LIST[end.getMonth()]}`);
+                  const isSingle =
+                    start.getFullYear() === end.getFullYear() &&
+                    start.getMonth() === end.getMonth() &&
+                    start.getDate() === end.getDate();
+                  if (isSingle) {
+                    flash(`Custom date: ${start.getDate()} ${SHORT_MONTHS_LIST[start.getMonth()]} ${start.getFullYear()}`);
+                  } else {
+                    flash(`Custom range: ${start.getDate()} ${SHORT_MONTHS_LIST[start.getMonth()]} to ${end.getDate()} ${SHORT_MONTHS_LIST[end.getMonth()]}`);
+                  }
                 }}
                 onClose={() => setIsCustomCalendarVisible(false)}
               />
@@ -1001,27 +1408,53 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           <>
             <View style={styles.miniKpiGrid}>
               <View style={styles.miniKpiCard}>
-                <View style={styles.miniKpiHeaderRow}>
+                <View style={[styles.miniKpiHeaderRow, { alignItems: 'center' }]}>
                   <View style={[styles.kpiIconBox, { backgroundColor: 'rgba(255, 95, 0, 0.12)', borderColor: 'rgba(255, 95, 0, 0.25)' }]}>
                     <Ionicons name="receipt-outline" size={15} color="#FF5F00" />
                   </View>
-                  <Text style={styles.miniKpiKicker}>EXPENSES</Text>
+                  <View style={{ flex: 1, minWidth: 0, justifyContent: 'center' }}>
+                    <Text
+                      style={[
+                        styles.miniKpiKicker,
+                        language !== 'en' && { textTransform: 'none', letterSpacing: 0.2, fontSize: 11.5, lineHeight: 15 },
+                      ]}
+                      numberOfLines={2}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.75}
+                    >
+                      {t('total_expenses', 'EXPENSES')}
+                    </Text>
+                  </View>
                 </View>
-                <Text style={styles.miniKpiValue}>{formatRupee(totalExpenses)}</Text>
-                <Text style={styles.miniKpiNote}>{filteredExpenses.length} entries</Text>
+                <Text style={styles.miniKpiValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.65}>
+                  {formatRupee(totalExpenses)}
+                </Text>
+                <Text style={styles.miniKpiNote}>{filteredExpenses.length} {t('entries', 'entries')}</Text>
               </View>
 
               <View style={styles.miniKpiCard}>
-                <View style={styles.miniKpiHeaderRow}>
+                <View style={[styles.miniKpiHeaderRow, { alignItems: 'center' }]}>
                   <View style={[styles.kpiIconBox, { backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: 'rgba(16, 185, 129, 0.25)' }]}>
                     <Ionicons name="trending-up-outline" size={15} color="#10B981" />
                   </View>
-                  <Text style={styles.miniKpiKicker}>PROFIT</Text>
+                  <View style={{ flex: 1, minWidth: 0, justifyContent: 'center' }}>
+                    <Text
+                      style={[
+                        styles.miniKpiKicker,
+                        language !== 'en' && { textTransform: 'none', letterSpacing: 0.2, fontSize: 11.5, lineHeight: 15 },
+                      ]}
+                      numberOfLines={2}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.75}
+                    >
+                      {t('net_profit', 'PROFIT')}
+                    </Text>
+                  </View>
                 </View>
-                <Text style={[styles.miniKpiValue, styles.profitText]}>
+                <Text style={[styles.miniKpiValue, styles.profitText]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.65}>
                   {formatRupee(netProfit)}
                 </Text>
-                <Text style={styles.miniKpiNote}>Net margin</Text>
+                <Text style={styles.miniKpiNote}>{t('net_margin', 'Net margin')}</Text>
               </View>
             </View>
 
@@ -1034,14 +1467,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 <Ionicons name="hourglass-outline" size={22} color="#F59E0B" />
               </View>
               <View style={styles.pendingLinkInfo}>
-                <Text style={styles.pendingLinkKicker}>PENDING</Text>
+                <Text style={styles.pendingLinkKicker}>{t('pending', 'PENDING')}</Text>
                 <Text style={styles.pendingLinkValue}>{formatRupee(totalPending)}</Text>
                 <Text style={styles.pendingLinkNote}>
-                  {pendingList.length} {pendingList.length === 1 ? 'customer' : 'customers'}
+                  {pendingList.length} {pendingList.length === 1 ? t('customer', 'customer') : t('customers', 'customers')}
                 </Text>
               </View>
               <View style={styles.pendingLinkAction}>
-                <Text style={styles.pendingLinkActionText}>View ledger</Text>
+                <Text style={styles.pendingLinkActionText}>{t('view_ledger', 'View ledger')}</Text>
                 <Ionicons name="arrow-forward" size={15} color={colors.accent700} />
               </View>
             </TouchableOpacity>
@@ -1053,27 +1486,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               <Text style={styles.miniKpiValue}>{filteredBills.length}</Text>
               <Text style={styles.miniKpiNote}>today</Text>
             </View>
-            <TouchableOpacity
-              activeOpacity={0.78}
-              onPress={() => onNavigate('pending')}
-              style={styles.miniKpiCard}
-            >
-              <Text style={styles.miniKpiKicker}>PENDING</Text>
-              <Text style={styles.miniKpiValue}>
-                {can('pend') ? formatRupee(totalPending) : '••••'}
-              </Text>
-              <Text style={styles.miniKpiNote}>{can('pend') ? 'view only' : 'locked'}</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Locked message for biller */}
-        {!can('report') && (
-          <View style={styles.lockedNotice}>
-            <Ionicons name="lock-closed" size={16} color={colors.textSecondary} />
-            <Text style={styles.lockedNoticeText}>
-              Analytics, expenses and reports are locked. Please ask the owner.
-            </Text>
+            {can('pend') && (
+              <TouchableOpacity
+                activeOpacity={0.78}
+                onPress={() => onNavigate('pending')}
+                style={styles.miniKpiCard}
+              >
+                <Text style={styles.miniKpiKicker}>PENDING</Text>
+                <Text style={styles.miniKpiValue}>
+                  {formatRupee(totalPending)}
+                </Text>
+                <Text style={styles.miniKpiNote}>view only</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
@@ -1101,6 +1526,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 <View style={styles.barContainer}>
                   {peakHoursData.map((h, i) => {
                     const isSelected = selectedPeakHour === i;
+                    const hasBills = h.count > 0;
                     return (
                       <TouchableOpacity
                         key={i}
@@ -1109,10 +1535,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                         style={styles.barCol}
                       >
                         <View style={styles.barTrack}>
+                          {hasBills && (
+                            <Text style={styles.barCountLabel}>
+                              {h.count}
+                            </Text>
+                          )}
                           <View
                             style={[
                               styles.bar,
-                              { height: h.pct as any },
+                              { height: h.heightPx },
+                              hasBills && styles.barActive,
                               h.isPeak && styles.peakBar,
                               isSelected && styles.barSelected,
                             ]}
@@ -1157,8 +1589,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                         <View
                           style={[
                             styles.weekBarFill,
-                            { height: d.pct as any },
-                            d.isPeak && styles.weekPeakBarFill,
+                            { height: d.heightPx },
+                            d.isPeak ? styles.weekPeakBarFill : styles.weekActiveBarFill,
                           ]}
                         />
                       )}
@@ -1177,34 +1609,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               </View>
             </View>
 
-            {/* Product Growth List */}
-            <View style={styles.chartSection}>
-              <Text style={styles.sectionHeading}>Product growth</Text>
-              <View style={styles.productsList}>
-                {productList.length > 0 ? (
-                  productList.map((p, i) => (
-                    <View key={i} style={styles.productRow}>
-                      <Text style={styles.productName}>{p.name}</Text>
-                      <Text style={styles.productQty}>{p.qty}</Text>
-                      <Text style={styles.productAmt}>{p.amt}</Text>
-                      <AppTag
-                        label={p.delta}
-                        variant={p.isPositive ? 'accent' : 'neutral'}
-                        style={styles.deltaTag}
-                      />
-                    </View>
-                  ))
-                ) : (
-                  <View style={styles.emptyCard}>
-                    <Text style={styles.emptyCardText}>No items billed yet in this period</Text>
-                  </View>
-                )}
-              </View>
-            </View>
 
             {/* Payment Modes (Image 2 Design) */}
             <View style={styles.chartSection}>
-              <Text style={styles.sectionHeading}>Payment modes</Text>
+              <Text style={styles.sectionHeading}>{t('payment_split', 'Payment modes')}</Text>
               <View style={styles.paymentModesCard}>
                 {/* Horizontal segmented multi-colored progress bar */}
                 <View style={styles.modeProgressBar}>
@@ -1232,7 +1640,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     <View style={styles.modeStatCol}>
                       <View style={styles.modeStatHeader}>
                         <View style={[styles.modeStatDot, { backgroundColor: isDark ? '#FFFFFF' : '#111111' }]} />
-                        <Text style={styles.modeStatLabel}>Cash</Text>
+                        <Text style={styles.modeStatLabel}>{t('cash', 'Cash')}</Text>
                       </View>
                       <View style={styles.modeStatValues}>
                         <Text style={styles.modeStatAmt}>{formatRupee(cashSales)}</Text>
@@ -1244,7 +1652,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     <View style={styles.modeStatCol}>
                       <View style={styles.modeStatHeader}>
                         <View style={[styles.modeStatDot, { backgroundColor: '#FF5F00' }]} />
-                        <Text style={styles.modeStatLabel}>GPay / UPI</Text>
+                        <Text style={styles.modeStatLabel}>{t('online_upi', 'GPay / UPI')}</Text>
                       </View>
                       <View style={styles.modeStatValues}>
                         <Text style={styles.modeStatAmt}>{formatRupee(upiSales)}</Text>
@@ -1256,7 +1664,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     <View style={styles.modeStatCol}>
                       <View style={styles.modeStatHeader}>
                         <View style={[styles.modeStatDot, { backgroundColor: '#FFC59E' }]} />
-                        <Text style={styles.modeStatLabel}>Pending</Text>
+                        <Text style={styles.modeStatLabel}>{t('pending', 'Pending')}</Text>
                       </View>
                       <View style={styles.modeStatValues}>
                         <Text style={styles.modeStatAmt}>{formatRupee(pendingSales)}</Text>
@@ -1270,98 +1678,70 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </View>
         )}
 
-        {/* Pending Section */}
-        {can('pend') && (
-          <View style={styles.pendingSection}>
-            <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionHeading}>Pending dues ({formatRupee(totalPending)})</Text>
-              <TouchableOpacity
-                onPress={() => onNavigate('pending')}
-                activeOpacity={0.7}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Text style={styles.viewAllLink}>View all ({pendingList.length}) →</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.pendingCardsList}>
-              {pendingList.length > 0 ? (
-                pendingList.slice(0, 4).map(item => (
-                  <View key={item.id} style={styles.pendingCard}>
-                    <View style={styles.pendingAvatarMini}>
-                      <Text style={styles.pendingAvatarText}>{item.customerName.charAt(0).toUpperCase()}</Text>
-                    </View>
-                    <View style={styles.pendingInfo}>
-                      <Text style={styles.pendingName} numberOfLines={1}>{item.customerName}</Text>
-                      <Text style={styles.pendingSub} numberOfLines={1}>
-                        {item.customerPhone ? `+91 ${item.customerPhone}` : 'No phone'} • {item.ageDescription}
-                      </Text>
-                    </View>
-                    <Text style={styles.pendingAmt}>{formatRupee(item.amountDue)}</Text>
-                    <TouchableOpacity
-                      style={styles.remindBtnMini}
-                      onPress={() => onOpenReminder(item)}
-                      activeOpacity={0.7}
-                      accessibilityLabel="Remind on WhatsApp"
-                    >
-                      <Ionicons name="logo-whatsapp" size={14} color="#16A34A" />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.paidBtnMini}
-                      onPress={() => handleOpenCollectDue(item)}
-                      activeOpacity={0.7}
-                      accessibilityLabel="Collect Due"
-                    >
-                      <Ionicons name="checkmark-circle" size={14} color="#FFFFFF" />
-                      <Text style={styles.paidBtnTextMini}>Collect</Text>
-                    </TouchableOpacity>
-                  </View>
-                ))
-              ) : (
-                <View style={styles.emptyCard}>
-                  <Text style={styles.emptyCardText}>No pending customer balances</Text>
-                </View>
-              )}
-            </View>
-          </View>
-        )}
-
-        {/* Expenses Today Section (Image 1 Design) */}
+        {/* Expenses Option (Above Today's Summary Report) */}
         {can('exp') && (
           <View style={styles.expenseSection}>
-            <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionHeading}>Expenses today</Text>
-              {todayTotalExpenses > 0 && (
-                <Text style={styles.sectionNote}>{formatRupee(todayTotalExpenses)}</Text>
-              )}
-            </View>
-
-            {/* Luxury Expense Hero Card from Image 1 */}
             <View style={styles.expenseHeroCard}>
               <View style={styles.expenseDashedIconBox}>
-                <Ionicons name="cash-outline" size={24} color="#FF5F00" />
+                <Ionicons name="wallet-outline" size={24} color="#FF5F00" />
               </View>
-
-              <View style={styles.expenseHeroInfo}>
-                <Text style={styles.expenseHeroTitle}>
-                  {todayExpensesList.length === 0
-                    ? 'No expenses recorded today'
-                    : `${formatRupee(todayTotalExpenses)} spent today`}
-                </Text>
-                <Text style={styles.expenseHeroSubtitle}>
-                  {todayExpensesList.length === 0
-                    ? 'Tap Add to log a spend'
-                    : `${todayExpensesList.length} ${todayExpensesList.length === 1 ? 'expense' : 'expenses'} logged`}
-                </Text>
-              </View>
-
               <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={() => setIsAddExpenseFormOpen(prev => !prev)}
-                style={styles.expenseAddBtn}
+                style={styles.expenseHeroInfo}
+                activeOpacity={0.7}
+                onPress={() => {
+                  if (todayExpensesList.length > 0) {
+                    setIsExpenseListExpanded(prev => !prev);
+                  } else {
+                    setIsAddExpenseFormOpen(prev => !prev);
+                  }
+                }}
               >
-                <Ionicons name="add-circle-outline" size={18} color="#FFFFFF" />
-                <Text style={styles.expenseAddBtnText}>Add</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 }}>
+                  <Text
+                    style={styles.expenseHeroTitle}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.75}
+                  >
+                    {t('expenses', 'Expenses')}
+                  </Text>
+                  {todayExpensesList.length > 0 && (
+                    <Ionicons
+                      name={isExpenseListExpanded ? 'chevron-up' : 'chevron-down'}
+                      size={16}
+                      color={colors.textSecondary}
+                    />
+                  )}
+                </View>
+                <Text style={styles.expenseHeroSubtitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                  {todayExpensesList.length === 0
+                    ? t('no_expenses_today', 'No expenses logged today')
+                    : isExpenseListExpanded
+                    ? `${todayExpensesList.length} ${t('expenses_logged', 'expenses')} (${formatRupee(todayTotalExpenses)}) · ${t('tap_to_hide', 'Tap to hide')}`
+                    : `${todayExpensesList.length} ${t('expenses_logged', 'expenses')} (${formatRupee(todayTotalExpenses)}) · ${t('tap_to_view', 'Tap to view')}`}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  if (can('exp')) {
+                    setIsAddExpenseFormOpen(prev => !prev);
+                  } else {
+                    flash(t('no_access', "You don't have access for that"));
+                  }
+                }}
+                style={styles.expenseAddBtn}
+                activeOpacity={0.8}
+                accessibilityLabel="Add new expense"
+              >
+                <Ionicons name="add-circle-outline" size={17} color="#FFFFFF" />
+                <Text
+                  style={styles.expenseAddBtnText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
+                >
+                  {t('add_expense', 'Add')}
+                </Text>
               </TouchableOpacity>
             </View>
 
@@ -1371,7 +1751,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 <View style={styles.expenseDescInputWrap}>
                   <TextInput
                     style={styles.expenseDescInput}
-                    placeholder="What was it for?"
+                    placeholder={t('what_was_it_for', 'What was it for?')}
                     placeholderTextColor={colors.textSecondary}
                     value={expenseNameInput}
                     onChangeText={setExpenseNameInput}
@@ -1387,27 +1767,28 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 </View>
                 <TextInput
                   style={styles.expenseAmtInput}
-                  placeholder="₹"
+                  placeholder={t('amount_rupees', 'Amount (₹)')}
                   placeholderTextColor={colors.textSecondary}
                   keyboardType="numeric"
                   value={expenseAmountInput}
                   onChangeText={t => setExpenseAmountInput(t.replace(/[^0-9]/g, ''))}
                 />
                 <AppButton
-                  title="Save"
+                  title={t('save', 'Save')}
                   variant="primary"
                   icon={<Ionicons name="checkmark" size={17} color="#FFFFFF" />}
                   onPress={async () => {
                     await handleAddExpense();
                     setIsAddExpenseFormOpen(false);
+                    setIsExpenseListExpanded(true);
                   }}
                   style={styles.addExpBtn}
                 />
               </View>
             )}
 
-            {/* List of today's logged expenses */}
-            {todayExpensesList.length > 0 && (
+            {/* Added expenses will ONLY be visible if expanded! */}
+            {isExpenseListExpanded && todayExpensesList.length > 0 && (
               <View style={styles.expenseList}>
                 {todayExpensesList.map(e => (
                   <View key={e.id} style={styles.expenseRow}>
@@ -1431,20 +1812,18 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         )}
 
         {/* Centered Animated Today's Summary Report Action */}
-        <View style={styles.bottomClosingWrap}>
-          <TodaySummaryReportCard
-            theme={theme}
-            todaySales={dayClosingReport.totalSales}
-            todayBillsCount={dayClosingReport.billsCount}
-            onPress={() => {
-              if (can('total')) {
+        {(can('total') || can('report')) && (
+          <View style={styles.bottomClosingWrap}>
+            <TodaySummaryReportCard
+              theme={theme}
+              todaySales={dayClosingReport.totalSales}
+              todayBillsCount={dayClosingReport.billsCount}
+              onPress={() => {
                 setIsDayClosingModalVisible(true);
-              } else {
-                flash('Reports are locked. Please ask the owner');
-              }
-            }}
-          />
-        </View>
+              }}
+            />
+          </View>
+        )}
       </ScrollView>
 
       {/* Day Closing Modal */}
@@ -1469,8 +1848,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         visible={isBillMenuVisible}
         onClose={() => setIsBillMenuVisible(false)}
         bill={selectedBillForMenu}
-        onEdit={handleEditBillFromMenu}
-        onDelete={handleDeleteBillFromMenu}
+        onPrint={handlePrintBillFromMenu}
+        onShareWhatsApp={handleShareBillFromMenu}
+        onEdit={currentRole !== 'Biller' ? handleEditBillFromMenu : undefined}
+        onDelete={currentRole === 'Owner' ? handleDeleteBillFromMenu : undefined}
       />
 
       {/* Expense Action Menu Modal */}
@@ -1550,8 +1931,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   );
 };
 
-const createStyles = (theme: Theme) => {
+const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left: number; right: number }) => {
   const colors = theme.colors;
+  const bottomInset = insets?.bottom || 0;
   return StyleSheet.create({
   container: {
     flex: 1,
@@ -1561,13 +1943,19 @@ const createStyles = (theme: Theme) => {
     paddingHorizontal: 16,
     paddingTop: 8,
     gap: 10,
-    paddingBottom: 70,
+    paddingBottom: Platform.OS === 'android' ? Math.max(bottomInset, 48) + 140 : Math.max(bottomInset, 24) + 140,
   },
 
   // ─── Luxury Hero Sales Card ──────────────────────────────────────────────────
+  heroCardContainer: {
+    width: '100%',
+    position: 'relative',
+    marginBottom: 4,
+  },
   heroCard: {
     borderRadius: 24,
     padding: 20,
+    paddingBottom: 36,
     backgroundColor: '#111111',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
@@ -1675,6 +2063,52 @@ const createStyles = (theme: Theme) => {
     marginTop: 2,
   },
 
+  // ─── Beautiful New Bill Action Button ───────────────────────────────────────
+  newBillHeroButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FF5F00',
+    borderRadius: 22,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginVertical: 4,
+    ...shadows.card,
+  },
+  newBillIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  newBillTextWrap: {
+    flex: 1,
+    marginLeft: 14,
+  },
+  newBillTitle: {
+    fontFamily: typography.fonts.heading,
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.2,
+  },
+  newBillSubtitle: {
+    fontFamily: typography.fonts.body,
+    fontSize: 12.5,
+    color: 'rgba(255, 255, 255, 0.9)',
+    marginTop: 2,
+  },
+  newBillArrowCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadows.sm,
+  },
+
   // ─── 2-Column Mini KPI Grid ──────────────────────────────────────────────────
   miniKpiGrid: {
     flexDirection: 'row',
@@ -1684,11 +2118,13 @@ const createStyles = (theme: Theme) => {
     flex: 1,
     backgroundColor: colors.surface,
     borderRadius: 20,
-    padding: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: colors.border,
     ...shadows.card,
     gap: 4,
+    overflow: 'hidden',
   },
   miniKpiHeaderRow: {
     flexDirection: 'row',
@@ -1706,15 +2142,21 @@ const createStyles = (theme: Theme) => {
   },
   miniKpiKicker: {
     fontSize: 11,
-    letterSpacing: 1.1,
+    letterSpacing: 0.8,
     textTransform: 'uppercase',
     color: colors.textMuted,
     fontFamily: typography.fonts.bodySemiBold,
     fontWeight: '700',
   },
+  miniKpiKickerIndic: {
+    textTransform: 'none',
+    letterSpacing: 0,
+    fontSize: 11,
+    lineHeight: 14,
+  },
   miniKpiValue: {
-    fontSize: 24,
-    lineHeight: 28,
+    fontSize: 21,
+    lineHeight: 26,
     color: colors.text,
     fontFamily: typography.fonts.numbers,
     fontWeight: '800',
@@ -1929,24 +2371,34 @@ const createStyles = (theme: Theme) => {
     justifyContent: 'flex-end',
   },
   barTrack: {
-    flex: 1,
+    height: 70,
     width: '100%',
     alignItems: 'center',
     justifyContent: 'flex-end',
     paddingBottom: 2,
   },
+  barCountLabel: {
+    fontSize: 9,
+    fontFamily: typography.fonts.heading,
+    fontWeight: '700',
+    color: '#FF5F00',
+    marginBottom: 2,
+  },
   bar: {
-    width: 10,
-    backgroundColor: colors.neutral200,
-    borderRadius: 3,
-    minHeight: 4,
+    width: 13,
+    backgroundColor: theme.isDark ? '#2D3139' : '#E2E8F0',
+    borderRadius: 4,
+    minHeight: 6,
+  },
+  barActive: {
+    backgroundColor: '#FB923C',
   },
   peakBar: {
-    backgroundColor: colors.accent700,
+    backgroundColor: '#FF5F00',
   },
   barSelected: {
     backgroundColor: '#C2410C',
-    width: 12,
+    width: 15,
   },
   barLabel: {
     fontSize: 10,
@@ -1988,6 +2440,9 @@ const createStyles = (theme: Theme) => {
     right: 0,
     backgroundColor: colors.accent100,
   },
+  weekActiveBarFill: {
+    backgroundColor: '#FDBA74',
+  },
   weekPeakBarFill: {
     backgroundColor: '#FF5F00',
   },
@@ -1997,6 +2452,53 @@ const createStyles = (theme: Theme) => {
     color: colors.textSecondary,
     fontFamily: typography.fonts.heading,
     zIndex: 1,
+  },
+
+  // ─── Dropdown Header & Trigger Badges ─────────────────────────────────────────
+  collapsibleHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+    marginBottom: 6,
+  },
+  collapsibleHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  sectionItemCountBadge: {
+    fontFamily: typography.fonts.body,
+    fontSize: 12,
+    color: colors.textSecondary,
+    backgroundColor: 'rgba(255, 95, 0, 0.08)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: radii.pill,
+  },
+  sectionHeaderWithDropdown: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  dropdownTriggerBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(255, 95, 0, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 95, 0, 0.28)',
+    paddingHorizontal: 9,
+    paddingVertical: 3.5,
+    borderRadius: radii.pill,
+  },
+  dropdownTriggerText: {
+    fontFamily: typography.fonts.bodySemiBold,
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#FF5F00',
   },
 
   // ─── Product Growth ───────────────────────────────────────────────────────────
@@ -2224,6 +2726,7 @@ const createStyles = (theme: Theme) => {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    overflow: 'hidden',
     ...shadows.card,
   },
   expenseDashedIconBox: {
@@ -2254,11 +2757,12 @@ const createStyles = (theme: Theme) => {
   expenseAddBtn: {
     backgroundColor: '#FF5F00',
     borderRadius: 22,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
+    flexShrink: 0,
     shadowColor: '#FF5F00',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.45,
@@ -2267,7 +2771,7 @@ const createStyles = (theme: Theme) => {
   },
   expenseAddBtnText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 13,
     fontFamily: typography.fonts.bodyBold,
     fontWeight: '800',
   },
@@ -2454,34 +2958,94 @@ const createStyles = (theme: Theme) => {
 
   // ─── Custom Date Range ────────────────────────────────────────────────────────
   customDateSection: {
-    gap: 6,
+    gap: 8,
+    marginVertical: 4,
   },
-  customDateTrigger: {
+  customDateModulesRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
+  },
+  customDateBox: {
+    flex: 1,
     backgroundColor: colors.accent100,
     borderRadius: radii.md,
     borderWidth: 1.5,
     borderColor: colors.accent200,
-    paddingVertical: 11,
-    paddingHorizontal: 14,
-    gap: 8,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
   },
-  customDateCalendarIcon: {
-    fontSize: 16,
+  customDateBoxHighlighted: {
+    borderColor: colors.accent,
+    backgroundColor: colors.surface,
   },
-  customDateRangeText: {
-    flex: 1,
+  customDateBoxHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 2,
+  },
+  customDateBoxLabel: {
     fontFamily: typography.fonts.heading,
-    fontSize: typography.sizes.base,
-    color: colors.accent700,
+    fontSize: 10,
+    fontWeight: '800',
+    color: colors.accent,
+    letterSpacing: 0.8,
+  },
+  customDateBoxValue: {
+    fontFamily: typography.fonts.heading,
+    fontSize: typography.sizes.sm,
     fontWeight: '700',
+    color: colors.text,
+  },
+  customDateArrowWrap: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: colors.accent100,
+    borderWidth: 1,
+    borderColor: colors.accent200,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  customDateStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+    paddingTop: 2,
+  },
+  singleDateBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+  },
+  singleDateBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#15803D',
+    fontFamily: typography.fonts.heading,
+  },
+  customDateDurationText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: colors.textSecondary,
+    fontFamily: typography.fonts.heading,
+  },
+  customDateToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   customDateChangeAction: {
     fontFamily: typography.fonts.heading,
     fontSize: typography.sizes.xs,
-    color: colors.accent600,
-    fontWeight: '600',
+    color: colors.accent,
+    fontWeight: '700',
   },
   });
 };

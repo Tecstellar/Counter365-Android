@@ -24,6 +24,8 @@ import {
   LaunchOfferPlanConfig,
   getLaunchOfferPlanById,
   getSubscriptionPlanById,
+  calculatePlanTax,
+  PlanTaxBreakdown,
 } from '../../constants/subscriptionPlans';
 import { cashfreeService, CF_CHECKOUT_URL } from '../../services/cashfreeService';
 import { subscriptionService } from '../../services/subscriptionService';
@@ -48,7 +50,11 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
   const { shop, refreshSubscription } = useShop();
   const { flash } = useCart();
 
-  const [selectedPlanId, setSelectedPlanId] = useState<string>('3_months');
+  // Navigation steps: 'plans' (listing with Excl. GST prices) -> 'summary' (tax breakdown & payment)
+  const [step, setStep] = useState<'plans' | 'summary'>('plans');
+
+  // 12 Months (1_year) is the authoritative default plan requested by user
+  const [selectedPlanId, setSelectedPlanId] = useState<string>('1_year');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
@@ -67,6 +73,9 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
 
   useEffect(() => {
     if (visible && shop?.id) {
+      if (!activeOrderId) {
+        setStep('plans');
+      }
       subscriptionService.checkLaunchOfferEligibility(shop.id, shop.createdAt).then(res => {
         setIsLaunchEligible(res.isEligible);
         setEligibilityData({
@@ -78,11 +87,14 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
         setIsLaunchEligible(true);
       });
     }
-  }, [visible, shop?.id, shop?.createdAt]);
+  }, [visible, shop?.id, shop?.createdAt, activeOrderId]);
 
   const activePlans: any[] = isLaunchEligible ? LAUNCH_OFFER_PLANS : SUBSCRIPTION_PLANS;
   const selectedPlan: any = activePlans.find(p => p.id === selectedPlanId) || activePlans[0];
-  const selectedPrice: number = isLaunchEligible ? (selectedPlan.launchPrice || selectedPlan.price) : selectedPlan.price;
+  const selectedBasePrice: number = isLaunchEligible
+    ? (selectedPlan.offerPrice || selectedPlan.launchPrice || selectedPlan.price)
+    : (selectedPlan.offerPrice || selectedPlan.price);
+  const taxBreakdown: PlanTaxBreakdown = calculatePlanTax(selectedBasePrice);
   const isVerifyingRef = useRef(false);
 
   // Core verification function
@@ -106,7 +118,8 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
           planIdToVerify as any,
           orderIdToVerify,
           undefined,
-          isLaunchEligible
+          isLaunchEligible,
+          taxBreakdown.totalAmount
         );
 
         if (actRes.success) {
@@ -116,6 +129,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
           setActiveOrderId(null);
           setActivePaymentUrl(null);
           setStatusMessage(null);
+          setStep('plans');
           onClose();
           return;
         } else {
@@ -221,7 +235,9 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
     try {
       const orderPlanPayload = {
         ...selectedPlan,
-        price: selectedPrice,
+        price: taxBreakdown.totalAmount, // Charge final payable amount inclusive of 18% GST (e.g. 3538.82)
+        basePrice: selectedBasePrice,
+        taxBreakdown,
       };
 
       const orderRes = await cashfreeService.initiateOrder(orderPlanPayload as any, {
@@ -300,11 +316,20 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
         <View style={styles.sheetContainer}>
           {/* Header */}
           <View style={styles.header}>
-            <View>
-              {isLaunchEligible ? (
+            <View style={{ flex: 1 }}>
+              {step === 'summary' && !activeOrderId ? (
+                <TouchableOpacity
+                  onPress={() => setStep('plans')}
+                  style={styles.backButton}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="arrow-back" size={18} color={colors.accent} />
+                  <Text style={styles.backButtonText}>Back to Plans</Text>
+                </TouchableOpacity>
+              ) : isLaunchEligible ? (
                 <View style={styles.launchBadgeRow}>
                   <View style={styles.launchBadge}>
-                    <Text style={styles.launchBadgeText}>LAUNCH OFFER</Text>
+                    <Text style={styles.launchBadgeText}>COUNTER365 PRO</Text>
                   </View>
                   <Text style={styles.countdownIndicatorText}>
                     ⏳ {eligibilityData.daysRemaining} {eligibilityData.daysRemaining === 1 ? 'day' : 'days'} left
@@ -313,7 +338,13 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
               ) : (
                 <Text style={styles.kicker}>COUNTER365 PLANS</Text>
               )}
-              <Text style={styles.title}>{isLaunchEligible ? 'Choose Your Plan' : 'Choose Subscription'}</Text>
+              <Text style={styles.title}>
+                {activeOrderId
+                  ? 'Payment Status'
+                  : step === 'summary'
+                  ? 'Order Summary & GST'
+                  : 'Choose Subscription'}
+              </Text>
             </View>
             {canDismiss && !activeOrderId && (
               <TouchableOpacity onPress={onClose} style={styles.closeBtn} activeOpacity={0.7}>
@@ -326,107 +357,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.scrollContent}
           >
-            {/* Value Proposition */}
-            <View style={styles.introBanner}>
-              <Ionicons name="shield-checkmark" size={20} color={colors.accent900} />
-              <Text style={styles.introText}>
-                {isLaunchEligible
-                  ? 'Regular price ₹999/month. Lock in exclusive launch pricing before your 30-day offer expires.'
-                  : '30-day trial included. Transparent pricing, no hidden fees, instant activation.'}
-              </Text>
-            </View>
-
-            {/* Plans List */}
-            <View style={styles.plansContainer}>
-              {activePlans.map((plan: any) => {
-                const isSelected = selectedPlanId === plan.id;
-                const price = isLaunchEligible ? plan.launchPrice : plan.price;
-                const strikethroughPrice = isLaunchEligible && plan.savings > 0 ? plan.regularPrice : (plan.savings > 0 ? plan.normalPrice : null);
-                const savingsLabel = isLaunchEligible ? plan.savingsLabel : (plan.savings > 0 ? `Save ₹${plan.savings}` : null);
-                const pricePerDay = isLaunchEligible ? plan.pricePerDay : Math.round(plan.price / (plan.durationMonths * 30));
-
-                return (
-                  <TouchableOpacity
-                    key={plan.id}
-                    activeOpacity={0.85}
-                    onPress={() => handleSelectPlan(plan)}
-                    style={[
-                      styles.planCard,
-                      isSelected && styles.planCardSelected,
-                      plan.popular && styles.planCardPopular,
-                    ]}
-                  >
-                    {/* Top Badges */}
-                    <View style={styles.cardHeader}>
-                      <View style={styles.planTitleCol}>
-                        <Text style={styles.planName}>{plan.name}</Text>
-                        <Text style={styles.durationLabel}>{plan.durationLabel}</Text>
-                      </View>
-
-                      <View style={styles.badgeRow}>
-                        {savingsLabel && (
-                          <View style={styles.discountBadge}>
-                            <Text style={styles.discountBadgeText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                              {savingsLabel}
-                            </Text>
-                          </View>
-                        )}
-                        {!isLaunchEligible && plan.discountBadge && (
-                          <View style={styles.discountBadge}>
-                            <Text style={styles.discountBadgeText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                              {plan.discountBadge}
-                            </Text>
-                          </View>
-                        )}
-                        {plan.popular && !savingsLabel && (
-                          <View style={styles.popularBadge}>
-                            <Text style={styles.popularBadgeText}>POPULAR</Text>
-                          </View>
-                        )}
-                      </View>
-                    </View>
-
-                    {/* Price Row */}
-                    <View style={styles.priceRow}>
-                      <View style={styles.priceCol}>
-                        <Text style={styles.priceText}>₹{price.toLocaleString('en-IN')}</Text>
-                        <Text style={styles.pricePerDayText}>₹{pricePerDay}/day</Text>
-                      </View>
-                      <View style={styles.monthlyCol}>
-                        {strikethroughPrice && (
-                          <Text style={styles.strikethroughNormal}>
-                            ₹{strikethroughPrice.toLocaleString('en-IN')}
-                          </Text>
-                        )}
-                        {!isLaunchEligible && plan.monthlyEquivalent && (
-                          <Text style={styles.monthlyText}>
-                            ₹{plan.monthlyEquivalent % 1 === 0 ? plan.monthlyEquivalent : plan.monthlyEquivalent.toFixed(2)}
-                            <Text style={styles.monthlySuffix}>/mo</Text>
-                          </Text>
-                        )}
-                      </View>
-                    </View>
-
-                    {/* Radio Indicator */}
-                    <View style={styles.radioRow}>
-                      <View
-                        style={[
-                          styles.radioCircle,
-                          isSelected && styles.radioCircleSelected,
-                        ]}
-                      >
-                        {isSelected && <View style={styles.radioInner} />}
-                      </View>
-                      <Text style={[styles.selectLabel, isSelected && styles.selectLabelSelected]}>
-                        {isSelected ? 'Selected Plan' : 'Tap to Select'}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            {/* In-Flight Cashfree Order State */}
+            {/* IN-FLIGHT CASHFREE ORDER STATE */}
             {activeOrderId ? (
               <View style={styles.inFlightBox}>
                 <View style={styles.inFlightHeader}>
@@ -434,7 +365,9 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                   <Text style={styles.inFlightTitle}>Payment in Progress</Text>
                 </View>
                 <Text style={styles.inFlightOrderId}>Order ID: {activeOrderId}</Text>
-                <Text style={styles.inFlightAmount}>Amount: ₹{selectedPrice}</Text>
+                <Text style={styles.inFlightAmount}>
+                  Amount (Incl. 18% GST): ₹{taxBreakdown.totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </Text>
 
                 {statusMessage && (
                   <View style={styles.statusMessageBox}>
@@ -476,8 +409,235 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                   </TouchableOpacity>
                 </View>
               </View>
-            ) : (
+            ) : step === 'plans' ? (
+              /* =========================================================================
+                 STEP 1: PLAN LISTING PAGE (Prices displayed strictly Excl. GST)
+                 ========================================================================= */
               <>
+                {/* Intro Value Proposition */}
+                <View style={styles.introBanner}>
+                  <Ionicons name="shield-checkmark" size={20} color={colors.accent900} />
+                  <Text style={styles.introText}>
+                    All plan prices below exclude GST. Select your preferred billing period to view the 18% GST tax breakdown and payable total.
+                  </Text>
+                </View>
+
+                {/* Plans List */}
+                <View style={styles.plansContainer}>
+                  {activePlans.map((plan: any) => {
+                    const isSelected = selectedPlanId === plan.id;
+                    const basePrice = plan.offerPrice || plan.launchPrice || plan.price;
+                    const normalPrice = plan.normalPrice || plan.regularPrice;
+                    const hasOffer = normalPrice > basePrice;
+                    const savings = plan.savings || (hasOffer ? normalPrice - basePrice : 0);
+                    const pricePerDay = plan.pricePerDay || Math.round(basePrice / (plan.durationMonths * 30));
+                    const monthlyEq = plan.monthlyEquivalent || Math.round(basePrice / plan.durationMonths);
+
+                    return (
+                      <TouchableOpacity
+                        key={plan.id}
+                        activeOpacity={0.85}
+                        onPress={() => handleSelectPlan(plan)}
+                        style={[
+                          styles.planCard,
+                          isSelected && styles.planCardSelected,
+                          plan.popular && styles.planCardPopular,
+                        ]}
+                      >
+                        <View style={styles.planCardMainRow}>
+                          {/* Left Column: Radio + Plan Name + Duration + Daily Rate */}
+                          <View style={styles.planLeftCol}>
+                            <View style={styles.planTitleRow}>
+                              <View
+                                style={[
+                                  styles.radioCircle,
+                                  isSelected && styles.radioCircleSelected,
+                                ]}
+                              >
+                                {isSelected && <View style={styles.radioInner} />}
+                              </View>
+                              <Text style={[styles.planName, isSelected && styles.planNameSelected]}>{plan.name}</Text>
+                            </View>
+
+                            <View style={styles.durationTagRow}>
+                              <View style={[styles.durationBadge, isSelected && styles.durationBadgeSelected]}>
+                                <Text style={[styles.durationLabel, isSelected && styles.durationLabelSelected]}>{plan.durationLabel}</Text>
+                              </View>
+                              <Text style={styles.planRateSubText}>
+                                ₹{pricePerDay}/day &bull; ₹{monthlyEq.toLocaleString('en-IN')}/mo
+                              </Text>
+                            </View>
+                          </View>
+
+                          {/* Right Column: Badges (if any) + Price Inside */}
+                          <View style={styles.planRightCol}>
+                            {(hasOffer || plan.popular) && (
+                              <View style={styles.badgeRow}>
+                                {hasOffer && (
+                                  <View style={styles.discountBadge}>
+                                    <Text style={styles.discountBadgeText}>
+                                      SAVE ₹{savings.toLocaleString('en-IN')}
+                                    </Text>
+                                  </View>
+                                )}
+                                {plan.popular && (
+                                  <View style={styles.popularBadge}>
+                                    <Text style={styles.popularBadgeText}>BEST VALUE</Text>
+                                  </View>
+                                )}
+                              </View>
+                            )}
+
+                            {hasOffer && (
+                              <Text style={styles.strikethroughNormal}>
+                                ₹{normalPrice.toLocaleString('en-IN')}
+                              </Text>
+                            )}
+
+                            <View style={styles.priceWithSuffixRow}>
+                              <Text style={[styles.priceText, isSelected && styles.priceTextSelected]}>
+                                ₹{basePrice.toLocaleString('en-IN')}
+                              </Text>
+                            </View>
+                            <Text style={styles.exclGstSuffix}>(Excl. GST)</Text>
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {/* Notice below plans */}
+                <View style={styles.gstNoticeBox}>
+                  <Ionicons name="information-circle-outline" size={18} color={colors.textSecondary} />
+                  <Text style={styles.gstNoticeText}>
+                    Note: Prices displayed above exclude GST. When you proceed, the applicable 18% GST split-up (CGST 9% + SGST 9%) and the final amount will be displayed.
+                  </Text>
+                </View>
+              </>
+            ) : (
+              /* =========================================================================
+                 STEP 2: ORDER SUMMARY & 18% GST SPLIT-UP PAGE
+                 ========================================================================= */
+              <>
+                {/* Plan Overview Card */}
+                <View style={styles.summaryPlanCard}>
+                  <View style={styles.summaryPlanHeader}>
+                    <View style={styles.summaryPlanIconBox}>
+                      <Ionicons name="ribbon-outline" size={26} color={colors.accent} />
+                    </View>
+                    <View style={{ flex: 1, gap: 2 }}>
+                      <Text style={styles.summaryPlanTitle}>Counter365 Pro &mdash; {selectedPlan.name}</Text>
+                      <Text style={styles.summaryPlanDuration}>
+                        {selectedPlan.durationMonths} Months Validity ({selectedPlan.durationMonths * 30} Days)
+                      </Text>
+                    </View>
+                    <View style={styles.instantPill}>
+                      <Text style={styles.instantPillText}>Instant Activation</Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Tax Invoice Breakdown (Exact 18% GST Split) */}
+                <View style={styles.taxInvoiceCard}>
+                  <View style={styles.taxInvoiceHeader}>
+                    <Text style={styles.taxInvoiceHeading}>TAX INVOICE BREAKDOWN</Text>
+                    <View style={styles.sacBadge}>
+                      <Text style={styles.sacBadgeText}>SAC 998313</Text>
+                    </View>
+                  </View>
+
+                  {/* Plan Price (Excl. GST) */}
+                  <View style={styles.breakdownRow}>
+                    <Text style={styles.breakdownLabel}>Plan</Text>
+                    <Text style={styles.breakdownValue}>
+                      ₹{taxBreakdown.basePrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </Text>
+                  </View>
+
+                  {/* Strikethrough catalog price if offer discount exists */}
+                  {(selectedPlan.normalPrice || selectedPlan.regularPrice) > selectedBasePrice && (
+                    <View style={styles.discountRow}>
+                      <Text style={styles.discountRowLabel}>
+                        Catalog Price (₹{(selectedPlan.normalPrice || selectedPlan.regularPrice).toLocaleString('en-IN')})
+                      </Text>
+                      <Text style={styles.discountRowValue}>
+                        -₹{((selectedPlan.normalPrice || selectedPlan.regularPrice) - selectedBasePrice).toLocaleString('en-IN')}.00 (Offer)
+                      </Text>
+                    </View>
+                  )}
+
+                  <View style={styles.divider} />
+
+                  {/* CGST 9% */}
+                  <View style={styles.breakdownRow}>
+                    <View style={{ gap: 1 }}>
+                      <Text style={styles.breakdownLabel}>CGST (9%)</Text>
+                      <Text style={styles.breakdownSub}>Central Goods and Services Tax</Text>
+                    </View>
+                    <Text style={styles.breakdownValue}>
+                      ₹{taxBreakdown.cgstAmount.toFixed(2)}
+                    </Text>
+                  </View>
+
+                  {/* SGST 9% */}
+                  <View style={styles.breakdownRow}>
+                    <View style={{ gap: 1 }}>
+                      <Text style={styles.breakdownLabel}>SGST (9%)</Text>
+                      <Text style={styles.breakdownSub}>State Goods and Services Tax</Text>
+                    </View>
+                    <Text style={styles.breakdownValue}>
+                      ₹{taxBreakdown.sgstAmount.toFixed(2)}
+                    </Text>
+                  </View>
+
+                  <View style={styles.divider} />
+
+                  {/* Total GST */}
+                  <View style={styles.breakdownRow}>
+                    <Text style={styles.gstTotalLabel}>Total GST (18%)</Text>
+                    <Text style={styles.gstTotalValue}>
+                      ₹{taxBreakdown.totalGst.toFixed(2)}
+                    </Text>
+                  </View>
+
+                  <View style={styles.boldDivider} />
+
+                  {/* Final Total Amount */}
+                  <View style={styles.finalAmountRow}>
+                    <View>
+                      <Text style={styles.finalAmountLabel}>Amount</Text>
+                      <Text style={styles.finalAmountSubLabel}>(Total Payable Incl. GST)</Text>
+                    </View>
+                    <Text style={styles.finalAmountValue}>
+                      ₹{taxBreakdown.totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Billed To Card */}
+                <View style={styles.shopInfoCard}>
+                  <View style={styles.shopInfoRow}>
+                    <Ionicons name="business-outline" size={16} color={colors.textSecondary} />
+                    <Text style={styles.shopInfoLabel}>Billed To:</Text>
+                    <Text style={styles.shopInfoValue} numberOfLines={1}>
+                      {shop.name || 'Counter365 Store'}
+                    </Text>
+                  </View>
+                  {Boolean(shop.phone) && (
+                    <View style={styles.shopInfoRow}>
+                      <Ionicons name="call-outline" size={16} color={colors.textSecondary} />
+                      <Text style={styles.shopInfoLabel}>Contact:</Text>
+                      <Text style={styles.shopInfoValue}>{shop.phone}</Text>
+                    </View>
+                  )}
+                  <View style={styles.shopInfoRow}>
+                    <Ionicons name="document-text-outline" size={16} color={colors.textSecondary} />
+                    <Text style={styles.shopInfoLabel}>Tax Category:</Text>
+                    <Text style={styles.shopInfoValue}>Software as a Service (HSN/SAC 998313)</Text>
+                  </View>
+                </View>
+
                 {statusMessage && (
                   <View style={styles.statusMessageBox}>
                     <Text style={styles.statusMessageText}>{statusMessage}</Text>
@@ -486,32 +646,57 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
 
                 {/* Secure Gateway Note */}
                 <View style={styles.securityNote}>
-                  <Ionicons name="lock-closed" size={14} color={colors.textSecondary} />
+                  <Ionicons name="shield-checkmark" size={15} color="#059669" />
                   <Text style={styles.securityText}>
-                    Secured by Cashfree Payments. UPI, Cards, NetBanking supported.
+                    100% Secure via Cashfree Payments &bull; UPI, Cards, NetBanking supported.
                   </Text>
                 </View>
               </>
             )}
           </ScrollView>
 
-          {/* Bottom Action Footer (Only when not in in-flight order mode) */}
+          {/* BOTTOM ACTION FOOTER */}
           {!activeOrderId && (
             <View style={styles.footer}>
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={handleInitiatePayment}
-                disabled={isProcessing}
-                style={styles.payBtn}
-              >
-                {isProcessing ? (
-                  <ActivityIndicator color="#FFFFFF" size="small" />
-                ) : (
-                  <Text style={styles.payBtnText}>
-                    Pay ₹{selectedPrice.toLocaleString('en-IN')} via Cashfree
+              {step === 'plans' ? (
+                <>
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => setStep('summary')}
+                    style={styles.payBtn}
+                  >
+                    <Text style={styles.payBtnText}>
+                      Proceed to Order Summary &rarr;
+                    </Text>
+                  </TouchableOpacity>
+                  <Text style={styles.footerHelpText}>
+                    Selected: {selectedPlan.name} (&asymp; ₹{selectedBasePrice.toLocaleString('en-IN')} Excl. GST)
                   </Text>
-                )}
-              </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={handleInitiatePayment}
+                    disabled={isProcessing}
+                    style={styles.payBtn}
+                  >
+                    {isProcessing ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <ActivityIndicator color="#FFFFFF" size="small" />
+                        <Text style={styles.payBtnText}>Connecting to Cashfree...</Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.payBtnText}>
+                        Pay ₹{taxBreakdown.totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} via Cashfree
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                  <Text style={styles.footerHelpText}>
+                    Includes 18% GST (CGST 9% + SGST 9%) &bull; Instant Activation
+                  </Text>
+                </>
+              )}
             </View>
           )}
         </View>
@@ -530,7 +715,9 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
               <Ionicons name="shield-checkmark" size={20} color="#059669" />
               <View>
                 <Text style={styles.webViewTitle}>Cashfree Secure Payment</Text>
-                <Text style={styles.webViewSubtitle}>Counter365 Subscription &bull; ₹{selectedPlan.price}</Text>
+                <Text style={styles.webViewSubtitle}>
+                  Counter365 {selectedPlan.name} &bull; ₹{taxBreakdown.totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </Text>
               </View>
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -572,7 +759,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                 onShouldStartLoadWithRequest={(request) => {
                   const url = request.url;
 
-                  // 1. Intercept payment return / deep link — Return false so WebView never attempts to load it as HTTP
+                  // 1. Intercept payment return / deep link
                   if (
                     url.startsWith('counterpro://') ||
                     url.startsWith('counter365://') ||
@@ -592,7 +779,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                     return false;
                   }
 
-                  // 2. Intercept UPI app direct schemes (GPay, PhonePe, Paytm, BHIM, etc.)
+                  // 2. Intercept UPI app direct schemes
                   if (
                     url.startsWith('upi://') ||
                     url.startsWith('tez://') ||
@@ -607,7 +794,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                     return false;
                   }
 
-                  // 3. Intercept Android Intent schemes (intent://... or intent:#Intent...)
+                  // 3. Intercept Android Intent schemes
                   if (url.startsWith('intent://') || url.startsWith('intent:#Intent')) {
                     try {
                       let cleanUrl = url;
@@ -710,6 +897,18 @@ const createStyles = (theme: Theme, isDark: boolean) => {
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
+    backButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginBottom: 4,
+    },
+    backButtonText: {
+      fontSize: 13,
+      fontFamily: typography.fonts.heading,
+      color: colors.accent,
+      fontWeight: '700',
+    },
     kicker: {
       fontSize: 11,
       fontFamily: typography.fonts.heading,
@@ -782,127 +981,137 @@ const createStyles = (theme: Theme, isDark: boolean) => {
       lineHeight: 18,
     },
     plansContainer: {
-      gap: 12,
+      gap: 10,
     },
     planCard: {
       backgroundColor: colors.surface,
       borderWidth: 1.5,
       borderColor: colors.border,
       borderRadius: radii.lg,
-      padding: 16,
-      gap: 10,
+      paddingVertical: 12,
+      paddingHorizontal: 14,
     },
     planCardSelected: {
       borderColor: colors.accent,
-      backgroundColor: isDark ? colors.surfaceSecondary : '#F8FAFC',
+      backgroundColor: isDark ? 'rgba(255, 95, 0, 0.08)' : '#FFF7ED',
       borderWidth: 2,
     },
     planCardPopular: {
       borderColor: colors.accent,
     },
-    cardHeader: {
+    planCardMainRow: {
       flexDirection: 'row',
+      alignItems: 'center',
       justifyContent: 'space-between',
-      alignItems: 'flex-start',
+    },
+    planLeftCol: {
+      flex: 1,
+      gap: 5,
+    },
+    planTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
       gap: 8,
     },
-    planTitleCol: {
-      flexShrink: 1,
-      gap: 2,
-    },
     planName: {
-      fontSize: 18,
+      fontSize: 16,
       fontFamily: typography.fonts.heading,
       fontWeight: '700',
       color: colors.text,
     },
+    planNameSelected: {
+      color: colors.accent,
+    },
+    durationTagRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      gap: 6,
+      marginLeft: 26,
+    },
+    durationBadge: {
+      backgroundColor: isDark ? '#1F2937' : '#F1F5F9',
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: radii.sm,
+    },
+    durationBadgeSelected: {
+      backgroundColor: isDark ? 'rgba(255, 95, 0, 0.2)' : '#FFEDD5',
+    },
     durationLabel: {
-      fontSize: 12,
-      fontFamily: typography.fonts.body,
+      fontSize: 11,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '600',
       color: colors.textSecondary,
+    },
+    durationLabelSelected: {
+      color: colors.accent,
+    },
+    planRateSubText: {
+      fontSize: 11,
+      color: colors.textMuted,
+      fontFamily: typography.fonts.body,
+    },
+    planRightCol: {
+      alignItems: 'flex-end',
+      justifyContent: 'center',
+      gap: 1,
+      paddingLeft: 8,
     },
     badgeRow: {
       flexDirection: 'row',
-      flexWrap: 'wrap',
-      justifyContent: 'flex-end',
-      maxWidth: '62%',
-      gap: 6,
+      gap: 4,
+      marginBottom: 2,
     },
     discountBadge: {
       backgroundColor: '#059669',
       borderRadius: radii.sm,
-      paddingHorizontal: 8,
-      paddingVertical: 3,
-      alignSelf: 'flex-start',
+      paddingHorizontal: 6,
+      paddingVertical: 2,
     },
     discountBadgeText: {
       color: '#FFFFFF',
-      fontSize: 10.5,
+      fontSize: 10,
       fontWeight: '700',
       fontFamily: typography.fonts.heading,
-      textAlign: 'center',
     },
     popularBadge: {
       backgroundColor: colors.accent,
       borderRadius: radii.sm,
-      paddingHorizontal: 8,
-      paddingVertical: 3,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
     },
     popularBadgeText: {
       color: '#FFFFFF',
-      fontSize: 10,
+      fontSize: 9.5,
       fontWeight: '800',
       fontFamily: typography.fonts.heading,
-    },
-    priceRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'flex-end',
-      borderTopWidth: 1,
-      borderTopColor: colors.border,
-      paddingTop: 8,
-    },
-    priceCol: {
-      gap: 2,
-    },
-    priceText: {
-      fontSize: 22,
-      fontFamily: typography.fonts.heading,
-      fontWeight: '800',
-      color: colors.accent,
-    },
-    savingsText: {
-      fontSize: 12,
-      fontFamily: typography.fonts.body,
-      color: '#059669',
-      fontWeight: '600',
-    },
-    monthlyCol: {
-      alignItems: 'flex-end',
-      gap: 2,
-    },
-    monthlyText: {
-      fontSize: 15,
-      fontFamily: typography.fonts.heading,
-      fontWeight: '700',
-      color: colors.text,
-    },
-    monthlySuffix: {
-      fontSize: 12,
-      color: colors.textSecondary,
-      fontWeight: 'normal',
     },
     strikethroughNormal: {
-      fontSize: 12,
+      fontSize: 11,
       fontFamily: typography.fonts.body,
       color: colors.textMuted,
       textDecorationLine: 'line-through',
     },
-    radioRow: {
+    priceWithSuffixRow: {
       flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      marginTop: 4,
+      alignItems: 'baseline',
+      gap: 2,
+    },
+    priceText: {
+      fontSize: 20,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '800',
+      color: colors.text,
+    },
+    priceTextSelected: {
+      color: colors.accent,
+    },
+    exclGstSuffix: {
+      fontSize: 10,
+      fontFamily: typography.fonts.body,
+      color: colors.textMuted,
+      fontWeight: '500',
     },
     radioCircle: {
       width: 18,
@@ -922,15 +1131,227 @@ const createStyles = (theme: Theme, isDark: boolean) => {
       borderRadius: 5,
       backgroundColor: colors.accent,
     },
-    selectLabel: {
-      fontSize: 13,
+    gstNoticeBox: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 8,
+      backgroundColor: isDark ? colors.surfaceSecondary : '#F9FAFB',
+      borderRadius: radii.md,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    gstNoticeText: {
+      flex: 1,
+      fontSize: 12,
+      fontFamily: typography.fonts.body,
+      color: colors.textSecondary,
+      lineHeight: 17,
+    },
+
+    /* Step 2: Summary & Tax Invoice Styles */
+    summaryPlanCard: {
+      backgroundColor: isDark ? colors.surfaceSecondary : '#F8FAFC',
+      borderRadius: radii.lg,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    summaryPlanHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+    summaryPlanIconBox: {
+      width: 44,
+      height: 44,
+      borderRadius: radii.md,
+      backgroundColor: isDark ? 'rgba(255, 95, 0, 0.15)' : '#FFF0E6',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    summaryPlanTitle: {
+      fontSize: 16,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    summaryPlanDuration: {
+      fontSize: 12,
       fontFamily: typography.fonts.body,
       color: colors.textSecondary,
     },
-    selectLabelSelected: {
-      color: colors.accent,
+    instantPill: {
+      backgroundColor: '#ECFDF5',
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: radii.sm,
+      borderWidth: 1,
+      borderColor: '#A7F3D0',
+    },
+    instantPillText: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: '#059669',
+      fontFamily: typography.fonts.heading,
+    },
+
+    taxInvoiceCard: {
+      backgroundColor: colors.surface,
+      borderRadius: radii.lg,
+      padding: 18,
+      borderWidth: 1.5,
+      borderColor: colors.border,
+      gap: 12,
+      ...shadows.sm,
+    },
+    taxInvoiceHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      paddingBottom: 10,
+    },
+    taxInvoiceHeading: {
+      fontSize: 12,
+      fontWeight: '800',
+      fontFamily: typography.fonts.heading,
+      color: colors.textSecondary,
+      letterSpacing: 0.8,
+    },
+    sacBadge: {
+      backgroundColor: isDark ? colors.surfaceSecondary : '#F3F4F6',
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: radii.xs,
+    },
+    sacBadgeText: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: colors.textSecondary,
+      fontFamily: typography.fonts.heading,
+    },
+    breakdownRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+    },
+    breakdownLabel: {
+      fontSize: 14,
+      fontFamily: typography.fonts.body,
+      color: colors.text,
       fontWeight: '600',
     },
+    breakdownSub: {
+      fontSize: 11,
+      fontFamily: typography.fonts.body,
+      color: colors.textSecondary,
+    },
+    breakdownValue: {
+      fontSize: 14,
+      fontFamily: typography.fonts.heading,
+      color: colors.text,
+      fontWeight: '600',
+    },
+    discountRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: isDark ? 'rgba(5, 150, 105, 0.1)' : '#F0FDF4',
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: radii.xs,
+    },
+    discountRowLabel: {
+      fontSize: 12,
+      fontFamily: typography.fonts.body,
+      color: '#059669',
+      fontWeight: '600',
+    },
+    discountRowValue: {
+      fontSize: 12,
+      fontFamily: typography.fonts.heading,
+      color: '#059669',
+      fontWeight: '700',
+    },
+    divider: {
+      height: 1,
+      backgroundColor: colors.border,
+      marginVertical: 2,
+    },
+    boldDivider: {
+      height: 1.5,
+      backgroundColor: colors.border,
+      marginVertical: 4,
+    },
+    gstTotalLabel: {
+      fontSize: 14,
+      fontFamily: typography.fonts.heading,
+      color: colors.text,
+      fontWeight: '700',
+    },
+    gstTotalValue: {
+      fontSize: 14,
+      fontFamily: typography.fonts.heading,
+      color: colors.text,
+      fontWeight: '700',
+    },
+    finalAmountRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: isDark ? 'rgba(255, 95, 0, 0.12)' : '#FFF7ED',
+      borderRadius: radii.md,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255, 95, 0, 0.3)' : '#FFEDD5',
+    },
+    finalAmountLabel: {
+      fontSize: 15,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '800',
+      color: colors.text,
+    },
+    finalAmountSubLabel: {
+      fontSize: 11,
+      fontFamily: typography.fonts.body,
+      color: colors.textSecondary,
+    },
+    finalAmountValue: {
+      fontSize: 22,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '900',
+      color: colors.accent,
+    },
+
+    shopInfoCard: {
+      backgroundColor: isDark ? colors.surfaceSecondary : '#F9FAFB',
+      borderRadius: radii.md,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      gap: 8,
+    },
+    shopInfoRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    shopInfoLabel: {
+      fontSize: 12,
+      fontFamily: typography.fonts.body,
+      color: colors.textSecondary,
+      width: 80,
+    },
+    shopInfoValue: {
+      flex: 1,
+      fontSize: 12,
+      fontFamily: typography.fonts.body,
+      fontWeight: '600',
+      color: colors.text,
+    },
+
     securityNote: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -942,7 +1363,10 @@ const createStyles = (theme: Theme, isDark: boolean) => {
       fontSize: 12,
       fontFamily: typography.fonts.body,
       color: colors.textSecondary,
+      textAlign: 'center',
+      flexShrink: 1,
     },
+
     inFlightBox: {
       backgroundColor: isDark ? colors.surfaceSecondary : '#F8FAFC',
       borderRadius: radii.lg,
@@ -1034,6 +1458,7 @@ const createStyles = (theme: Theme, isDark: boolean) => {
       paddingTop: 12,
       borderTopWidth: 1,
       borderTopColor: colors.border,
+      gap: 6,
     },
     payBtn: {
       backgroundColor: colors.accent,
@@ -1049,9 +1474,17 @@ const createStyles = (theme: Theme, isDark: boolean) => {
       fontFamily: typography.fonts.heading,
       fontWeight: '700',
     },
+    footerHelpText: {
+      fontSize: 11.5,
+      fontFamily: typography.fonts.body,
+      color: colors.textSecondary,
+      textAlign: 'center',
+    },
+
+    /* In-App WebView Modal Styles */
     webViewContainer: {
       flex: 1,
-      backgroundColor: colors.surface,
+      backgroundColor: '#0F172A',
     },
     webViewHeader: {
       flexDirection: 'row',
@@ -1059,9 +1492,9 @@ const createStyles = (theme: Theme, isDark: boolean) => {
       justifyContent: 'space-between',
       paddingHorizontal: 16,
       paddingVertical: 12,
+      backgroundColor: '#1E293B',
       borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-      backgroundColor: colors.surface,
+      borderBottomColor: '#334155',
     },
     webViewTitleRow: {
       flexDirection: 'row',
@@ -1069,47 +1502,53 @@ const createStyles = (theme: Theme, isDark: boolean) => {
       gap: 10,
     },
     webViewTitle: {
-      fontSize: 15,
-      fontWeight: '700',
+      color: '#FFFFFF',
+      fontSize: 14,
       fontFamily: typography.fonts.heading,
-      color: colors.text,
+      fontWeight: '700',
     },
     webViewSubtitle: {
+      color: '#94A3B8',
       fontSize: 12,
       fontFamily: typography.fonts.body,
-      color: colors.textSecondary,
-      marginTop: 1,
-    },
-    webViewCloseBtn: {
-      padding: 6,
-      borderRadius: radii.pill,
-      backgroundColor: isDark ? colors.surfaceSecondary : '#F3F4F6',
     },
     webViewUpiBtn: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 5,
-      backgroundColor: isDark ? colors.surfaceSecondary : '#E0F2FE',
+      gap: 4,
+      backgroundColor: 'rgba(2, 132, 199, 0.2)',
       paddingHorizontal: 10,
       paddingVertical: 6,
-      borderRadius: radii.pill,
+      borderRadius: radii.sm,
+      borderWidth: 1,
+      borderColor: '#0284C7',
     },
     webViewUpiBtnText: {
+      color: '#0284C7',
       fontSize: 12,
-      fontWeight: '600',
-      color: colors.accent,
+      fontWeight: '700',
       fontFamily: typography.fonts.heading,
     },
+    webViewCloseBtn: {
+      padding: 6,
+      borderRadius: radii.pill,
+      backgroundColor: '#334155',
+    },
     webViewLoader: {
-      ...StyleSheet.absoluteFill,
-      backgroundColor: colors.surface,
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: '#0F172A',
       alignItems: 'center',
       justifyContent: 'center',
       gap: 12,
+      padding: 20,
     },
     webViewLoaderText: {
-      fontSize: 13,
-      color: colors.textSecondary,
+      color: '#94A3B8',
+      fontSize: 14,
       fontFamily: typography.fonts.body,
     },
   });

@@ -5,6 +5,8 @@ import {
   StatusBar,
   ActivityIndicator,
   Animated,
+  AppState,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
@@ -12,6 +14,7 @@ import { colors, ThemeProvider, useTheme } from './src/theme';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { ShopProvider, useShop } from './src/context/ShopContext';
 import { CartProvider, useCart } from './src/context/CartContext';
+import { LanguageProvider, useLanguage } from './src/context/LanguageContext';
 
 import { AppHeader } from './src/components/header/AppHeader';
 import { BottomTabBar } from './src/components/navigation/BottomTabBar';
@@ -23,8 +26,14 @@ import { ShareModal } from './src/components/sales/ShareModal';
 import { TrialExpiredLockModal } from './src/components/subscription/TrialExpiredLockModal';
 import { SubscriptionPlansModal } from './src/components/subscription/SubscriptionPlansModal';
 import { AppReviewModal, STORAGE_KEY_REVIEWED, STORAGE_KEY_REVIEW_SNOOZE } from './src/components/common/AppReviewModal';
+import { MandatoryUpdateModal } from './src/components/modals/MandatoryUpdateModal';
+import { OtaUpdateModal } from './src/components/modals/OtaUpdateModal';
+import { AppExitModal } from './src/components/modals/AppExitModal';
+import { versionService, AppVersionConfig } from './src/services/versionService';
+import { APP_CONFIG } from './src/constants/appConfig';
 import { storage } from './src/lib/storage';
 import { billingService } from './src/services/billingService';
+import { otaUpdateService } from './src/services/otaUpdateService';
 
 import { SplashScreen } from './src/screens/onb/SplashScreen';
 import { IntroScreen } from './src/screens/onb/IntroScreen';
@@ -58,6 +67,7 @@ const MainApp: React.FC = () => {
   const { currentRole, setRole, can, sendOtp, login, profile, isLoading: isAuthLoading } = useAuth();
   const { shop, updateShop, registerNewShop, setActiveShop, clearShop, subscriptionStatus, isLoading: isShopLoading } = useShop();
   const { toastMessage, flash, startEditingBill } = useCart();
+  const { t } = useLanguage();
 
   const handleEditBill = (bill: Bill) => {
     startEditingBill(bill);
@@ -91,12 +101,121 @@ const MainApp: React.FC = () => {
     }
   };
 
+  // Mandatory Update Enforcement State & Realtime Listener
+  const [isMandatoryUpdateRequired, setIsMandatoryUpdateRequired] = useState(false);
+  const [mandatoryUpdateConfig, setMandatoryUpdateConfig] = useState<AppVersionConfig | null>(null);
+
+  // OTA Update Modal State (Beautiful Popup)
+  const [isOtaModalVisible, setIsOtaModalVisible] = useState(false);
+  const [isOtaUpdating, setIsOtaUpdating] = useState(false);
+
+  const handleApplyOtaUpdate = async () => {
+    setIsOtaUpdating(true);
+    setCurrentRoute('home');
+    await otaUpdateService.applyUpdate();
+    setIsOtaUpdating(false);
+    setIsOtaModalVisible(false);
+  };
+
+  useEffect(() => {
+    // 0. Subscribe to OTA ready events & check in background
+    const unsubOta = otaUpdateService.subscribe(isReady => {
+      if (isReady) {
+        setIsOtaModalVisible(true);
+      }
+    });
+    otaUpdateService.checkForUpdateAndPrompt(false);
+
+    // 1. Initial version check against Supabase
+    versionService.checkVersion(APP_CONFIG.version).then(res => {
+      if (res.updateRequired) {
+        setIsMandatoryUpdateRequired(true);
+        setMandatoryUpdateConfig(res.config);
+      }
+    });
+
+    // 2. Real-time subscription: when an admin updates min_required_version in Supabase,
+    // active mobile clients receive instant notification and are prompted to update
+    const unsubscribe = versionService.subscribeToVersionUpdates(APP_CONFIG.version, res => {
+      if (res.updateRequired) {
+        setIsMandatoryUpdateRequired(true);
+        setMandatoryUpdateConfig(res.config);
+      } else {
+        setIsMandatoryUpdateRequired(false);
+      }
+    });
+
+    // 3. Re-verify when app returns to foreground from background
+    const appStateSub = AppState.addEventListener('change', nextState => {
+      if (nextState === 'active') {
+        otaUpdateService.checkForUpdateAndPrompt(false);
+        versionService.checkVersion(APP_CONFIG.version).then(res => {
+          if (res.updateRequired) {
+            setIsMandatoryUpdateRequired(true);
+            setMandatoryUpdateConfig(res.config);
+          }
+        });
+      }
+    });
+
+    return () => {
+      unsubOta();
+      unsubscribe();
+      appStateSub.remove();
+    };
+  }, []);
+
   // Route & Navigation State
   const [currentRoute, setCurrentRoute] = useState<AppRoute>('splash');
   const [salesSubView, setSalesSubView] = useState<SalesSubView>('menu');
+  const [openItemFormDirectly, setOpenItemFormDirectly] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [splashFinished, setSplashFinished] = useState(false);
   const drawerProgress = useRef(new Animated.Value(0)).current;
+
+  // Platform Exit Confirmation Modal State
+  const [isExitModalVisible, setIsExitModalVisible] = useState(false);
+
+  // Route History Stack for Predictable Android Back Navigation
+  const [routeHistory, setRouteHistory] = useState<AppRoute[]>([]);
+
+  // Controlled Navigation Wrapper that tracks history
+  const navigateTo = (route: AppRoute, subView?: SalesSubView) => {
+    if (route !== currentRoute) {
+      setRouteHistory(prev => [...prev, currentRoute]);
+      setCurrentRoute(route);
+    }
+    if (subView) {
+      setSalesSubView(subView);
+    }
+  };
+
+  // Immediate Permission Revocation Guard Effect:
+  // If the Owner revokes a module permission while a Supervisor or Biller is actively
+  // viewing that module, immediately block access, flash warning, and redirect to an authorized screen.
+  useEffect(() => {
+    if (currentRoute === 'splash' || currentRoute === 'intro' || currentRoute.startsWith('onb_')) {
+      return;
+    }
+
+    if (currentRoute === 'sales') {
+      if (salesSubView === 'editor' && !can('menu')) {
+        setOpenItemFormDirectly(false);
+        setSalesSubView('menu');
+        flash(t('no_access', "You don't have access for that"));
+      } else if (!can('bill')) {
+        setCurrentRoute('home');
+        setSalesSubView('menu');
+        flash(t('no_access', "You don't have access for that"));
+      }
+    } else if (currentRoute === 'reports' && !can('report')) {
+      setCurrentRoute('home');
+      flash(t('no_access', "You don't have access for that"));
+    } else if (currentRoute === 'pending' && !can('pend')) {
+      setCurrentRoute('home');
+      flash(t('no_access', "You don't have access for that"));
+    }
+  }, [currentRoute, salesSubView, can, currentRole]);
 
   // Persistent Login Auto-Restore Effect (Only runs during initial launch from splash screen)
   useEffect(() => {
@@ -135,6 +254,7 @@ const MainApp: React.FC = () => {
   // Onboarding Form States
   const [onbPhone, setOnbPhone] = useState('');
   const [onbOtp, setOnbOtp] = useState('');
+  const [verifiedPhone, setVerifiedPhone] = useState<string | null>(null);
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
   const [phoneError, setPhoneError] = useState<string | null>(null);
@@ -203,6 +323,12 @@ const MainApp: React.FC = () => {
       flash('Enter 10 digits');
       return;
     }
+    // If phone is already verified from this onboarding session, proceed directly without asking for OTP again
+    if (verifiedPhone && onbPhone === verifiedPhone) {
+      flash('Phone already verified! Continuing to shop registration');
+      setCurrentRoute('onb_shop');
+      return;
+    }
     setIsSendingOtp(true);
     setPhoneError(null);
     try {
@@ -255,6 +381,7 @@ const MainApp: React.FC = () => {
           flash(`Welcome back to ${res.shop.name}!`);
           setCurrentRoute('home');
         } else {
+          setVerifiedPhone(onbPhone);
           flash("OTP verified! Let's setup your shop");
           setCurrentRoute('onb_shop');
         }
@@ -386,6 +513,137 @@ const MainApp: React.FC = () => {
     flash('Guide closed. Reopen it from the menu');
   };
 
+  // Global Android Hardware Back Button & Gesture Navigation Handler
+  useEffect(() => {
+    const handleHardwareBack = (): boolean => {
+      // 1. Mandatory update blocks back navigation
+      if (isMandatoryUpdateRequired) {
+        return true;
+      }
+
+      // 2. If Exit Modal is visible, Back dismisses it
+      if (isExitModalVisible) {
+        setIsExitModalVisible(false);
+        return true;
+      }
+
+      // 3. Modals and Overlays in order of priority
+      if (isDrawerOpen) {
+        setIsDrawerOpen(false);
+        return true;
+      }
+      if (tourStepIndex !== null) {
+        handleTourSkip();
+        return true;
+      }
+      if (savedBill) {
+        setSavedBill(null);
+        setSalesSubView('menu');
+        return true;
+      }
+      if (isShareModalOpen) {
+        setIsShareModalOpen(false);
+        return true;
+      }
+      if (isSubscriptionPlansOpen) {
+        if (!subscriptionStatus.requiresSubscription) {
+          setIsSubscriptionPlansOpen(false);
+        }
+        return true;
+      }
+      if (isReviewModalVisible) {
+        setIsReviewModalVisible(false);
+        return true;
+      }
+      if (isOtaModalVisible) {
+        setIsOtaModalVisible(false);
+        return true;
+      }
+
+      // 4. Nested subviews inside Sales module
+      if (currentRoute === 'sales') {
+        if (salesSubView === 'editor') {
+          setOpenItemFormDirectly(false);
+          setSalesSubView('menu');
+          return true;
+        }
+        if (salesSubView === 'bill') {
+          setSalesSubView('menu');
+          return true;
+        }
+      }
+
+      // 5. Onboarding flow back steps
+      if (currentRoute === 'onb_otp') {
+        setOnbOtp('');
+        setOtpError(null);
+        setCurrentRoute('onb_phone');
+        return true;
+      }
+      if (currentRoute === 'onb_shop') {
+        setCurrentRoute('onb_phone');
+        return true;
+      }
+      if (currentRoute === 'onb_kind') {
+        setCurrentRoute('onb_shop');
+        return true;
+      }
+      if (currentRoute === 'onb_phone') {
+        setCurrentRoute('intro');
+        return true;
+      }
+      if (currentRoute === 'intro') {
+        setIsExitModalVisible(true);
+        return true;
+      }
+
+      // 6. Non-home screens: navigate back to previous screen or home without closing the app
+      if (currentRoute !== 'home') {
+        setRouteHistory(prev => {
+          const nextHistory = [...prev];
+          let prevRoute: AppRoute = 'home';
+          while (nextHistory.length > 0) {
+            const candidate = nextHistory.pop()!;
+            if (candidate !== currentRoute && candidate !== 'splash' && candidate !== 'intro' && !candidate.startsWith('onb_')) {
+              prevRoute = candidate;
+              break;
+            }
+          }
+          setCurrentRoute(prevRoute);
+          if (prevRoute === 'sales') {
+            setSalesSubView('menu');
+          }
+          return nextHistory;
+        });
+        return true;
+      }
+
+      // 7. ONLY on main Homepage: trigger the "Are you sure you want to exit?" confirmation modal
+      if (currentRoute === 'home') {
+        setIsExitModalVisible(true);
+        return true;
+      }
+
+      return false;
+    };
+
+    const backSub = BackHandler.addEventListener('hardwareBackPress', handleHardwareBack);
+    return () => backSub.remove();
+  }, [
+    isMandatoryUpdateRequired,
+    isExitModalVisible,
+    isDrawerOpen,
+    tourStepIndex,
+    savedBill,
+    isShareModalOpen,
+    isSubscriptionPlansOpen,
+    subscriptionStatus.requiresSubscription,
+    isReviewModalVisible,
+    isOtaModalVisible,
+    currentRoute,
+    salesSubView,
+  ]);
+
   // Check if main app shell should be rendered
   const isMainShell =
     currentRoute === 'home' ||
@@ -436,9 +694,9 @@ const MainApp: React.FC = () => {
           onOpenMenu={() => setIsDrawerOpen(true)}
           onOpenReports={() => {
             if (can('report')) {
-              setCurrentRoute('reports');
+              navigateTo('reports');
             } else {
-              flash('Reports are locked. Please ask the owner');
+              flash(t('no_access', "You don't have access for that"));
             }
           }}
           todayLabel={(() => {
@@ -464,11 +722,16 @@ const MainApp: React.FC = () => {
         {currentRoute === 'onb_phone' && (
           <PhoneStep
             phone={onbPhone}
-            onChangePhone={setOnbPhone}
+            onChangePhone={(p) => {
+              const cleaned = p.replace(/\D/g, '');
+              const sanitized = (cleaned.length === 12 && cleaned.startsWith('91')) ? cleaned.slice(2) : (cleaned.length > 10 ? cleaned.slice(-10) : cleaned);
+              setOnbPhone(sanitized);
+            }}
             onKeyPress={handlePhoneKeyPress}
             onNext={handleSendOtp}
             loading={isSendingOtp}
             error={phoneError}
+            isVerified={Boolean(verifiedPhone && onbPhone === verifiedPhone)}
           />
         )}
 
@@ -520,7 +783,7 @@ const MainApp: React.FC = () => {
             onTagLocation={handleTagLocation}
             onToggleLogo={handlePickLogo}
             onNext={() => setCurrentRoute('onb_kind')}
-            onBack={() => setCurrentRoute('onb_otp')}
+            onBack={() => setCurrentRoute('onb_phone')}
           />
         )}
 
@@ -565,7 +828,21 @@ const MainApp: React.FC = () => {
         {/* Main Application Routes */}
         {currentRoute === 'home' && (
           <HomeScreen
-            onNavigate={route => setCurrentRoute(route)}
+            onNavigate={route => {
+              if (route === 'sales' && !can('bill')) {
+                flash(t('no_access', "You don't have access for that"));
+                return;
+              }
+              if (route === 'pending' && !can('pend')) {
+                flash(t('no_access', "You don't have access for that"));
+                return;
+              }
+              if (route === 'reports' && !can('report')) {
+                flash(t('no_access', "You don't have access for that"));
+                return;
+              }
+              navigateTo(route);
+            }}
             onOpenReminder={pending => {
               const msg = whatsappService.formatPendingReminder(pending, shop.name);
               whatsappService.shareViaWhatsApp(msg, pending.customerPhone);
@@ -577,7 +854,7 @@ const MainApp: React.FC = () => {
 
         {currentRoute === 'bills' && (
           <BillsScreen
-            onBackToHome={() => setCurrentRoute('home')}
+            onBackToHome={() => navigateTo('home')}
             onEditBill={handleEditBill}
           />
         )}
@@ -587,21 +864,27 @@ const MainApp: React.FC = () => {
             {salesSubView === 'menu' && (
               <SalesMenuScreen
                 onGoToBill={() => setSalesSubView('bill')}
-                onOpenMenuEditor={() => setSalesSubView('editor')}
+                onOpenMenuEditor={(openAddItem?: boolean) => {
+                  setOpenItemFormDirectly(Boolean(openAddItem));
+                  setSalesSubView('editor');
+                }}
               />
             )}
             {salesSubView === 'bill' && (
               <BillCheckoutScreen
                 onBackToMenu={() => setSalesSubView('menu')}
-                onBillSaved={async (bill, share, autoPrint) => {
+                onBillSaved={async (bill, share, autoPrint, paperSize) => {
                   setSavedBill(bill);
+                  // Ensure cloud PDF receipt is generated & uploaded to Supabase Storage so WhatsApp link works
+                  exportService.generateAndUploadBillReceipt(bill, shop).catch(e => console.warn('Receipt upload err:', e));
                   if (share) {
+                    // Instantly share clean customer receipt via WhatsApp without blocking on slow PDF upload
                     const waText = whatsappService.formatCustomerBill(bill, shop.name, shop.upiId, shop.phone);
                     whatsappService.shareViaWhatsApp(waText, bill.customerPhone);
                   }
-                  if (autoPrint) {
+                  if (autoPrint && shop.printerEnabled) {
                     try {
-                      await printerService.printReceipt(bill, shop.name, shop.address, shop.phone);
+                      await printerService.printReceipt(bill, shop, paperSize);
                     } catch (e) {
                       console.warn('Print error:', e);
                     }
@@ -614,9 +897,12 @@ const MainApp: React.FC = () => {
             )}
             {salesSubView === 'editor' && (
               <MenuEditorScreen
-                onBackToMenu={() => setSalesSubView('menu')}
+                onBackToMenu={() => {
+                  setOpenItemFormDirectly(false);
+                  setSalesSubView('menu');
+                }}
                 openCreateCategoryImmediately={tourOpenCategoryForm}
-                openCreateItemImmediately={tourOpenItemForm}
+                openCreateItemImmediately={tourOpenItemForm || openItemFormDirectly}
               />
             )}
           </>
@@ -624,17 +910,17 @@ const MainApp: React.FC = () => {
 
         {currentRoute === 'reports' && (
           <MonthlyReportsScreen
-            onBackToHome={() => setCurrentRoute('home')}
-            onNavigateToUpgrade={() => setCurrentRoute('account')}
+            onBackToHome={() => navigateTo('home')}
+            onNavigateToUpgrade={() => navigateTo('account')}
           />
         )}
 
         {currentRoute === 'pending' && (
           <PendingPaymentsScreen
-            onBackToHome={() => setCurrentRoute('home')}
+            onBackToHome={() => navigateTo('home')}
             onNavigateToContacts={name => {
               setContactFocusName(name);
-              setCurrentRoute('contacts');
+              navigateTo('contacts');
             }}
             onSendReminder={record => {
               const msg = whatsappService.formatPendingReminder(record, shop.name, shop.upiId);
@@ -646,14 +932,14 @@ const MainApp: React.FC = () => {
 
         {currentRoute === 'contacts' && (
           <ContactsScreen
-            onBackToHome={() => setCurrentRoute('home')}
+            onBackToHome={() => navigateTo('home')}
             focusCustomerName={contactFocusName}
           />
         )}
 
         {currentRoute === 'account' && (
           <AccountScreen
-            onBackToHome={() => setCurrentRoute('home')}
+            onBackToHome={() => navigateTo('home')}
             onLogout={async () => {
               await clearShop();
               setOnbPhone('');
@@ -663,13 +949,13 @@ const MainApp: React.FC = () => {
               setOnbShopAddress('');
               setCurrentRoute('onb_phone');
             }}
-            onNavigateToSupport={() => setCurrentRoute('support')}
+            onNavigateToSupport={() => navigateTo('support')}
           />
         )}
 
         {currentRoute === 'support' && (
           <SupportScreen
-            onBackToHome={() => setCurrentRoute('home')}
+            onBackToHome={() => navigateTo('home')}
           />
         )}
       </View>
@@ -688,10 +974,11 @@ const MainApp: React.FC = () => {
           <BottomTabBar
             currentRoute={currentRoute}
             onNavigate={route => {
-              setCurrentRoute(route);
-              if (route === 'sales') {
-                setSalesSubView('menu');
+              if (route === 'sales' && !can('bill')) {
+                flash(t('no_access', "You don't have access for that"));
+                return;
               }
+              navigateTo(route, route === 'sales' ? 'menu' : undefined);
             }}
           />
         </Animated.View>
@@ -705,10 +992,39 @@ const MainApp: React.FC = () => {
         drawerProgress={drawerProgress}
         onClose={() => setIsDrawerOpen(false)}
         onOpen={() => setIsDrawerOpen(true)}
-        onNavigate={route => setCurrentRoute(route)}
+        onNavigate={route => {
+          if (route === 'sales' && !can('bill')) {
+            flash(t('no_access', "You don't have access for that"));
+            return;
+          }
+          if (route === 'pending' && !can('pend')) {
+            flash(t('no_access', "You don't have access for that"));
+            return;
+          }
+          if (route === 'reports' && !can('report')) {
+            flash(t('no_access', "You don't have access for that"));
+            return;
+          }
+          navigateTo(route);
+        }}
         onNavigateSubView={(route, subView) => {
-          setCurrentRoute(route);
-          if (subView) setSalesSubView(subView);
+          if (route === 'sales' && subView === 'editor' && !can('menu')) {
+            flash(t('no_access', "You don't have access for that"));
+            return;
+          }
+          if (route === 'sales' && subView !== 'editor' && !can('bill')) {
+            flash(t('no_access', "You don't have access for that"));
+            return;
+          }
+          if (route === 'pending' && !can('pend')) {
+            flash(t('no_access', "You don't have access for that"));
+            return;
+          }
+          if (route === 'reports' && !can('report')) {
+            flash(t('no_access', "You don't have access for that"));
+            return;
+          }
+          navigateTo(route, subView);
         }}
         onStartTour={() => startTour(0)}
       />
@@ -724,18 +1040,20 @@ const MainApp: React.FC = () => {
       {/* Bill Saved Modal */}
       <BillSavedModal
         bill={savedBill}
+        isPrinterConfigured={Boolean(shop.printerEnabled)}
         onSendWhatsApp={() => {
           if (!savedBill) return;
           const msg = whatsappService.formatCustomerBill(savedBill, shop.name, shop.upiId, shop.phone);
           whatsappService.shareViaWhatsApp(msg, savedBill.customerPhone);
+          const billNo = savedBill.billNumber;
           setSavedBill(null);
           setSalesSubView('menu');
-          flash(`Bill ${savedBill.billNumber} sent on WhatsApp`);
+          flash(`Bill #${billNo} shared on WhatsApp`);
           checkAndPromptReview();
         }}
         onPrint={async () => {
           if (!savedBill) return;
-          const ok = await printerService.printReceipt(savedBill, shop.name, shop.address, shop.phone);
+          const ok = await printerService.printReceipt(savedBill, shop);
           if (ok) {
             flash('Print sent');
           } else {
@@ -795,6 +1113,31 @@ const MainApp: React.FC = () => {
         onClose={() => setIsReviewModalVisible(false)}
       />
 
+      {/* Mandatory App Update Enforcement Modal */}
+      <MandatoryUpdateModal
+        visible={isMandatoryUpdateRequired}
+        config={mandatoryUpdateConfig}
+        currentVersion={APP_CONFIG.version}
+      />
+
+      {/* Beautiful Animated OTA Update Modal */}
+      <OtaUpdateModal
+        visible={isOtaModalVisible}
+        onUpdate={handleApplyOtaUpdate}
+        onLater={() => setIsOtaModalVisible(false)}
+        isUpdating={isOtaUpdating}
+      />
+
+      {/* Platform Android Hardware Back & Exit Confirmation Modal */}
+      <AppExitModal
+        visible={isExitModalVisible}
+        onCancel={() => setIsExitModalVisible(false)}
+        onConfirmExit={() => {
+          setIsExitModalVisible(false);
+          BackHandler.exitApp();
+        }}
+      />
+
       {/* Toast Notification Banner */}
       <ToastBanner message={toastMessage} />
     </View>
@@ -844,13 +1187,15 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <AuthProvider>
-          <ShopProvider>
-            <CartProvider>
-              <MainApp />
-            </CartProvider>
-          </ShopProvider>
-        </AuthProvider>
+        <LanguageProvider>
+          <AuthProvider>
+            <ShopProvider>
+              <CartProvider>
+                <MainApp />
+              </CartProvider>
+            </ShopProvider>
+          </AuthProvider>
+        </LanguageProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );

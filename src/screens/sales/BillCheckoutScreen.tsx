@@ -20,14 +20,18 @@ import * as Haptics from 'expo-haptics';
 import { useCart } from '../../context/CartContext';
 import { useShop } from '../../context/ShopContext';
 import { useAuth } from '../../context/AuthContext';
+import { useLanguage } from '../../context/LanguageContext';
 import { billingService } from '../../services/billingService';
 import { contactService } from '../../services/contactService';
+import { printerService, ThermalPaperSize } from '../../services/printerService';
+import { whatsappService } from '../../services/whatsappService';
+import { exportService } from '../../services/exportService';
 import { PaymentMethod, Bill, CustomerRecord } from '../../types/models';
 import { formatRupee, calculateGST } from '../../lib/money';
 
 interface BillCheckoutScreenProps {
   onBackToMenu: () => void;
-  onBillSaved: (bill: Bill, share: boolean, autoPrint?: boolean) => void;
+  onBillSaved: (bill: Bill, share: boolean, autoPrint?: boolean, paperSize?: ThermalPaperSize) => void;
   nextBillNo?: string;
 }
 
@@ -71,6 +75,247 @@ const PAYMENT_MODES: PaymentModeConfig[] = [
   },
 ];
 
+const ticketStyles = StyleSheet.create({
+  wrapper: {
+    width: '100%',
+    position: 'relative',
+    marginTop: 14,
+  },
+  sproutAnchor: {
+    position: 'absolute',
+    top: -15,
+    left: 14,
+    zIndex: 20,
+    alignItems: 'center',
+  },
+  sproutLeaves: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: -2,
+  },
+  soilMound: {
+    width: 18,
+    height: 7,
+    borderTopLeftRadius: 9,
+    borderTopRightRadius: 9,
+    backgroundColor: '#8D6E63',
+  },
+  paperBody: {
+    backgroundColor: '#F3FAF5',
+    borderTopLeftRadius: 14,
+    borderTopRightRadius: 14,
+    padding: 14,
+    paddingBottom: 8,
+  },
+  topRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  metaLabel: {
+    fontFamily: typography.fonts.heading,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  stampCircle: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    borderWidth: 2,
+    borderColor: '#16A34A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transform: [{ rotate: '12deg' }],
+    backgroundColor: '#EBF8F0',
+    position: 'relative',
+  },
+  stampInnerCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#16A34A',
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stampTextTop: {
+    position: 'absolute',
+    top: 2,
+    fontSize: 6,
+    fontWeight: '900',
+    color: '#16A34A',
+    letterSpacing: 0.5,
+  },
+  stampTextBottom: {
+    position: 'absolute',
+    bottom: 2,
+    fontSize: 6,
+    fontWeight: '900',
+    color: '#16A34A',
+    letterSpacing: 0.5,
+  },
+  headlineBlock: {
+    marginTop: 10,
+    marginBottom: 8,
+  },
+  headlineText: {
+    fontFamily: typography.fonts.heading,
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#14532D',
+    lineHeight: 22,
+  },
+  headlineHighlightRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  paperPill: {
+    backgroundColor: '#BBF7D0',
+    borderRadius: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    marginHorizontal: 1,
+  },
+  dashedLine: {
+    borderTopWidth: 1.5,
+    borderColor: '#86EFAC',
+    borderStyle: 'dashed',
+    marginVertical: 8,
+    width: '100%',
+  },
+  bottomRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingBottom: 2,
+  },
+  savedTodayGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  savedTodayLabel: {
+    fontFamily: typography.fonts.heading,
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#166534',
+  },
+  segmentsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  segmentBlock: {
+    width: 6,
+    height: 12,
+    borderRadius: 2,
+  },
+  countText: {
+    fontFamily: typography.fonts.numbers,
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#15803D',
+  },
+  sawtoothContainer: {
+    flexDirection: 'row',
+    width: '100%',
+    height: 10,
+    overflow: 'hidden',
+  },
+  sawtoothTooth: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 10,
+    borderRightWidth: 10,
+    borderTopWidth: 10,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderTopColor: '#F3FAF5',
+  },
+});
+
+const SavedBillTicketCard: React.FC<{ billNumber: string | number; isDark?: boolean }> = ({ billNumber, isDark = true }) => {
+  // Extract trailing numeric sequence from billNumber (e.g. "#0010" -> 10, "BILL-OCT-0010" -> 10, 10 -> 10)
+  const numStr = String(billNumber ?? '');
+  const matches = numStr.match(/(\d+)(?!.*\d)/);
+  const parsedCount = matches ? parseInt(matches[1], 10) : (Number(billNumber) || 1);
+  const countToday = parsedCount > 0 ? parsedCount : 1;
+  const progressColors = ['#BBF7D0', '#A7F3D0', '#86EFAC', '#6EE7B7', '#34D399', '#10B981', '#059669'];
+  const ticketBg = isDark ? '#F3FAF5' : '#F0FDF4';
+
+  return (
+    <View style={ticketStyles.wrapper}>
+      {/* Sprout plant on top-left edge */}
+      <View style={ticketStyles.sproutAnchor}>
+        <View style={ticketStyles.sproutLeaves}>
+          <Ionicons name="leaf" size={14} color="#4ADE80" style={{ transform: [{ rotate: '-35deg' }], marginRight: -4 }} />
+          <Ionicons name="leaf" size={14} color="#22C55E" style={{ transform: [{ rotate: '35deg' }] }} />
+        </View>
+        <View style={ticketStyles.soilMound} />
+      </View>
+
+      {/* Main Paper Receipt Body */}
+      <View style={[ticketStyles.paperBody, { backgroundColor: ticketBg }, !isDark && { borderWidth: 1, borderBottomWidth: 0, borderColor: '#DCFCE7' }]}>
+        {/* Top Section */}
+        <View style={ticketStyles.topRow}>
+          <View>
+            <Text style={ticketStyles.metaLabel}>Printed copies: 0</Text>
+            <Text style={[ticketStyles.metaLabel, { marginTop: 3 }]}>Saved digitally</Text>
+          </View>
+
+          {/* Rubber Stamp */}
+          <View style={ticketStyles.stampCircle}>
+            <View style={ticketStyles.stampInnerCircle}>
+              <Ionicons name="leaf-outline" size={16} color="#15803D" />
+            </View>
+            <Text style={ticketStyles.stampTextTop}>PAPER SAVED</Text>
+            <Text style={ticketStyles.stampTextBottom}>• NO PRINT •</Text>
+          </View>
+        </View>
+
+        {/* Headline */}
+        <View style={ticketStyles.headlineBlock}>
+          <Text style={ticketStyles.headlineText}>You saved a piece</Text>
+          <View style={ticketStyles.headlineHighlightRow}>
+            <Text style={ticketStyles.headlineText}>of </Text>
+            <View style={ticketStyles.paperPill}>
+              <Text style={ticketStyles.headlineText}>paper</Text>
+            </View>
+            <Text style={ticketStyles.headlineText}>!</Text>
+          </View>
+        </View>
+
+        {/* Dashed line */}
+        <View style={ticketStyles.dashedLine} />
+
+        {/* Bottom Row */}
+        <View style={ticketStyles.bottomRow}>
+          <View style={ticketStyles.savedTodayGroup}>
+            <Text style={ticketStyles.savedTodayLabel}>Saved today</Text>
+            <View style={ticketStyles.segmentsRow}>
+              {progressColors.map((c, i) => (
+                <View key={i} style={[ticketStyles.segmentBlock, { backgroundColor: c }]} />
+              ))}
+            </View>
+          </View>
+
+          <Text style={ticketStyles.countText}>{countToday}</Text>
+        </View>
+      </View>
+
+      {/* Sawtooth / Zigzag bottom border */}
+      <View style={ticketStyles.sawtoothContainer}>
+        {Array.from({ length: 14 }).map((_, i) => (
+          <View key={i} style={[ticketStyles.sawtoothTooth, { borderTopColor: ticketBg }]} />
+        ))}
+      </View>
+    </View>
+  );
+};
+
 export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
   onBackToMenu,
   onBillSaved,
@@ -80,7 +325,8 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
   const { theme, isDark } = useTheme();
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const { shop, updateShop, refreshSubscription, subscriptionStatus } = useShop();
-  const { profile, currentRole, currentMember } = useAuth();
+  const { profile, currentRole, currentMember, can } = useAuth();
+  const { t } = useLanguage();
   const {
     cart,
     increaseQty,
@@ -100,44 +346,104 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
   const [customerPhone, setCustomerPhone] = useState(editingBill?.customerPhone || '');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(editingBill?.customerId || null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isPrintingNow, setIsPrintingNow] = useState(false);
   const [savedCustomers, setSavedCustomers] = useState<CustomerRecord[]>([]);
+
+  // Localized payment modes list
+  const paymentModesList = useMemo(() => [
+    {
+      mode: 'Cash' as PaymentMethod,
+      name: t('mode_cash', 'Cash'),
+      description: 'Received in hand',
+      icon: 'cash-outline' as const,
+    },
+    {
+      mode: 'GPay' as PaymentMethod,
+      name: t('mode_gpay', 'GPay / UPI'),
+      description: 'Paid via app',
+      icon: 'phone-portrait-outline' as const,
+    },
+    {
+      mode: 'Cash + GPay' as PaymentMethod,
+      name: t('mode_cash_gpay', 'Cash + GPay'),
+      description: 'Split between both',
+      icon: 'swap-horizontal-outline' as const,
+    },
+    {
+      mode: 'Pending' as PaymentMethod,
+      name: t('mode_full_pending', 'Full Pending'),
+      description: 'Add to udhar ledger',
+      icon: 'time-outline' as const,
+    },
+    {
+      mode: 'Partial Pay' as PaymentMethod,
+      name: t('mode_partial_pay', 'Partial Pay'),
+      description: 'Part now, rest later',
+      icon: 'pie-chart-outline' as const,
+    },
+  ], [t]);
+
+  // Thermal paper size, WhatsApp prompt, and save-bill modal states
+  const [isPaymentModesOpen, setIsPaymentModesOpen] = useState(false);
+  const [isWhatsAppPromptOpen, setIsWhatsAppPromptOpen] = useState(false);
+  const [whatsAppPromptPhone, setWhatsAppPromptPhone] = useState('');
+  const [whatsAppPromptName, setWhatsAppPromptName] = useState('');
+  const [whatsAppContactSearch, setWhatsAppContactSearch] = useState('');
+  const [selectedWhatsAppContact, setSelectedWhatsAppContact] = useState<CustomerRecord | null>(null);
+  const [whatsAppModalError, setWhatsAppModalError] = useState<string | null>(null);
+  const [thermalPaperSize, setThermalPaperSize] = useState<ThermalPaperSize>('80mm');
+  const [savedBillSuccess, setSavedBillSuccess] = useState<Bill | null>(null);
+
+  // Thermal printer reactive state: dynamically follows printerEnabled toggle in Account Settings
+  const isPrinterConfigured = Boolean(shop.printerEnabled);
+
+  const isPendingOrPartial = paymentMode === 'Pending' || paymentMode === 'Partial Pay';
+  const selectedModeConfig = paymentModesList.find(m => m.mode === paymentMode) || paymentModesList[0];
 
   // Split & Partial calculations
   const gstAmount = shop.gstEnabled ? calculateGST(subtotal, shop.gstRate) : 0;
   const totalAmount = subtotal + gstAmount;
 
   // Partial pay amount input (manual entry)
+  // Partial pay amount input (manual entry) - empty by default so user can enter amount directly
   const [partialPaidInput, setPartialPaidInput] = useState<string>(() => {
     if (editingBill?.paymentMode === 'Partial Pay' && editingBill.paidAmount !== undefined) {
       return String(editingBill.paidAmount);
     }
-    return String(Math.round(totalAmount * 0.5));
+    return '';
   });
 
-  // Cash + GPay split inputs (manual entry)
+  // Cash + GPay split inputs (manual entry) - empty by default so user can enter amount directly
   const [splitCashInput, setSplitCashInput] = useState<string>(() => {
     if (editingBill?.paymentMode === 'Cash + GPay' && editingBill.cashAmount !== undefined) {
       return String(editingBill.cashAmount);
     }
-    return String(Math.round(totalAmount * 0.5));
+    return '';
   });
 
   const [splitGpayInput, setSplitGpayInput] = useState<string>(() => {
     if (editingBill?.paymentMode === 'Cash + GPay' && editingBill.gpayAmount !== undefined) {
       return String(editingBill.gpayAmount);
     }
-    return String(totalAmount - Math.round(totalAmount * 0.5));
+    return '';
   });
 
-  // Update defaults when totalAmount changes
+  // Reset inputs when totalAmount changes
   useEffect(() => {
     if (!editingBill) {
-      const half = Math.round(totalAmount * 0.5);
-      setPartialPaidInput(String(half));
-      setSplitCashInput(String(half));
-      setSplitGpayInput(String(totalAmount - half));
+      setPartialPaidInput('');
+      setSplitCashInput('');
+      setSplitGpayInput('');
     }
   }, [totalAmount, editingBill]);
+
+  // Immediate override protection: If owner revokes billing permission while checkout is open
+  useEffect(() => {
+    if (!can('bill')) {
+      flash(t('no_access', "You don't have access for that"));
+      onBackToMenu();
+    }
+  }, [can]);
 
   const partialPaidAmt = Math.min(totalAmount, Math.max(0, Number(partialPaidInput) || 0));
   const partialDueAmt = Math.max(0, totalAmount - partialPaidAmt);
@@ -153,6 +459,16 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
     try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
     setPaymentMode(mode);
 
+    // Keep fields empty when selecting Partial Pay or Cash + GPay so user can enter custom values
+    if (!editingBill) {
+      if (mode === 'Partial Pay') {
+        setPartialPaidInput('');
+      } else if (mode === 'Cash + GPay') {
+        setSplitCashInput('');
+        setSplitGpayInput('');
+      }
+    }
+
     if ((mode === 'Partial Pay' || mode === 'Pending') && !shop.upiId) {
       setIsUpiPromptOpen(true);
     }
@@ -161,17 +477,25 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
   const handleCashInputChange = (val: string) => {
     const clean = val.replace(/[^0-9]/g, '');
     setSplitCashInput(clean);
-    const num = Number(clean) || 0;
-    const remainder = Math.max(0, totalAmount - num);
-    setSplitGpayInput(String(remainder));
+    if (!clean) {
+      setSplitGpayInput('');
+    } else {
+      const num = Number(clean) || 0;
+      const remainder = Math.max(0, totalAmount - num);
+      setSplitGpayInput(String(remainder));
+    }
   };
 
   const handleGpayInputChange = (val: string) => {
     const clean = val.replace(/[^0-9]/g, '');
     setSplitGpayInput(clean);
-    const num = Number(clean) || 0;
-    const remainder = Math.max(0, totalAmount - num);
-    setSplitCashInput(String(remainder));
+    if (!clean) {
+      setSplitCashInput('');
+    } else {
+      const num = Number(clean) || 0;
+      const remainder = Math.max(0, totalAmount - num);
+      setSplitCashInput(String(remainder));
+    }
   };
 
   const handlePartialPaidChange = (val: string) => {
@@ -291,6 +615,17 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
     );
   }, [savedCustomers, customerSearchQuery]);
 
+  // Filtered contacts for WhatsApp share prompt widget (only visible when searching)
+  const filteredWhatsAppContacts = useMemo(() => {
+    if (!whatsAppContactSearch.trim()) {
+      return [];
+    }
+    const q = whatsAppContactSearch.toLowerCase();
+    return savedCustomers.filter(
+      c => c.name.toLowerCase().includes(q) || (c.phone && c.phone.includes(q))
+    );
+  }, [savedCustomers, whatsAppContactSearch]);
+
   // Animate State Change in Customer Card
   const transitionCustomerState = (newState: CustomerState) => {
     if (reduceMotion) {
@@ -350,7 +685,23 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
   const itemNamesSummary = cart.map(i => `${i.name} (${i.quantity})`).join(', ');
 
   // Save / Validate
-  const handleSave = async (share: boolean, autoPrint: boolean = false) => {
+  const handleSave = async (
+    share: boolean,
+    autoPrint: boolean = false,
+    paperSize?: ThermalPaperSize,
+    overridePhone?: string,
+    closeAfter: boolean = false,
+    overrideName?: string,
+    overrideCustomerId?: string
+  ) => {
+    // Only permit thermal printing if printer is actually configured and paired in Account settings
+    const effectiveAutoPrint = autoPrint && isPrinterConfigured;
+
+    if (!can('bill')) {
+      flash('Billing access is disabled for your account. Please contact the owner.');
+      return;
+    }
+
     if (!editingBill && subscriptionStatus.billLimitReached && !subscriptionStatus.isPaidActive) {
       flash('Free tier limit of 100 bills reached. Upgrade to Pro to continue.');
       return;
@@ -361,18 +712,23 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
       return;
     }
 
-    // Validation for Full Pending or Partial Pay
-    const isPendingOrPartial = paymentMode === 'Pending' || paymentMode === 'Partial Pay';
-    if (isPendingOrPartial) {
-      const hasSelectedCustomer = customerState === 'selected' && customerName.trim().length > 0;
-      const cleanPhone = customerPhone.replace(/[^0-9]/g, '');
-      const hasValidManual =
-        customerName.trim().length > 0 && cleanPhone.length === 10;
+    const effectivePhone = (overridePhone !== undefined ? overridePhone : customerPhone).trim();
+    const effectiveName = (overrideName !== undefined ? overrideName : customerName).trim();
 
-      if (!hasSelectedCustomer && !hasValidManual) {
-        triggerCustomerShake();
+    // Validation for Full Pending or Partial Pay
+    if (isPendingOrPartial) {
+      const cleanPhone = effectivePhone.replace(/[^0-9]/g, '');
+      const hasCustomer =
+        (effectiveName.length > 0 || !!overrideCustomerId || !!selectedCustomerId) &&
+        cleanPhone.length === 10;
+
+      if (!hasCustomer) {
         try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error); } catch {}
-        flash('Select a customer for pending dues');
+        setWhatsAppModalError('You need to select a customer for pending dues');
+        setWhatsAppPromptPhone(cleanPhone);
+        setWhatsAppPromptName(effectiveName);
+        setWhatsAppContactSearch('');
+        setIsWhatsAppPromptOpen(true);
         return;
       }
 
@@ -388,7 +744,7 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
       }
     } else {
       // For Cash, GPay, Cash + GPay: if phone entered, must be 10 digits
-      const cleanPhone = customerPhone.replace(/[^0-9]/g, '');
+      const cleanPhone = effectivePhone.replace(/[^0-9]/g, '');
       if (cleanPhone.length > 0 && cleanPhone.length !== 10) {
         triggerCustomerShake();
         flash('Mobile number must be 10 digits');
@@ -404,19 +760,36 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
       }
     }
 
+    if (!can('bill')) {
+      flash(t('no_access', "You don't have access for that"));
+      onBackToMenu();
+      return;
+    }
+
+    if (isPendingOrPartial && !can('pend')) {
+      flash(t('no_access', "You don't have access for that"));
+      return;
+    }
+
     setIsSaving(true);
     try {
-      let finalCustomerName = customerName.trim();
-      let finalCustomerId = selectedCustomerId;
-      const cleanPhone = customerPhone.replace(/[^0-9]/g, '').slice(-10);
+      let finalCustomerName = effectiveName;
+      let finalCustomerId = overrideCustomerId || selectedCustomerId;
+      const cleanPhone = effectivePhone.replace(/[^0-9]/g, '').slice(-10);
+
+      // Auto-save customer in background (non-blocking for continuous fast speed)
       if (cleanPhone.length === 10) {
-        const matched = savedCustomers.find(
-          c => c.phone && c.phone.replace(/[^0-9]/g, '').slice(-10) === cleanPhone
-        );
-        if (matched) {
-          finalCustomerName = matched.name;
-          finalCustomerId = matched.id;
-        }
+        contactService.addCustomer(
+          shop.id,
+          finalCustomerName || 'Customer',
+          cleanPhone
+        ).then(custRecord => {
+          if (custRecord) {
+            setSavedCustomers(prev => [custRecord, ...prev.filter(c => c.id !== custRecord.id)]);
+          }
+        }).catch(err => {
+          console.warn('Auto-save customer notice:', err);
+        });
       }
 
       const userMeta = {
@@ -438,46 +811,133 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
           cart,
           paymentMode,
           gstEnabled: shop.gstEnabled,
+          gstRate: shop.gstRate ?? 5,
           paidAmount: paymentMode === 'Partial Pay' ? partialPaidAmt : totalAmount,
           cashAmount: paymentMode === 'Cash + GPay' ? splitCashAmt : undefined,
           gpayAmount: paymentMode === 'Cash + GPay' ? splitGpayAmt : undefined,
           tableNumber: selectedTable,
           customerName: finalCustomerName || undefined,
-          customerPhone: customerPhone.trim() || undefined,
+          customerPhone: effectivePhone || undefined,
           customerId: finalCustomerId || undefined,
           editor: userMeta,
         });
 
         cancelEditingBill();
-        try { await refreshSubscription(); } catch {}
-        onBillSaved(updatedBill, share, autoPrint);
-        flash(share ? `Bill #${updatedBill.billNumber} shared on WhatsApp` : `Printing bill #${updatedBill.billNumber}`);
+        refreshSubscription().catch(() => {});
+        // Pre-warm and upload receipt PDF immediately so WhatsApp link never 404s
+        exportService.generateAndUploadBillReceipt(updatedBill, shop).catch(err => {
+          console.warn('Background receipt PDF generation notice:', err);
+        });
+        if (!share && !effectiveAutoPrint) {
+          if (closeAfter) {
+            flash('Bill Saved Successfully');
+            onBackToMenu();
+          } else {
+            setSavedBillSuccess(updatedBill);
+            flash('Bill Saved Successfully');
+          }
+        } else {
+          onBillSaved(updatedBill, share, effectiveAutoPrint, paperSize);
+          flash(share ? `Bill #${updatedBill.billNumber} shared on WhatsApp` : `Printing bill #${updatedBill.billNumber}`);
+          if (closeAfter) {
+            onBackToMenu();
+          }
+        }
       } else {
         const res = await billingService.createBill({
           shopId: shop.id,
           cart,
           paymentMode,
           gstEnabled: shop.gstEnabled,
+          gstRate: shop.gstRate ?? 5,
           paidAmount: paymentMode === 'Partial Pay' ? partialPaidAmt : totalAmount,
           cashAmount: paymentMode === 'Cash + GPay' ? splitCashAmt : undefined,
           gpayAmount: paymentMode === 'Cash + GPay' ? splitGpayAmt : undefined,
           tableNumber: selectedTable,
           customerName: finalCustomerName || undefined,
-          customerPhone: customerPhone.trim() || undefined,
+          customerPhone: effectivePhone || undefined,
           customerId: finalCustomerId || undefined,
           creator: userMeta,
         });
 
         clearCart();
-        try { await refreshSubscription(); } catch {}
-        onBillSaved(res.bill, share, autoPrint);
-        flash(share ? `Bill #${res.bill.billNumber} shared on WhatsApp` : `Printing bill #${res.bill.billNumber}`);
+        refreshSubscription().catch(() => {});
+        // Pre-warm and upload receipt PDF immediately so WhatsApp link never 404s
+        exportService.generateAndUploadBillReceipt(res.bill, shop).catch(err => {
+          console.warn('Background receipt PDF generation notice:', err);
+        });
+        if (!share && !effectiveAutoPrint) {
+          if (closeAfter) {
+            flash('Bill Saved Successfully');
+            onBackToMenu();
+          } else {
+            setSavedBillSuccess(res.bill);
+            flash('Bill Saved Successfully');
+          }
+        } else {
+          onBillSaved(res.bill, share, effectiveAutoPrint, paperSize);
+          flash(share ? `Bill #${res.bill.billNumber} shared on WhatsApp` : `Printing bill #${res.bill.billNumber}`);
+          if (closeAfter) {
+            onBackToMenu();
+          }
+        }
       }
     } catch (err: any) {
       console.warn('BillCheckoutScreen save error:', err);
       flash(editingBill ? 'Failed to update bill' : 'Failed to save bill');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // Right action: Save & Close (Saves bill and shows share / print / new bill options)
+  const handleSaveAndClose = async () => {
+    if (!can('bill')) {
+      flash('Billing access is disabled for your account. Please contact the owner.');
+      return;
+    }
+    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+    const cleanPhone = customerPhone.replace(/[^0-9]/g, '');
+    const hasCustomer = (selectedCustomerId || customerName.trim().length > 0) && cleanPhone.length === 10;
+    if (isPendingOrPartial && !hasCustomer) {
+      setWhatsAppModalError('You need to select a customer for pending dues');
+      setWhatsAppPromptPhone(cleanPhone);
+      setWhatsAppPromptName(customerName || '');
+      setWhatsAppContactSearch('');
+      setIsWhatsAppPromptOpen(true);
+      return;
+    }
+    // closeAfter: false so savedBillSuccess dialog appears with options to share via WhatsApp, print receipt, or proceed to new bill
+    await handleSave(false, false, '80mm', undefined, false);
+  };
+
+  // Left action: Save & Share (Saves bill and shares WhatsApp, then returns to menu)
+  const handleSaveAndShare = async () => {
+    if (!can('bill')) {
+      flash('Billing access is disabled for your account. Please contact the owner.');
+      return;
+    }
+    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+    const cleanPhone = customerPhone.replace(/[^0-9]/g, '');
+    const hasCustomer = (selectedCustomerId || customerName.trim().length > 0) && cleanPhone.length === 10;
+
+    if (isPendingOrPartial && !hasCustomer) {
+      setWhatsAppModalError('You need to select a customer for pending dues');
+      setWhatsAppPromptPhone(cleanPhone);
+      setWhatsAppPromptName(customerName || '');
+      setWhatsAppContactSearch('');
+      setIsWhatsAppPromptOpen(true);
+      return;
+    }
+
+    if (cleanPhone.length === 10) {
+      await handleSave(true, false, '80mm', undefined, true);
+    } else {
+      setWhatsAppModalError(null);
+      setWhatsAppPromptPhone(cleanPhone);
+      setWhatsAppPromptName(customerName || '');
+      setWhatsAppContactSearch('');
+      setIsWhatsAppPromptOpen(true);
     }
   };
 
@@ -488,7 +948,7 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: 160 }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: 160 + insets.bottom }]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
@@ -546,7 +1006,7 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
                 color={selectedTable ? "#FF5F00" : theme.colors.textSecondary}
               />
               <Text style={styles.tableBadgeText}>
-                {selectedTable ? `Dining: Table ${selectedTable}` : 'Order Mode: Counter (Takeaway)'}
+                {selectedTable ? (selectedTable.toLowerCase().includes('table') ? `Dining: ${selectedTable}` : `Dining: Table ${selectedTable}`) : 'Order Mode: Counter (Takeaway)'}
               </Text>
             </View>
             {selectedTable ? (
@@ -638,37 +1098,69 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
           )}
         </View>
 
-        {/* 3. Payment Mode Section Header */}
-        <Text style={styles.sectionTitle}>Payment mode</Text>
+        {/* 3. Payment Mode Section (Always visible, clean two-line alignment) */}
+        <View style={styles.paymentModeSection}>
+          <Text style={styles.sectionTitle}>{t('payment_method', 'Payment mode')}</Text>
+          
+          {/* Row 1: Cash, GPay / UPI, Cash + GPay */}
+          <View style={styles.paymentModesGridRow}>
+            {paymentModesList.slice(0, 3).map((item) => {
+              const isSelected = item.mode === paymentMode;
+              return (
+                <TouchableOpacity
+                  key={item.mode}
+                  activeOpacity={0.75}
+                  onPress={() => handleSelectPaymentMode(item.mode)}
+                  style={[
+                    styles.paymentModeBtn,
+                    isSelected && styles.paymentModeBtnSelected,
+                  ]}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: isSelected }}
+                >
+                  <Ionicons
+                    name={item.icon}
+                    size={15}
+                    color={isSelected ? '#FF5F00' : isDark ? '#A8A29E' : '#57534E'}
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text style={[styles.paymentModeBtnText, isSelected && styles.paymentModeBtnTextSelected]} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
 
-        {/* Payment Mode Selection - Clean Chips Grid */}
-        <View style={styles.paymentChipsContainer}>
-          {PAYMENT_MODES.map((item) => {
-            const isSelected = item.mode === paymentMode;
-            return (
-              <TouchableOpacity
-                key={item.mode}
-                activeOpacity={0.75}
-                onPress={() => handleSelectPaymentMode(item.mode)}
-                style={[
-                  styles.paymentChip,
-                  isSelected && styles.paymentChipSelected,
-                ]}
-                accessibilityRole="radio"
-                accessibilityState={{ checked: isSelected }}
-              >
-                <Ionicons
-                  name={item.icon}
-                  size={17}
-                  color={isSelected ? '#FF5F00' : isDark ? '#A8A29E' : '#57534E'}
-                  style={{ marginRight: 6 }}
-                />
-                <Text style={[styles.paymentChipText, isSelected && styles.paymentChipTextSelected]}>
-                  {item.name}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
+          {/* Row 2: Full Pending, Partial Pay */}
+          <View style={styles.paymentModesGridRow}>
+            {paymentModesList.slice(3, 5).map((item) => {
+              const isSelected = item.mode === paymentMode;
+              return (
+                <TouchableOpacity
+                  key={item.mode}
+                  activeOpacity={0.75}
+                  onPress={() => handleSelectPaymentMode(item.mode)}
+                  style={[
+                    styles.paymentModeBtn,
+                    isSelected && styles.paymentModeBtnSelected,
+                  ]}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: isSelected }}
+                >
+                  <Ionicons
+                    name={item.icon}
+                    size={15}
+                    color={isSelected ? '#FF5F00' : isDark ? '#A8A29E' : '#57534E'}
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text style={[styles.paymentModeBtnText, isSelected && styles.paymentModeBtnTextSelected]} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         </View>
 
         {/* 4. Contextual Payment Panel */}
@@ -794,209 +1286,420 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
           )}
         </Animated.View>
 
-        {/* 5. Customer Card (ADD CUSTOMER (OPTIONAL)) */}
-        <View style={styles.customerCardSection}>
-          <Text style={styles.customerSectionTitle}>
-            {paymentMode === 'Pending' || paymentMode === 'Partial Pay'
-              ? 'CUSTOMER DETAILS (REQUIRED)'
-              : 'ADD CUSTOMER (OPTIONAL)'}
-          </Text>
-          <Text style={styles.customerSectionSubtitle}>
-            {paymentMode === 'Pending' || paymentMode === 'Partial Pay'
-              ? 'Enter customer name & 10-digit mobile number for udhar ledger'
-              : 'Enter customer name & phone for direct WhatsApp chat receipt'}
-          </Text>
-
-          <Animated.View
-            style={[
-              {
-                transform: [
-                  { scale: customerCardScale },
-                  { translateX: customerShakeAnim },
-                ],
-                opacity: customerCardOpacity,
-              },
-            ]}
-          >
-            {/* State 1: Empty */}
-            {customerState === 'empty' && (
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={() => transitionCustomerState('searching')}
-                style={styles.emptyCustomerBtn}
-              >
-                <Animated.View
-                  style={[
-                    styles.emptyCustomerGlow,
-                    { opacity: pulseGlowAnim },
-                  ]}
-                />
-                <Ionicons name="search" size={17} color="#FF5F00" style={{ marginRight: 8 }} />
-                <Text style={styles.emptyCustomerText}>Search or Select Customer</Text>
-              </TouchableOpacity>
-            )}
-
-            {/* State 2: Searching */}
-            {customerState === 'searching' && (
-              <View style={styles.searchingCard}>
-                <View style={styles.searchFieldWrap}>
-                  <Ionicons name="search-outline" size={16} color={isDark ? '#9A948D' : '#76716B'} />
-                  <TextInput
-                    style={styles.searchTextInput}
-                    placeholder="Search name or mobile number..."
-                    placeholderTextColor={isDark ? '#9A948D' : '#76716B'}
-                    value={customerSearchQuery}
-                    onChangeText={setCustomerSearchQuery}
-                    autoFocus
-                  />
-                  {customerSearchQuery.length > 0 && (
-                    <TouchableOpacity onPress={() => setCustomerSearchQuery('')}>
-                      <Ionicons name="close-circle" size={16} color={isDark ? '#9A948D' : '#76716B'} />
-                    </TouchableOpacity>
-                  )}
-                </View>
-
-                {/* Horizontally scrollable row of customer avatar chips (48px rounded squares) */}
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.avatarChipsScroll}
-                >
-                  {filteredCustomers.map(c => (
-                    <TouchableOpacity
-                      key={c.id}
-                      activeOpacity={0.75}
-                      onPress={() => handleSelectCustomer(c)}
-                      style={styles.avatarChipBtn}
-                    >
-                      <View style={styles.avatarSquare}>
-                        <Text style={styles.avatarInitial}>
-                          {c.name.charAt(0).toUpperCase()}
-                        </Text>
-                      </View>
-                      <Text style={styles.avatarName} numberOfLines={1}>
-                        {c.name.split(' ')[0]}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                  {filteredCustomers.length === 0 && (
-                    <Text style={styles.noMatchText}>No matching customer</Text>
-                  )}
-                </ScrollView>
-
-                {/* Text link to enter manually */}
-                <TouchableOpacity
-                  onPress={() => transitionCustomerState('manual')}
-                  style={styles.linkBtn}
-                >
-                  <Text style={styles.linkBtnText}>+ Enter name & phone manually</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* State 3: Manual */}
-            {customerState === 'manual' && (
-              <View style={styles.manualCard}>
-                <View style={styles.manualInputsWrap}>
-                  <TextInput
-                    style={styles.manualInput}
-                    placeholder="Customer Name (Optional)"
-                    placeholderTextColor={isDark ? '#9A948D' : '#76716B'}
-                    value={customerName}
-                    onChangeText={setCustomerName}
-                  />
-                  <TextInput
-                    style={styles.manualInput}
-                    placeholder="10-digit mobile number"
-                    placeholderTextColor={isDark ? '#9A948D' : '#76716B'}
-                    keyboardType="numeric"
-                    maxLength={10}
-                    value={customerPhone}
-                    onChangeText={t => {
-                      const clean = t.replace(/[^0-9]/g, '').slice(0, 10);
-                      setCustomerPhone(clean);
-                      if (clean.length === 10) {
-                        const matched = savedCustomers.find(
-                          c => c.phone && c.phone.replace(/[^0-9]/g, '').slice(-10) === clean
-                        );
-                        if (matched) {
-                          setCustomerName(matched.name);
-                          flash(`Customer found: ${matched.name}`);
-                        }
-                      }
-                    }}
-                  />
-                </View>
-
-                {/* Link to go back to search */}
-                <TouchableOpacity
-                  onPress={() => transitionCustomerState('searching')}
-                  style={styles.linkBtn}
-                >
-                  <Text style={styles.linkBtnText}>← Search customers</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* State 4: Selected */}
-            {customerState === 'selected' && (
-              <View style={styles.selectedCustomerCard}>
-                <View style={styles.selectedCustomerLeft}>
-                  <View style={styles.checkCircle}>
-                    <Ionicons name="checkmark" size={16} color="#FFFFFF" />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.selectedCustomerName} numberOfLines={1}>
-                      {customerName || 'Customer'}
-                    </Text>
-                    <Text style={styles.selectedCustomerPhone}>
-                      {customerPhone ? `+91 ${customerPhone}` : 'No phone recorded'}
-                    </Text>
-                  </View>
-                </View>
-
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  onPress={() => transitionCustomerState('searching')}
-                  style={styles.changeChip}
-                >
-                  <Text style={styles.changeChipText}>Change</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </Animated.View>
-        </View>
       </ScrollView>
 
-      {/* 6. Sticky Bottom Action Bar above the bottom nav */}
-      <View style={[styles.bottomActionBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+      {/* 6. Sticky Bottom Action Bar with Save & Share (Left) and Save & Close (Right) */}
+      <View style={[styles.bottomActionBar, { paddingBottom: Math.max(insets.bottom, Platform.OS === 'android' ? 16 : 14) }]}>
         <TouchableOpacity
-          activeOpacity={0.8}
-          onPress={() => handleSave(false, true)}
+          activeOpacity={0.82}
+          onPress={handleSaveAndShare}
           disabled={cart.length === 0 || isSaving}
-          style={[styles.printOutlineBtn, (cart.length === 0 || isSaving) && styles.btnDisabled]}
-          accessibilityLabel="Print Receipt"
+          style={[styles.saveShareActionBtn, (cart.length === 0 || isSaving) && styles.btnDisabled]}
+          accessibilityLabel="Save and Share Bill on WhatsApp"
         >
           <Ionicons
-            name="print-outline"
-            size={19}
-            color={isDark ? '#F5F3F0' : '#111111'}
+            name="logo-whatsapp"
+            size={18}
+            color="#1FAD55"
             style={{ marginRight: 6 }}
           />
-          <Text style={styles.printOutlineBtnText}>Print</Text>
+          <Text style={styles.saveShareActionBtnText}>{t('save_and_share', 'Save & Share')}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           activeOpacity={0.85}
-          onPress={() => handleSave(true, false)}
+          onPress={handleSaveAndClose}
           disabled={cart.length === 0 || isSaving}
-          style={[styles.shareWhatsappBtn, (cart.length === 0 || isSaving) && styles.btnDisabled]}
-          accessibilityLabel="Share on WhatsApp"
+          style={[styles.saveCloseActionBtn, (cart.length === 0 || isSaving) && styles.btnDisabled]}
+          accessibilityLabel="Save and Close Bill"
         >
-          <Ionicons name="logo-whatsapp" size={19} color="#FFFFFF" style={{ marginRight: 8 }} />
-          <Text style={styles.shareWhatsappBtnText}>Share WhatsApp</Text>
+          <Ionicons
+            name="checkmark-circle"
+            size={19}
+            color="#FFFFFF"
+            style={{ marginRight: 6 }}
+          />
+          <Text style={styles.saveCloseActionBtnText}>
+            {isSaving ? t('loading', 'Saving...') : t('save_bill', 'Save & Close')}
+          </Text>
         </TouchableOpacity>
       </View>
+
+
+
+      {/* Bill Saved Success Dialog — Exactly matches reference design */}
+      <Modal
+        visible={savedBillSuccess !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setSavedBillSuccess(null);
+          onBackToMenu();
+        }}
+      >
+        <View style={styles.upiModalBackdrop}>
+          <View style={styles.savedSuccessCard}>
+            {/* Top Corner Close Icon — Returns to menu to start fresh bill */}
+            <TouchableOpacity
+              activeOpacity={0.7}
+              style={styles.savedSuccessCloseBtn}
+              onPress={() => {
+                setSavedBillSuccess(null);
+                onBackToMenu();
+              }}
+              accessibilityLabel="Close and Start New Bill"
+            >
+              <Ionicons name="close" size={17} color={isDark ? '#9CA3AF' : '#475569'} />
+            </TouchableOpacity>
+
+            <View style={styles.savedSuccessCheckRing}>
+              <Ionicons name="checkmark" size={30} color={isDark ? '#34D399' : '#16A34A'} />
+            </View>
+
+            <Text style={styles.savedSuccessTitle}>
+              {t('bill_saved_success', 'Bill saved successfully!')}
+            </Text>
+
+            <Text style={styles.savedSuccessSubtitle}>
+              Bill #{String(savedBillSuccess?.billNumber || '').replace(/^#/, '')}
+            </Text>
+
+            {/* Exactly matching receipt ticket */}
+            <SavedBillTicketCard
+              billNumber={savedBillSuccess?.billNumber || 1}
+              isDark={isDark}
+            />
+
+            {/* If thermal printer is enabled in account section, show 80mm print option like old */}
+            {isPrinterConfigured && (
+              <View style={{ width: '100%', marginTop: 12 }}>
+                <View style={[styles.paperSizeRow, { alignSelf: 'center', marginBottom: 8 }]}>
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    style={[
+                      styles.paperSizeChip,
+                      thermalPaperSize === '80mm' && styles.paperSizeChipSelected,
+                    ]}
+                    onPress={() => setThermalPaperSize('80mm')}
+                  >
+                    <Text
+                      style={[
+                        styles.paperSizeChipText,
+                        thermalPaperSize === '80mm' && styles.paperSizeChipTextSelected,
+                      ]}
+                    >
+                      80mm
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    style={[
+                      styles.paperSizeChip,
+                      thermalPaperSize === '58mm' && styles.paperSizeChipSelected,
+                    ]}
+                    onPress={() => setThermalPaperSize('58mm')}
+                  >
+                    <Text
+                      style={[
+                        styles.paperSizeChipText,
+                        thermalPaperSize === '58mm' && styles.paperSizeChipTextSelected,
+                      ]}
+                    >
+                      58mm / 53mm
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={styles.savedSuccessPrintBtn}
+                  disabled={isPrintingNow}
+                  onPress={async () => {
+                    const bill = savedBillSuccess;
+                    if (!bill) return;
+                    try {
+                      setIsPrintingNow(true);
+                      const ok = await printerService.printReceipt(bill, shop, thermalPaperSize);
+                      if (ok) {
+                        flash('Print sent');
+                      } else {
+                        flash('Could not connect to printer');
+                      }
+                    } catch (e) {
+                      console.warn('Print receipt error:', e);
+                      flash('Print failed');
+                    } finally {
+                      setIsPrintingNow(false);
+                    }
+                  }}
+                >
+                  <Ionicons name="print-outline" size={17} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  <Text style={styles.savedSuccessBtnText}>
+                    {isPrintingNow ? t('loading', 'Printing...') : `${t('print_receipt', 'Print Receipt')} (${thermalPaperSize})`}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* WhatsApp Prompt Modal (When Save & Share clicked or customer details needed) */}
+      <Modal
+        visible={isWhatsAppPromptOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setWhatsAppModalError(null);
+          setIsWhatsAppPromptOpen(false);
+        }}
+      >
+        <KeyboardAvoidingView
+          style={styles.whatsAppModalBackdrop}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={styles.whatsAppModalCard}>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: 2 }}
+            >
+              {/* Compact Header */}
+              <View style={styles.whatsAppModalHeaderRow}>
+                <View style={styles.whatsAppModalIconSmall}>
+                  <Ionicons name="logo-whatsapp" size={17} color="#1FAD55" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.whatsAppModalTitle}>
+                    {isPendingOrPartial ? 'Customer Details Required' : 'Share Bill via WhatsApp'}
+                  </Text>
+                </View>
+              </View>
+
+              {/* In-Modal Alert Banner: ONLY for Partial Pay and Fully Pending */}
+              {isPendingOrPartial && (
+                <View style={styles.modalAlertBanner}>
+                  <Ionicons name="alert-circle" size={15} color="#DC2626" style={{ marginRight: 6 }} />
+                  <Text style={styles.modalAlertText}>
+                    {whatsAppModalError || 'You need to select a customer for pending dues'}
+                  </Text>
+                </View>
+              )}
+              {!isPendingOrPartial && whatsAppModalError && (
+                <View style={styles.modalAlertBanner}>
+                  <Ionicons name="alert-circle" size={15} color="#DC2626" style={{ marginRight: 6 }} />
+                  <Text style={styles.modalAlertText}>
+                    {whatsAppModalError}
+                  </Text>
+                </View>
+              )}
+
+              {/* Compact Search Bar for Existing Contact */}
+              <View style={styles.compactSearchWrap}>
+                <Ionicons
+                  name="search-outline"
+                  size={14}
+                  color={isDark ? '#9A948D' : '#76716B'}
+                  style={{ marginRight: 6 }}
+                />
+                <TextInput
+                  style={styles.compactSearchInput}
+                  placeholder="Search or select existing contact..."
+                  placeholderTextColor={isDark ? '#6B6661' : '#A8A29E'}
+                  value={whatsAppContactSearch}
+                  onChangeText={text => {
+                    setWhatsAppContactSearch(text);
+                    if (whatsAppModalError) setWhatsAppModalError(null);
+                  }}
+                />
+                {whatsAppContactSearch.length > 0 && (
+                  <TouchableOpacity
+                    onPress={() => setWhatsAppContactSearch('')}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="close-circle" size={14} color={isDark ? '#9A948D' : '#76716B'} />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Matching Contact Chips: only visible when user types a letter or number */}
+              {whatsAppContactSearch.trim().length > 0 && (
+                <View style={styles.matchingContactsSection}>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.contactChipsScroll}
+                    keyboardShouldPersistTaps="handled"
+                  >
+                    {filteredWhatsAppContacts.map(c => {
+                      const isSelected = selectedCustomerId === c.id;
+                      const cleanP = (c.phone || '').replace(/[^0-9]/g, '').slice(-10);
+                      return (
+                        <TouchableOpacity
+                          key={c.id}
+                          activeOpacity={0.75}
+                          onPress={() => {
+                            try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+                            setSelectedCustomerId(c.id);
+                            setSelectedWhatsAppContact(c);
+                            setWhatsAppPromptName(c.name);
+                            setWhatsAppPromptPhone(cleanP);
+                            setCustomerName(c.name);
+                            setCustomerPhone(cleanP);
+                            setWhatsAppContactSearch('');
+                            setWhatsAppModalError(null);
+                          }}
+                          style={[
+                            styles.modalContactChip,
+                            isSelected && styles.modalContactChipSelected,
+                          ]}
+                        >
+                          <View style={[styles.modalContactAvatar, isSelected && styles.modalContactAvatarSelected]}>
+                            <Text style={[styles.modalContactAvatarInitial, isSelected && styles.modalContactAvatarInitialSelected]}>
+                              {c.name.charAt(0).toUpperCase()}
+                            </Text>
+                          </View>
+                          <Text style={[styles.modalContactName, isSelected && styles.modalContactNameSelected]} numberOfLines={1}>
+                            {c.name.split(' ')[0]}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                    {filteredWhatsAppContacts.length === 0 && (
+                      <Text style={styles.modalNoContactText}>No matching contact</Text>
+                    )}
+                  </ScrollView>
+                </View>
+              )}
+
+              {/* Customer Name Input (compact) */}
+              <View style={styles.whatsAppNameInputWrap}>
+                <Ionicons
+                  name="person-outline"
+                  size={15}
+                  color={isDark ? '#9A948D' : '#76716B'}
+                  style={{ marginRight: 6 }}
+                />
+                <TextInput
+                  style={styles.whatsAppNameTextInput}
+                  placeholder="Name"
+                  placeholderTextColor={isDark ? '#6B6661' : '#A8A29E'}
+                  value={whatsAppPromptName}
+                  onChangeText={text => {
+                    setWhatsAppPromptName(text);
+                    if (whatsAppModalError) setWhatsAppModalError(null);
+                    if (selectedWhatsAppContact && selectedWhatsAppContact.name !== text) {
+                      setSelectedWhatsAppContact(null);
+                      setSelectedCustomerId(null);
+                    }
+                  }}
+                  autoCapitalize="words"
+                />
+              </View>
+
+              {/* Customer Mobile Number */}
+              <View style={styles.whatsAppInputWrap}>
+                <Text style={styles.whatsAppPrefix}>+91</Text>
+                <TextInput
+                  style={styles.whatsAppTextInput}
+                  placeholder="10-digit mobile number"
+                  placeholderTextColor={isDark ? '#6B6661' : '#A8A29E'}
+                  keyboardType="phone-pad"
+                  maxLength={10}
+                  value={whatsAppPromptPhone}
+                  onChangeText={t => {
+                    const digits = t.replace(/[^0-9]/g, '');
+                    setWhatsAppPromptPhone(digits);
+                    if (whatsAppModalError) setWhatsAppModalError(null);
+                    if (digits.length === 10 && !whatsAppPromptName.trim()) {
+                      const matched = savedCustomers.find(
+                        c => c.phone && c.phone.replace(/[^0-9]/g, '').slice(-10) === digits
+                      );
+                      if (matched?.name) {
+                        setWhatsAppPromptName(matched.name);
+                        setSelectedCustomerId(matched.id);
+                        setSelectedWhatsAppContact(matched);
+                      }
+                    }
+                  }}
+                />
+              </View>
+
+              <View style={styles.whatsAppModalActions}>
+                <TouchableOpacity
+                  style={styles.whatsAppCancelBtn}
+                  onPress={() => {
+                    setWhatsAppModalError(null);
+                    setIsWhatsAppPromptOpen(false);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.whatsAppCancelText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.whatsAppSendBtn}
+                  onPress={async () => {
+                    const clean = whatsAppPromptPhone.replace(/[^0-9]/g, '');
+                    const isPending = paymentMode === 'Pending' || paymentMode === 'Partial Pay';
+
+                    if (isPending && (!whatsAppPromptName.trim() && !selectedCustomerId)) {
+                      setWhatsAppModalError('You need to select a customer for pending dues');
+                      return;
+                    }
+                    if (isPending && clean.length !== 10) {
+                      setWhatsAppModalError('You need to select a customer for pending dues');
+                      return;
+                    }
+                    if (clean.length > 0 && clean.length !== 10) {
+                      setWhatsAppModalError('Please enter a valid 10-digit mobile number');
+                      return;
+                    }
+                    if (!isPending && clean.length !== 10) {
+                      setWhatsAppModalError('Please enter customer 10-digit mobile number');
+                      return;
+                    }
+
+                    const trimmedName = whatsAppPromptName.trim();
+                    let savedCustId: string | undefined = selectedCustomerId || undefined;
+
+                    if (clean.length === 10) {
+                      contactService.addCustomer(
+                        shop.id,
+                        trimmedName || 'Customer',
+                        clean
+                      ).then(custRecord => {
+                        if (custRecord) {
+                          setSavedCustomers(prev => [custRecord, ...prev.filter(c => c.id !== custRecord.id)]);
+                        }
+                      }).catch(err => {
+                        console.warn('Failed to auto-save customer in WhatsApp prompt:', err);
+                      });
+                    }
+
+                    if (trimmedName) {
+                      setCustomerName(trimmedName);
+                    }
+                    setCustomerPhone(clean);
+                    if (savedCustId) {
+                      setSelectedCustomerId(savedCustId);
+                    }
+
+                    setWhatsAppModalError(null);
+                    setIsWhatsAppPromptOpen(false);
+                    await handleSave(true, false, '80mm', clean, true, trimmedName || undefined, savedCustId);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="send" size={14} color="#FFFFFF" style={{ marginRight: 5 }} />
+                  <Text style={styles.whatsAppSendText}>Send Bill</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       {/* Shop UPI Prompt Modal */}
       <Modal
@@ -1304,6 +2007,41 @@ const createStyles = (theme: Theme, isDark: boolean) => {
       marginBottom: 8,
       letterSpacing: 0.3,
     },
+    paymentModeSection: {
+      marginBottom: 12,
+      gap: 8,
+    },
+    paymentModesGridRow: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    paymentModeBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 10,
+      paddingHorizontal: 6,
+      borderRadius: 14,
+      backgroundColor: surface,
+      borderWidth: 1.5,
+      borderColor: line,
+      ...shadows.sm,
+    },
+    paymentModeBtnSelected: {
+      borderColor: orange,
+      backgroundColor: orangeSoft,
+    },
+    paymentModeBtnText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 12,
+      fontWeight: '700',
+      color: ink,
+    },
+    paymentModeBtnTextSelected: {
+      color: orangeText,
+      fontWeight: '800',
+    },
     // ─── Payment Chips Selection ───────────────────────────────────────────
     paymentChipsContainer: {
       flexDirection: 'row',
@@ -1453,7 +2191,15 @@ const createStyles = (theme: Theme, isDark: boolean) => {
       color: isDark ? '#EF4444' : '#DC2626',
     },
 
-    // ─── UPI Prompt Modal ───────────────────────────────────────────────────
+    // ─── WhatsApp & UPI Prompt Modals ───────────────────────────────────────
+    whatsAppModalBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.6)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingBottom: 70, // Elevates the popup higher above the keyboard
+    },
     upiModalBackdrop: {
       flex: 1,
       backgroundColor: 'rgba(0,0,0,0.6)',
@@ -1750,34 +2496,76 @@ const createStyles = (theme: Theme, isDark: boolean) => {
       gap: 12,
       ...shadows.card,
     },
-    printOutlineBtn: {
+    paymentHeaderToggleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 6,
+      marginBottom: 10,
+    },
+    paymentHeaderTitleGroup: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    paymentSelectedBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: orangeSoft,
+      paddingVertical: 4,
+      paddingHorizontal: 10,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255, 95, 0, 0.3)' : 'rgba(255, 95, 0, 0.25)',
+    },
+    paymentSelectedBadgeText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 12.5,
+      fontWeight: '700',
+      color: orangeText,
+    },
+    paymentDownArrowBtn: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: alt,
+      borderWidth: 1,
+      borderColor: line,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+
+    saveShareActionBtn: {
       flex: 1,
       minHeight: 48,
       borderRadius: 14,
       borderWidth: 1.5,
-      borderColor: line,
-      backgroundColor: surface,
+      borderColor: '#1FAD55',
+      backgroundColor: isDark ? '#1C1917' : '#FFFFFF',
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-    },
-    printOutlineBtnText: {
-      fontFamily: typography.fonts.heading,
-      fontSize: 14.5,
-      fontWeight: '800',
-      color: ink,
-    },
-    shareWhatsappBtn: {
-      flex: 1.8,
-      minHeight: 48,
-      borderRadius: 14,
-      backgroundColor: whatsappGreen,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
+      paddingHorizontal: 8,
       ...shadows.sm,
     },
-    shareWhatsappBtnText: {
+    saveShareActionBtnText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 14,
+      fontWeight: '800',
+      color: '#1FAD55',
+    },
+    saveCloseActionBtn: {
+      flex: 1.15,
+      minHeight: 48,
+      borderRadius: 14,
+      backgroundColor: '#16A34A',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 8,
+      ...shadows.sm,
+    },
+    saveCloseActionBtnText: {
       fontFamily: typography.fonts.heading,
       fontSize: 14.5,
       fontWeight: '800',
@@ -1785,6 +2573,491 @@ const createStyles = (theme: Theme, isDark: boolean) => {
     },
     btnDisabled: {
       opacity: 0.5,
+    },
+
+    // ─── WhatsApp Prompt Modal (Compact) ────────────────────────────────────
+    whatsAppModalCard: {
+      width: '100%',
+      maxWidth: 340,
+      maxHeight: '86%',
+      backgroundColor: surface,
+      borderRadius: 18,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: line,
+      ...shadows.card,
+    },
+    whatsAppModalHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 10,
+    },
+    whatsAppModalIconSmall: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: isDark ? 'rgba(31, 173, 85, 0.2)' : '#E8F5E9',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 8,
+    },
+    whatsAppModalTitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 15,
+      fontWeight: '800',
+      color: ink,
+    },
+    modalAlertBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: isDark ? 'rgba(220, 38, 38, 0.15)' : '#FEE2E2',
+      borderWidth: 1,
+      borderColor: isDark ? '#DC2626' : '#FCA5A5',
+      borderRadius: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      marginBottom: 10,
+    },
+    modalAlertText: {
+      flex: 1,
+      fontFamily: typography.fonts.body,
+      fontSize: 12,
+      fontWeight: '700',
+      color: isDark ? '#FCA5A5' : '#B91C1C',
+      lineHeight: 16,
+    },
+    compactSearchWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: alt,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: line,
+      paddingHorizontal: 10,
+      height: 36,
+      marginBottom: 10,
+    },
+    compactSearchInput: {
+      flex: 1,
+      fontFamily: typography.fonts.body,
+      fontSize: 12.5,
+      color: ink,
+      padding: 0,
+    },
+    matchingContactsSection: {
+      marginBottom: 10,
+      padding: 6,
+      backgroundColor: alt,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: line,
+    },
+    contactChipsScroll: {
+      paddingVertical: 2,
+      gap: 6,
+      alignItems: 'center',
+    },
+    modalContactChip: {
+      alignItems: 'center',
+      width: 48,
+      paddingVertical: 3,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: 'transparent',
+    },
+    modalContactChipSelected: {
+      borderColor: '#1FAD55',
+      backgroundColor: isDark ? 'rgba(31, 173, 85, 0.15)' : '#E8F5E9',
+    },
+    modalContactAvatar: {
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      backgroundColor: isDark ? '#3D3833' : '#EAE6E1',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 2,
+    },
+    modalContactAvatarSelected: {
+      backgroundColor: '#1FAD55',
+    },
+    modalContactAvatarInitial: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 12,
+      fontWeight: '700',
+      color: ink,
+    },
+    modalContactAvatarInitialSelected: {
+      color: '#FFFFFF',
+    },
+    modalContactName: {
+      fontFamily: typography.fonts.body,
+      fontSize: 9.5,
+      fontWeight: '600',
+      color: ink,
+      textAlign: 'center',
+      maxWidth: 44,
+    },
+    modalContactNameSelected: {
+      color: '#1FAD55',
+      fontWeight: '700',
+    },
+    modalNoContactText: {
+      fontFamily: typography.fonts.body,
+      fontSize: 11.5,
+      color: muted,
+      fontStyle: 'italic',
+      paddingVertical: 4,
+      paddingHorizontal: 4,
+    },
+    whatsAppNameInputWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: alt,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: line,
+      paddingHorizontal: 10,
+      height: 40,
+      marginBottom: 8,
+    },
+    whatsAppNameTextInput: {
+      flex: 1,
+      fontFamily: typography.fonts.heading,
+      fontSize: 13.5,
+      fontWeight: '600',
+      color: ink,
+      padding: 0,
+    },
+    whatsAppInputWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: alt,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: line,
+      paddingHorizontal: 10,
+      height: 40,
+      marginBottom: 12,
+    },
+    whatsAppPrefix: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 13.5,
+      fontWeight: '700',
+      color: muted,
+      marginRight: 6,
+    },
+    whatsAppTextInput: {
+      flex: 1,
+      fontFamily: typography.fonts.numbers,
+      fontSize: 14.5,
+      fontWeight: '700',
+      color: ink,
+      letterSpacing: 0.5,
+      padding: 0,
+    },
+    whatsAppModalActions: {
+      flexDirection: 'row',
+      gap: 8,
+      marginBottom: 6,
+    },
+    whatsAppCancelBtn: {
+      flex: 1,
+      height: 38,
+      borderRadius: 10,
+      backgroundColor: alt,
+      borderWidth: 1,
+      borderColor: line,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    whatsAppCancelText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 12.5,
+      fontWeight: '700',
+      color: muted,
+    },
+    whatsAppSendBtn: {
+      flex: 1.4,
+      height: 38,
+      borderRadius: 10,
+      backgroundColor: '#1FAD55',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    whatsAppSendText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 12.5,
+      fontWeight: '800',
+      color: '#FFFFFF',
+    },
+    whatsAppOtherAppsBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 6,
+    },
+    whatsAppOtherAppsText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 11.5,
+      fontWeight: '700',
+      color: orangeText,
+    },
+
+    // ─── Share & Print Modals ────────────────────────────────────────────────
+    modalBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.55)',
+      justifyContent: 'flex-end',
+    },
+    actionModalSheet: {
+      backgroundColor: surface,
+      borderTopLeftRadius: 24,
+      borderTopRightRadius: 24,
+      paddingHorizontal: 16,
+      paddingTop: 10,
+      paddingBottom: 28,
+      borderWidth: 1,
+      borderColor: line,
+    },
+    modalHandleBar: {
+      width: 40,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: muted,
+      alignSelf: 'center',
+      marginBottom: 12,
+      opacity: 0.4,
+    },
+    modalHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 16,
+    },
+    modalSheetTitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 17,
+      fontWeight: '800',
+      color: ink,
+    },
+    modalSheetSubtitle: {
+      fontFamily: typography.fonts.body,
+      fontSize: 12,
+      color: muted,
+      marginTop: 2,
+    },
+    modalCloseCircle: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: alt,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    actionOptionCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 14,
+      borderRadius: 16,
+      backgroundColor: alt,
+      borderWidth: 1,
+      borderColor: line,
+      marginBottom: 12,
+    },
+    actionOptionCardCol: {
+      padding: 14,
+      borderRadius: 16,
+      backgroundColor: alt,
+      borderWidth: 1,
+      borderColor: line,
+      marginBottom: 12,
+      gap: 10,
+    },
+    actionOptionCardRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    actionOptionIconWrap: {
+      width: 44,
+      height: 44,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 12,
+    },
+    actionOptionTextWrap: {
+      flex: 1,
+    },
+    actionOptionTitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 14,
+      fontWeight: '800',
+      color: ink,
+    },
+    actionOptionDesc: {
+      fontFamily: typography.fonts.body,
+      fontSize: 12,
+      color: muted,
+      marginTop: 2,
+    },
+    paperSizeRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 4,
+    },
+    paperSizeLabel: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 12,
+      fontWeight: '700',
+      color: muted,
+    },
+    paperSizeChip: {
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: line,
+      backgroundColor: surface,
+    },
+    paperSizeChipSelected: {
+      backgroundColor: orangeSoft,
+      borderColor: orange,
+    },
+    paperSizeChipText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 11.5,
+      fontWeight: '700',
+      color: muted,
+    },
+    paperSizeChipTextSelected: {
+      color: orangeText,
+      fontWeight: '800',
+    },
+    actionPrintBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      height: 40,
+      borderRadius: 10,
+      backgroundColor: orange,
+      marginTop: 4,
+    },
+    actionPrintBtnText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 13,
+      fontWeight: '800',
+      color: '#FFFFFF',
+    },
+    savedSuccessCard: {
+      width: '88%',
+      maxWidth: 320,
+      backgroundColor: isDark ? '#121E16' : '#FFFFFF',
+      borderRadius: 26,
+      padding: 20,
+      paddingTop: 24,
+      paddingBottom: 20,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: isDark ? '#1C3123' : '#E2E8F0',
+      marginBottom: Platform.OS === 'android' ? 24 : 0,
+      position: 'relative',
+      ...shadows.card,
+    },
+    savedSuccessCloseBtn: {
+      position: 'absolute',
+      top: 14,
+      right: 14,
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: isDark ? '#1A2920' : '#F1F5F9',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 10,
+    },
+    savedSuccessCheckRing: {
+      width: 54,
+      height: 54,
+      borderRadius: 27,
+      borderWidth: 3.5,
+      borderColor: isDark ? '#34D399' : '#16A34A',
+      backgroundColor: isDark ? '#0F2318' : '#DCFCE7',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 12,
+    },
+    savedSuccessIconWrap: {
+      marginBottom: 10,
+    },
+    savedSuccessTitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 18,
+      fontWeight: '800',
+      color: isDark ? '#FFFFFF' : '#0F172A',
+      textAlign: 'center',
+    },
+    savedSuccessSubtitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 13,
+      fontWeight: '600',
+      color: isDark ? '#9CA3AF' : '#64748B',
+      marginTop: 3,
+      marginBottom: 2,
+      textAlign: 'center',
+    },
+    savedSuccessBtnGroup: {
+      width: '100%',
+      gap: 10,
+      marginTop: 10,
+    },
+    savedSuccessShareBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      height: 46,
+      borderRadius: 12,
+      backgroundColor: whatsappGreen,
+    },
+    savedSuccessPrintBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      height: 44,
+      borderRadius: 12,
+      backgroundColor: '#16A34A',
+    },
+    savedSuccessBtnText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 14,
+      fontWeight: '800',
+      color: '#FFFFFF',
+    },
+    savedSuccessDoneBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      height: 44,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: line,
+      backgroundColor: alt,
+    },
+    savedSuccessDoneBtnPrimary: {
+      backgroundColor: orange,
+      borderColor: orange,
+    },
+    savedSuccessDoneBtnText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 14,
+      fontWeight: '700',
+      color: ink,
+    },
+    savedSuccessDoneBtnTextPrimary: {
+      color: '#FFFFFF',
+      fontWeight: '800',
     },
   });
 };

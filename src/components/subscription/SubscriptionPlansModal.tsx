@@ -12,7 +12,7 @@ import {
   AppState,
   AppStateStatus,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
@@ -49,6 +49,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
   const styles = React.useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const { shop, refreshSubscription } = useShop();
   const { flash } = useCart();
+  const insets = useSafeAreaInsets();
 
   // Navigation steps: 'plans' (listing with Excl. GST prices) -> 'summary' (tax breakdown & payment)
   const [step, setStep] = useState<'plans' | 'summary'>('plans');
@@ -355,7 +356,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
 
           <ScrollView
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.scrollContent}
+            contentContainerStyle={[styles.scrollContent, { paddingBottom: 60 }]}
           >
             {/* IN-FLIGHT CASHFREE ORDER STATE */}
             {activeOrderId ? (
@@ -655,9 +656,9 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
             )}
           </ScrollView>
 
-          {/* BOTTOM ACTION FOOTER */}
+          {/* BOTTOM ACTION FOOTER (Lifted clearly above Android system navbar) */}
           {!activeOrderId && (
-            <View style={styles.footer}>
+            <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 20) + 16 }]}>
               {step === 'plans' ? (
                 <>
                   <TouchableOpacity

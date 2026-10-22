@@ -314,9 +314,9 @@ export const SalesMenuScreen: React.FC<SalesMenuScreenProps> = ({
   });
 
   const { width: windowWidth } = useWindowDimensions();
-  // 4 items in a row: 16px left + 16px right + 3 gaps of 8px = 56px total spacing
-  const tileSize = Math.floor((windowWidth - 56) / 4);
-  const tileHeight = Math.round(tileSize * 1.28);
+  // 3 items in a row: 16px left + 16px right + 2 gaps of 10px = 52px total spacing
+  const tileSize = Math.floor((windowWidth - 52) / 3);
+  const tileHeight = Math.floor(tileSize * 1.15);
 
   const menuGridData = React.useMemo(() => {
     if (!can('menu')) return filteredItems;
@@ -502,10 +502,10 @@ export const SalesMenuScreen: React.FC<SalesMenuScreenProps> = ({
         </ScrollView>
       ) : (
         <FlatList
-          key="grid-cols-4"
+          key="grid-cols-3"
           data={menuGridData}
           keyExtractor={item => item.id}
-          numColumns={4}
+          numColumns={3}
           contentContainerStyle={styles.gridContainer}
           columnWrapperStyle={styles.gridRow}
           keyboardShouldPersistTaps="handled"
@@ -689,10 +689,10 @@ const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left
   gridContainer: {
     paddingHorizontal: 16,
     paddingBottom: Math.max(bottomInset, 16) + 84,
-    gap: 8,
+    gap: 10,
   },
   gridRow: {
-    gap: 8,
+    gap: 10,
     justifyContent: 'flex-start',
   },
   emptyCatBox: {

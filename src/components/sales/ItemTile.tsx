@@ -249,8 +249,8 @@ const createStyles = (theme: Theme) => {
   },
   name: {
     fontFamily: typography.fonts.heading,
-    fontSize: 11,
-    lineHeight: 14,
+    fontSize: 12.5,
+    lineHeight: 16,
     fontWeight: '700',
     color: colors.text,
   },
@@ -261,8 +261,8 @@ const createStyles = (theme: Theme) => {
     marginTop: 1,
   },
   price: {
-    fontSize: 11,
-    lineHeight: 14,
+    fontSize: 12,
+    lineHeight: 16,
     color: colors.text,
     fontFamily: typography.fonts.heading,
     fontWeight: '800',

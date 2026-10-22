@@ -1523,7 +1523,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                               <View style={styles.bulkRowControls}>
                                 <View style={styles.priceStepperWrap}>
                                   <TouchableOpacity
-                                    onPress={() => handleStepPrice(item.id, 'price', -5)}
+                                    onPress={() => handleStepPrice(item.id, 'price', -1)}
                                     style={styles.stepperBtn}
                                     activeOpacity={0.6}
                                   >
@@ -1542,7 +1542,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                                   </View>
 
                                   <TouchableOpacity
-                                    onPress={() => handleStepPrice(item.id, 'price', 5)}
+                                    onPress={() => handleStepPrice(item.id, 'price', 1)}
                                     style={styles.stepperBtn}
                                     activeOpacity={0.6}
                                   >
@@ -1554,7 +1554,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                                   <View style={styles.halfStepperWrap}>
                                     <Text style={styles.halfStepperLabel}>Half:</Text>
                                     <TouchableOpacity
-                                      onPress={() => handleStepPrice(item.id, 'halfPrice', -5)}
+                                      onPress={() => handleStepPrice(item.id, 'halfPrice', -1)}
                                       style={styles.stepperBtnSmall}
                                       activeOpacity={0.6}
                                     >
@@ -1571,7 +1571,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                                       />
                                     </View>
                                     <TouchableOpacity
-                                      onPress={() => handleStepPrice(item.id, 'halfPrice', 5)}
+                                      onPress={() => handleStepPrice(item.id, 'halfPrice', 1)}
                                       style={styles.stepperBtnSmall}
                                       activeOpacity={0.6}
                                     >

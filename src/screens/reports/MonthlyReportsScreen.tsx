@@ -449,6 +449,82 @@ export const MonthlyReportsScreen: React.FC<MonthlyReportsScreenProps> = ({
     return `${mShort} ${d.getDate()}`;
   };
 
+  // Date-wise grouping of bills for Level 3 drill-down
+  const monthDateGroups = useMemo(() => {
+    const map = new Map<string, {
+      dateKey: string;
+      dateFormatted: string;
+      dayNumber: number;
+      bills: Bill[];
+      totalAmount: number;
+      items: { name: string; quantity: number; amount: number }[];
+    }>();
+
+    const itemsMapByDate = new Map<string, Map<string, { name: string; quantity: number; amount: number }>>();
+
+    currentMonthBills.forEach(bill => {
+      const d = bill.createdAt ? new Date(bill.createdAt) : new Date();
+      const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const dayNumber = d.getDate();
+      const monthShort = MONTH_NAMES_SHORT[d.getMonth()] || '';
+      const dateFormatted = `${dayNumber} ${monthShort} ${d.getFullYear()}`;
+
+      if (!map.has(dateKey)) {
+        map.set(dateKey, {
+          dateKey,
+          dateFormatted,
+          dayNumber,
+          bills: [],
+          totalAmount: 0,
+          items: [],
+        });
+        itemsMapByDate.set(dateKey, new Map());
+      }
+
+      const entry = map.get(dateKey)!;
+      entry.bills.push(bill);
+      entry.totalAmount += (bill.totalAmount || 0);
+
+      // Aggregate all items sold on this date
+      if (bill.items && Array.isArray(bill.items)) {
+        const dateItems = itemsMapByDate.get(dateKey)!;
+        bill.items.forEach(it => {
+          const name = it.itemName || 'Item';
+          const qty = it.quantity || 1;
+          const amt = it.lineTotal || ((it.unitPrice || 0) * qty);
+          const exist = dateItems.get(name);
+          if (exist) {
+            exist.quantity += qty;
+            exist.amount += amt;
+          } else {
+            dateItems.set(name, { name, quantity: qty, amount: amt });
+          }
+        });
+      }
+    });
+
+    map.forEach((entry, dateKey) => {
+      const dateItems = itemsMapByDate.get(dateKey);
+      if (dateItems) {
+        entry.items = Array.from(dateItems.values()).sort((a, b) => b.quantity - a.quantity);
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+  }, [currentMonthBills]);
+
+  const [expandedDateKey, setExpandedDateKey] = useState<string | null>(null);
+
+  // Auto-expand the first/latest date when opening Level 3
+  useEffect(() => {
+    if (summaryLevel === 3 && monthDateGroups.length > 0) {
+      setExpandedDateKey(prev => {
+        if (prev && monthDateGroups.some(g => g.dateKey === prev)) return prev;
+        return monthDateGroups[0]?.dateKey || null;
+      });
+    }
+  }, [summaryLevel, monthDateGroups]);
+
   const handleExportPdfForMonth = async (year: number, month: number) => {
     if (isQuotaExceeded) {
       Alert.alert(
@@ -743,41 +819,114 @@ export const MonthlyReportsScreen: React.FC<MonthlyReportsScreenProps> = ({
                     </View>
                   </View>
 
-                  <View style={styles.monthTableCard}>
-                    {/* Header */}
-                    <View style={styles.monthTableHead}>
-                      <Text style={[styles.mThCell, styles.mColDate]}>Date</Text>
-                      <Text style={[styles.mThCell, styles.mColName]}>Name</Text>
-                      <Text style={[styles.mThCell, styles.mColItems]}>Items</Text>
-                      <Text style={[styles.mThCell, styles.mColAmount, styles.alignRight]}>Amount</Text>
+                  {/* Date-Grouped Breakdown for selected month: Click a date to display all bill items on that date */}
+                  <View style={styles.dateGroupsContainer}>
+                    <View style={styles.dateGroupsHeaderRow}>
+                      <Text style={styles.dateGroupsSectionTitle}>Dates & Items Sold</Text>
+                      <Text style={styles.daysCountNote}>({monthDateGroups.length} {monthDateGroups.length === 1 ? 'date' : 'dates'})</Text>
                     </View>
 
-                    {/* Bill Rows */}
-                    {currentMonthBills.map(bill => {
-                      const displayName = bill.customerName?.trim() || bill.customerPhone?.trim() || '—';
-                      const displayItems = bill.items && bill.items.length > 0
-                        ? bill.items.map(i => i.itemName).filter(Boolean).join(', ')
-                        : '—';
+                    {monthDateGroups.map(grp => {
+                      const isExpanded = expandedDateKey === grp.dateKey;
                       return (
-                        <View key={bill.id} style={styles.monthTableRow}>
-                          <Text style={[styles.mTdCell, styles.mColDate]} numberOfLines={1}>
-                            {formatBillDate(bill.createdAt)}
-                          </Text>
-                          <Text style={[styles.mTdCellBold, styles.mColName]} numberOfLines={1} ellipsizeMode="tail">
-                            {displayName}
-                          </Text>
-                          <Text style={[styles.mTdCellMuted, styles.mColItems]} numberOfLines={1} ellipsizeMode="tail">
-                            {displayItems}
-                          </Text>
-                          <Text style={[styles.mTdCellAmount, styles.mColAmount, styles.alignRight]} numberOfLines={1}>
-                            {formatRupee(bill.totalAmount)}
-                          </Text>
+                        <View key={grp.dateKey} style={styles.dateGroupCard}>
+                          {/* Clickable Date Row */}
+                          <TouchableOpacity
+                            style={[styles.dateGroupRow, isExpanded && styles.dateGroupRowActive]}
+                            onPress={() => setExpandedDateKey(prev => (prev === grp.dateKey ? null : grp.dateKey))}
+                            activeOpacity={0.75}
+                          >
+                            <View style={styles.dateGroupLeft}>
+                              <View style={styles.dateIconCircle}>
+                                <Ionicons name="calendar-outline" size={16} color={colors.accent} />
+                              </View>
+                              <View>
+                                <Text style={styles.dateGroupTitle}>{grp.dateFormatted}</Text>
+                                <Text style={styles.dateGroupSub}>{formatBillCount(grp.bills.length)}</Text>
+                              </View>
+                            </View>
+
+                            <View style={styles.dateGroupRight}>
+                              <Text style={styles.dateGroupAmount}>{formatRupee(grp.totalAmount)}</Text>
+                              <Ionicons
+                                name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                                size={18}
+                                color={isExpanded ? colors.accent : colors.textMuted}
+                              />
+                            </View>
+                          </TouchableOpacity>
+
+                          {/* Expanded: Display all bill items present on that date */}
+                          {isExpanded && (
+                            <View style={styles.dateExpandedContent}>
+                              {/* Items Table Header */}
+                              <Text style={styles.dateItemsKicker}>
+                                ALL BILL ITEMS ON {grp.dateFormatted.toUpperCase()}
+                              </Text>
+
+                              {grp.items.length > 0 ? (
+                                <View style={styles.dateItemsTable}>
+                                  <View style={styles.dateItemsTableHeader}>
+                                    <Text style={[styles.dateItemTh, { flex: 1.6 }]}>Item</Text>
+                                    <Text style={[styles.dateItemTh, { width: 55, textAlign: 'center' }]}>Qty</Text>
+                                    <Text style={[styles.dateItemTh, { width: 75, textAlign: 'right' }]}>Amount</Text>
+                                  </View>
+                                  {grp.items.map((item, idx) => (
+                                    <View key={item.name + idx} style={styles.dateItemTableRow}>
+                                      <Text style={[styles.dateItemTdName, { flex: 1.6 }]} numberOfLines={1}>
+                                        {item.name}
+                                      </Text>
+                                      <Text style={[styles.dateItemTdQty, { width: 55, textAlign: 'center' }]}>
+                                        {item.quantity}
+                                      </Text>
+                                      <Text style={[styles.dateItemTdAmt, { width: 75, textAlign: 'right' }]}>
+                                        {formatRupee(item.amount)}
+                                      </Text>
+                                    </View>
+                                  ))}
+                                </View>
+                              ) : (
+                                <Text style={styles.dateNoItemsText}>No item details found for this date.</Text>
+                              )}
+
+                              {/* Bills breakdown for this date */}
+                              {grp.bills.length > 0 && (
+                                <View style={styles.dateBillsSection}>
+                                  <Text style={styles.dateBillsSectionHeading}>
+                                    BILLS ({grp.bills.length})
+                                  </Text>
+                                  {grp.bills.map(b => {
+                                    const itemsText = b.items && b.items.length > 0
+                                      ? b.items.map(i => `${i.itemName} x${i.quantity}`).join(', ')
+                                      : 'No items';
+                                    return (
+                                      <View key={b.id} style={styles.dateBillCard}>
+                                        <View style={{ flex: 1, minWidth: 0 }}>
+                                          <Text style={styles.dateBillNumber}>
+                                            Bill #{b.billNumber}
+                                            {b.customerName ? ` • ${b.customerName}` : ''}
+                                          </Text>
+                                          <Text style={styles.dateBillItemsSummary} numberOfLines={2}>
+                                            {itemsText}
+                                          </Text>
+                                        </View>
+                                        <View style={{ alignItems: 'flex-end', marginLeft: 8 }}>
+                                          <Text style={styles.dateBillPrice}>{formatRupee(b.totalAmount)}</Text>
+                                          <Text style={styles.dateBillPayMode}>{b.paymentMode || 'Cash'}</Text>
+                                        </View>
+                                      </View>
+                                    );
+                                  })}
+                                </View>
+                              )}
+                            </View>
+                          )}
                         </View>
                       );
                     })}
 
                     {/* Month Total Footer */}
-                    <View style={styles.monthTableFoot}>
+                    <View style={styles.monthTotalFooterBox}>
                       <Text style={styles.monthTotalText}>Month total</Text>
                       <Text style={styles.monthTotalAmt}>{formatRupee(currentMonthTotal)}</Text>
                     </View>
@@ -1031,11 +1180,11 @@ export const MonthlyReportsScreen: React.FC<MonthlyReportsScreenProps> = ({
           </View>
         )}
 
-        {/* Item wise company top 10 selling */}
+        {/* Top selling products */}
         <View style={styles.card}>
           <View style={styles.tableHeaderRow}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text style={styles.cardHeading}>Item wise company top 10 selling</Text>
+              <Text style={styles.cardHeading}>Top selling products</Text>
               {reportData.topItems.length > 0 && (
                 <Text style={styles.daysCountNote}>({reportData.topItems.length} items)</Text>
               )}
@@ -1386,9 +1535,9 @@ const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left
     },
     monthCard: {
       backgroundColor: colors.surface,
-      borderRadius: 20,
-      padding: 18,
-      gap: 14,
+      borderRadius: 16,
+      padding: 12,
+      gap: 10,
       borderWidth: 1,
       borderColor: colors.border,
       ...shadows.card,
@@ -1399,9 +1548,9 @@ const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left
       justifyContent: 'space-between',
     },
     navArrowBtn: {
-      width: 38,
-      height: 38,
-      borderRadius: 12,
+      width: 32,
+      height: 32,
+      borderRadius: 10,
       borderWidth: 1,
       borderColor: colors.border,
       backgroundColor: theme.isDark ? colors.surfaceElevated : '#FAF7F2',
@@ -1416,27 +1565,27 @@ const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left
     },
     monthTitle: {
       fontFamily: typography.fonts.heading,
-      fontSize: 18,
+      fontSize: 16,
       color: colors.text,
       fontWeight: '800',
     },
     rangeSubtitle: {
-      fontSize: 12,
+      fontSize: 11,
       color: colors.textMuted,
       fontFamily: typography.fonts.body,
-      marginTop: 2,
+      marginTop: 1,
     },
     yearsRow: {
       flexDirection: 'row',
-      gap: 7,
+      gap: 6,
     },
     yearPill: {
-      minHeight: 34,
-      paddingHorizontal: 14,
+      minHeight: 28,
+      paddingHorizontal: 12,
       borderWidth: 1,
       borderColor: colors.border,
       backgroundColor: theme.isDark ? colors.surfaceElevated : '#FAF7F2',
-      borderRadius: 12,
+      borderRadius: 10,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -1446,7 +1595,7 @@ const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left
     },
     yearPillText: {
       fontFamily: typography.fonts.heading,
-      fontSize: 12.5,
+      fontSize: 11.5,
       color: colors.textSecondary,
       fontWeight: '600',
     },
@@ -1459,26 +1608,26 @@ const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left
       alignItems: 'baseline',
       borderTopWidth: 1,
       borderTopColor: colors.border,
-      paddingTop: 12,
+      paddingTop: 8,
     },
     profitKicker: {
       fontFamily: typography.fonts.heading,
-      fontSize: 10,
-      letterSpacing: 1.0,
+      fontSize: 9.5,
+      letterSpacing: 0.8,
       color: colors.textMuted,
       fontWeight: '800',
       textTransform: 'uppercase',
     },
     profitNote: {
-      fontSize: 11.5,
+      fontSize: 11,
       color: colors.textMuted,
       fontFamily: typography.fonts.body,
     },
     profitTotalValue: {
       marginLeft: 'auto',
       fontFamily: typography.fonts.heading,
-      fontSize: 30,
-      lineHeight: 34,
+      fontSize: 22,
+      lineHeight: 26,
       color: colors.accent,
       fontWeight: '800',
       fontVariant: ['tabular-nums'],
@@ -2117,6 +2266,226 @@ const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left
       color: colors.text,
       fontVariant: ['tabular-nums'],
     },
+    /* Date-Grouped Drill-down Styles for Level 3 */
+    dateGroupsContainer: {
+      gap: 10,
+    },
+    dateGroupsHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 4,
+      marginBottom: 2,
+    },
+    dateGroupsSectionTitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 13.5,
+      fontWeight: '700',
+      color: colors.text,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    dateGroupCard: {
+      backgroundColor: colors.surface,
+      borderRadius: radii.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      overflow: 'hidden',
+      ...shadows.card,
+    },
+    dateGroupRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+    },
+    dateGroupRowActive: {
+      backgroundColor: theme.isDark ? colors.surfaceElevated : '#FFF9F5',
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    dateGroupLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    dateIconCircle: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: colors.accent100,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    dateGroupTitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 14,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    dateGroupSub: {
+      fontSize: 11.5,
+      color: colors.textMuted,
+      fontFamily: typography.fonts.body,
+      marginTop: 1,
+    },
+    dateGroupRight: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    dateGroupAmount: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 15,
+      fontWeight: '800',
+      color: colors.text,
+      fontVariant: ['tabular-nums'],
+    },
+    dateExpandedContent: {
+      padding: 12,
+      backgroundColor: theme.isDark ? colors.surface : '#FAFAFA',
+      gap: 10,
+    },
+    dateItemsKicker: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 10,
+      fontWeight: '800',
+      color: colors.accent,
+      letterSpacing: 0.8,
+      textTransform: 'uppercase',
+    },
+    dateItemsTable: {
+      backgroundColor: colors.surface,
+      borderRadius: radii.sm,
+      borderWidth: 1,
+      borderColor: colors.border,
+      overflow: 'hidden',
+    },
+    dateItemsTableHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      backgroundColor: theme.isDark ? colors.surfaceElevated : '#F5F3F0',
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    dateItemTh: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 10.5,
+      fontWeight: '700',
+      color: colors.textMuted,
+      textTransform: 'uppercase',
+    },
+    dateItemTableRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    dateItemTdName: {
+      fontFamily: typography.fonts.body,
+      fontSize: 12.5,
+      color: colors.text,
+      fontWeight: '500',
+    },
+    dateItemTdQty: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 12,
+      color: colors.text,
+      fontWeight: '700',
+    },
+    dateItemTdAmt: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 12.5,
+      color: colors.text,
+      fontWeight: '700',
+      fontVariant: ['tabular-nums'],
+    },
+    dateNoItemsText: {
+      fontSize: 12,
+      color: colors.textMuted,
+      fontFamily: typography.fonts.body,
+      fontStyle: 'italic',
+      paddingVertical: 6,
+    },
+    dateBillsSection: {
+      marginTop: 4,
+      gap: 6,
+    },
+    dateBillsSectionHeading: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 10,
+      fontWeight: '800',
+      color: colors.textMuted,
+      letterSpacing: 0.6,
+      textTransform: 'uppercase',
+    },
+    dateBillCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      padding: 9,
+      backgroundColor: colors.surface,
+      borderRadius: radii.sm,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    dateBillNumber: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 12,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    dateBillItemsSummary: {
+      fontSize: 11,
+      color: colors.textMuted,
+      fontFamily: typography.fonts.body,
+      marginTop: 2,
+    },
+    dateBillPrice: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 13,
+      fontWeight: '800',
+      color: colors.text,
+      fontVariant: ['tabular-nums'],
+    },
+    dateBillPayMode: {
+      fontSize: 9.5,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '700',
+      color: colors.accent,
+      textTransform: 'uppercase',
+      marginTop: 1,
+    },
+    monthTotalFooterBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      backgroundColor: colors.surface,
+      borderRadius: radii.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      marginTop: 4,
+      ...shadows.card,
+    },
+    monthTotalText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 15,
+      fontWeight: '800',
+      color: colors.text,
+    },
+    monthTotalAmt: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 17,
+      fontWeight: '800',
+      color: '#FF5F00',
+    },
     monthTableCard: {
       backgroundColor: colors.surface,
       borderRadius: 18,
@@ -2190,18 +2559,6 @@ const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left
       justifyContent: 'space-between',
       paddingTop: 14,
       marginTop: 2,
-    },
-    monthTotalText: {
-      fontFamily: typography.fonts.heading,
-      fontSize: 15,
-      fontWeight: '800',
-      color: colors.text,
-    },
-    monthTotalAmt: {
-      fontFamily: typography.fonts.heading,
-      fontSize: 17,
-      fontWeight: '800',
-      color: '#FF5F00',
     },
     summaryExportRow: {
       flexDirection: 'row',

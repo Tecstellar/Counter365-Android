@@ -2,6 +2,7 @@ import { storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { MenuItem, MenuCategory, ShopType } from '../types/models';
 import { generateUUID } from '../lib/uuid';
+import { ScannedMenuItem } from './geminiMenuScanner';
 
 const LOCAL_MENU_KEY = '@counterpro/menu_items';
 const LOCAL_CATS_KEY = '@counterpro/menu_categories';
@@ -264,6 +265,37 @@ export const menuService = {
         .eq('shop_id', shopId);
     } catch (err) {
       console.warn('updateCategory Supabase notice:', err);
+    }
+
+    return updated;
+  },
+
+  /**
+   * Reorder categories (move front/back) and persist sort order
+   */
+  async updateCategoryOrder(shopId: string, orderedCategoryIds: string[]): Promise<MenuCategory[]> {
+    const cats = await this.getCategories(shopId);
+    const orderMap = new Map<string, number>();
+    orderedCategoryIds.forEach((id, idx) => orderMap.set(id, idx));
+
+    const updated = cats
+      .map(c => ({
+        ...c,
+        sortOrder: orderMap.has(c.id) ? orderMap.get(c.id)! : (c.sortOrder ?? 999),
+      }))
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+
+    await storage.setObject(LOCAL_CATS_KEY, updated);
+
+    try {
+      for (const cat of updated) {
+        await (supabase.from('menu_categories') as any)
+          .update({ sort_order: cat.sortOrder, updated_at: new Date().toISOString() })
+          .eq('id', cat.id)
+          .eq('shop_id', shopId);
+      }
+    } catch (err) {
+      console.warn('updateCategoryOrder Supabase notice:', err);
     }
 
     return updated;
@@ -688,5 +720,128 @@ export const menuService = {
     }
 
     return updated;
+  },
+
+  /**
+   * Batch update multiple menu items (e.g. bulk price updates)
+   */
+  async batchUpdateMenuItems(shopId: string, updates: MenuItem[]): Promise<MenuItem[]> {
+    const current = await this.getMenuItems(shopId);
+    const updateMap = new Map<string, MenuItem>();
+    updates.forEach(u => updateMap.set(u.id, u));
+
+    const updated = current.map(item => {
+      const u = updateMap.get(item.id);
+      return u ? { ...item, ...u } : item;
+    });
+
+    await storage.setObject(LOCAL_MENU_KEY, updated);
+
+    try {
+      for (const item of updates) {
+        await (supabase.from('menu_items') as any)
+          .update({
+            price: item.price,
+            half_price: item.halfPrice ?? null,
+            has_half: item.hasHalf,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', item.id)
+          .eq('shop_id', shopId);
+      }
+    } catch (err) {
+      console.warn('batchUpdateMenuItems Supabase notice:', err);
+    }
+
+    return updated;
+  },
+
+  /**
+   * Delete multiple menu items in bulk
+   */
+  async deleteMenuItemsBatch(shopId: string, itemIds: string[]): Promise<MenuItem[]> {
+    const current = await this.getMenuItems(shopId);
+    const idSet = new Set(itemIds);
+    const remaining = current.filter(i => !idSet.has(i.id));
+
+    await storage.setObject(LOCAL_MENU_KEY, remaining);
+
+    try {
+      await (supabase.from('menu_items') as any)
+        .delete()
+        .in('id', itemIds)
+        .eq('shop_id', shopId);
+    } catch (err) {
+      console.warn('deleteMenuItemsBatch Supabase notice:', err);
+    }
+
+    return remaining;
+  },
+
+  /**
+   * Replace entire menu with scanned / imported items
+   */
+  async replaceEntireMenu(shopId: string, scannedItems: ScannedMenuItem[]): Promise<void> {
+    try {
+      await (supabase.from('menu_items') as any).delete().eq('shop_id', shopId);
+    } catch (err) {
+      console.warn('replaceEntireMenu clean error:', err);
+    }
+    await storage.setObject(LOCAL_MENU_KEY, []);
+    await this.batchAddMenuItems(shopId, scannedItems);
+  },
+
+  /**
+   * Get universal menu item suggestions based on shop type
+   */
+  async getUniversalMenuSuggestions(shopType: ShopType = 'Tea Shop', query?: string): Promise<any[]> {
+    const defaultSuggestions: Record<string, any[]> = {
+      'Tea Shop': [
+        { name: 'Tea', price: 12, categoryName: 'Hot Beverages' },
+        { name: 'Coffee', price: 15, categoryName: 'Hot Beverages' },
+        { name: 'Ginger Tea', price: 15, categoryName: 'Hot Beverages' },
+        { name: 'Black Tea', price: 10, categoryName: 'Hot Beverages' },
+        { name: 'Green Tea', price: 15, categoryName: 'Hot Beverages' },
+        { name: 'Lemon Tea', price: 15, categoryName: 'Hot Beverages' },
+        { name: 'Vada', price: 10, categoryName: 'Snacks' },
+        { name: 'Samosa', price: 12, categoryName: 'Snacks' },
+        { name: 'Bonda', price: 10, categoryName: 'Snacks' },
+        { name: 'Bajji', price: 10, categoryName: 'Snacks' },
+        { name: 'Bun Butter Jam', price: 30, categoryName: 'Bakery' },
+        { name: 'Puffs', price: 20, categoryName: 'Bakery' },
+      ],
+      'Cafe': [
+        { name: 'Espresso', price: 80, categoryName: 'Coffee' },
+        { name: 'Cappuccino', price: 120, categoryName: 'Coffee' },
+        { name: 'Latte', price: 130, categoryName: 'Coffee' },
+        { name: 'Americano', price: 90, categoryName: 'Coffee' },
+        { name: 'Mocha', price: 140, categoryName: 'Coffee' },
+        { name: 'Cold Coffee', price: 110, categoryName: 'Cold Beverages' },
+        { name: 'Sandwich', price: 100, categoryName: 'Food' },
+        { name: 'Croissant', price: 90, categoryName: 'Bakery' },
+        { name: 'Brownie', price: 80, categoryName: 'Desserts' },
+      ],
+    };
+
+    const universalKey = `@counterpro/universal_menu_${shopType}`;
+    const cached = await storage.getObject<any[]>(universalKey, defaultSuggestions[shopType] || defaultSuggestions['Tea Shop']);
+    if (!query) return cached;
+    const q = query.toLowerCase().trim();
+    return cached.filter(i => i.name.toLowerCase().includes(q));
+  },
+
+  /**
+   * Sync new items into universal menu repository
+   */
+  async syncToUniversalMenu(shopType: ShopType, items: any[]): Promise<void> {
+    const universalKey = `@counterpro/universal_menu_${shopType}`;
+    const current = await this.getUniversalMenuSuggestions(shopType);
+    const existingNames = new Set(current.map(i => i.name.toLowerCase().trim()));
+
+    const newToAdd = items.filter(i => !existingNames.has(i.name.toLowerCase().trim()));
+    if (newToAdd.length > 0) {
+      const merged = [...current, ...newToAdd];
+      await storage.setObject(universalKey, merged);
+    }
   },
 };

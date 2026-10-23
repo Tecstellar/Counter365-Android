@@ -88,7 +88,7 @@ describe('Support Screen & Bill PDF Export Requirements', () => {
   };
 
   test('Support contact info conforms strictly to APP_CONFIG requirements', () => {
-    expect(APP_CONFIG.supportPhone).toBe('8903368006');
+    expect(APP_CONFIG.supportPhone).toBe('8870500106');
     expect(APP_CONFIG.supportHours).toContain('7:00 AM');
     expect(APP_CONFIG.supportHours).toContain('11:00 PM');
   });

@@ -83,12 +83,6 @@ export const RegistrationSuccessScreen: React.FC<RegistrationSuccessScreenProps>
             onPress={onStartTour}
             style={styles.tourBtn}
           />
-          <AppButton
-            title="Run the flow again"
-            variant="ghost"
-            onPress={onRestart}
-            style={styles.restartBtn}
-          />
         </View>
       </ScrollView>
     </View>

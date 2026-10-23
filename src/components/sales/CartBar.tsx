@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, typography, spacing, shadows, radii } from '../../theme';
 import { AppButton } from '../common/AppButton';
 import { formatRupee } from '../../lib/money';
+import { useLanguage } from '../../context/LanguageContext';
 
 interface CartBarProps {
   totalAmount: number;
@@ -18,9 +19,10 @@ export const CartBar: React.FC<CartBarProps> = ({
   paymentMode,
   onGoToBill,
 }) => {
+  const { t } = useLanguage();
   if (totalCount <= 0) return null;
 
-  const countLabel = `${totalCount} ${totalCount === 1 ? 'item' : 'items'}`;
+  const countLabel = `${totalCount} ${t('items', 'items')}`;
 
   return (
     <View style={styles.container}>
@@ -34,7 +36,7 @@ export const CartBar: React.FC<CartBarProps> = ({
         onPress={onGoToBill}
         style={styles.billButton}
       >
-        <Text style={styles.billButtonText}>Proceed to Bill</Text>
+        <Text style={styles.billButtonText}>{t('view_bill', 'Proceed to Bill')}</Text>
         <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
       </TouchableOpacity>
     </View>
@@ -79,7 +81,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#FF5F00',
+    backgroundColor: '#16A34A',
     paddingHorizontal: 18,
     borderRadius: 13,
   },

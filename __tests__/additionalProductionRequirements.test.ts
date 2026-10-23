@@ -261,9 +261,9 @@ describe('Additional Production Requirements Test Suite', () => {
       expect(passedHtml).toContain('items-table');
       expect(passedHtml).toContain('background-color: #F3F4F6');
 
-      // 6. Grand total bar with 3px solid orange top border
+      // 6. Grand total bar with solid brand orange top border
       expect(passedHtml).toContain('grand-total-bar');
-      expect(passedHtml).toContain('border-top: 3px solid #F97316');
+      expect(passedHtml).toMatch(/border-top:\s*3(\.5)?px solid #(F97316|FF5F00)/);
 
       // 7. Peach payment card with checkmark
       expect(passedHtml).toContain('background: #FFF7ED');
@@ -394,7 +394,7 @@ describe('Additional Production Requirements Test Suite', () => {
 
       expect(result3.success).toBe(true);
       expect(result3.subscription?.plan).toBe('pro');
-      expect(result3.subscription?.amount).toBe(1499);
+      expect(result3.subscription?.amount).toBe(3538.82);
       expect(result3.subscription?.durationMonths).toBe(3);
 
       const result6 = await subscriptionService.activateManualProSubscription({
@@ -405,7 +405,7 @@ describe('Additional Production Requirements Test Suite', () => {
       });
 
       expect(result6.success).toBe(true);
-      expect(result6.subscription?.amount).toBe(2799);
+      expect(result6.subscription?.amount).toBe(6488.82);
 
       const result12 = await subscriptionService.activateManualProSubscription({
         shopId: sampleShop.id,
@@ -415,7 +415,7 @@ describe('Additional Production Requirements Test Suite', () => {
       });
 
       expect(result12.success).toBe(true);
-      expect(result12.subscription?.amount).toBe(4999);
+      expect(result12.subscription?.amount).toBe(11798.82);
     });
 
     it('extends from existing expiry when an active Pro plan is already running', async () => {

@@ -35,6 +35,7 @@ import { useShop } from '../../context/ShopContext';
 import { billingService } from '../../services/billingService';
 import { formatRupee } from '../../lib/money';
 import { APP_CONFIG } from '../../constants/appConfig';
+import { useLanguage } from '../../context/LanguageContext';
 
 export interface DrawerMenuProps {
   visible: boolean;
@@ -65,6 +66,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
   const { isDark, toggleTheme } = useTheme();
   const { currentRole, can, profile } = useAuth();
   const { shop } = useShop();
+  const { t } = useLanguage();
 
   const styles = useMemo(() => createStyles(isDark), [isDark]);
 
@@ -152,12 +154,18 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
     return () => sub.remove();
   }, [visible]);
 
-  // Load real pending data on open
+  // Load real pending data on open and shop change
   useEffect(() => {
-    if (visible && shop.id) {
+    if (shop.id) {
       loadRealData();
     }
   }, [visible, shop.id]);
+
+  useEffect(() => {
+    if (pendingTotalAmount !== undefined) {
+      setLivePendingAmount(pendingTotalAmount);
+    }
+  }, [pendingTotalAmount]);
 
   const loadRealData = async () => {
     try {
@@ -724,48 +732,50 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
                       ]}
                       numberOfLines={1}
                     >
-                      Dashboard
+                      {t('dashboard', 'Dashboard')}
                     </Text>
                   </TouchableOpacity>
                 </Animated.View>
 
                 {/* 2. New Bill */}
-                <Animated.View
-                  style={[
-                    styles.bentoGridItem,
-                    { transform: [{ scale: getCardPressAnim('sales') }] },
-                  ]}
-                >
-                  <TouchableOpacity
-                    activeOpacity={0.9}
-                    onPressIn={() => handleCardPressIn('sales')}
-                    onPressOut={() => handleCardPressOut('sales')}
-                    onPress={() => handleNavigateItem('sales', 'menu')}
+                {can('bill') && (
+                  <Animated.View
                     style={[
-                      styles.bentoCard,
-                      activeItemId === 'sales'
-                        ? styles.bentoCardActive
-                        : styles.bentoCardInactive,
+                      styles.bentoGridItem,
+                      { transform: [{ scale: getCardPressAnim('sales') }] },
                     ]}
                   >
-                    <Ionicons
-                      name="add-circle-outline"
-                      size={24}
-                      color={activeItemId === 'sales' ? '#FFFFFF' : '#FF5F00'}
-                    />
-                    <Text
+                    <TouchableOpacity
+                      activeOpacity={0.9}
+                      onPressIn={() => handleCardPressIn('sales')}
+                      onPressOut={() => handleCardPressOut('sales')}
+                      onPress={() => handleNavigateItem('sales', 'menu')}
                       style={[
-                        styles.bentoCardLabel,
+                        styles.bentoCard,
                         activeItemId === 'sales'
-                          ? styles.bentoCardLabelActive
-                          : styles.bentoCardLabelInactive,
+                          ? styles.bentoCardActive
+                          : styles.bentoCardInactive,
                       ]}
-                      numberOfLines={1}
                     >
-                      New Bill
-                    </Text>
-                  </TouchableOpacity>
-                </Animated.View>
+                      <Ionicons
+                        name="add-circle-outline"
+                        size={24}
+                        color={activeItemId === 'sales' ? '#FFFFFF' : '#FF5F00'}
+                      />
+                      <Text
+                        style={[
+                          styles.bentoCardLabel,
+                          activeItemId === 'sales'
+                            ? styles.bentoCardLabelActive
+                            : styles.bentoCardLabelInactive,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {t('new_bill', 'New Bill')}
+                      </Text>
+                    </TouchableOpacity>
+                  </Animated.View>
+                )}
 
                 {/* 3. Bills & Invoices */}
                 <Animated.View
@@ -804,48 +814,50 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
                       ]}
                       numberOfLines={1}
                     >
-                      Bills & Invoices
+                      {t('bills_invoices', 'Bills & Invoices')}
                     </Text>
                   </TouchableOpacity>
                 </Animated.View>
 
                 {/* 4. Menu & Dishes */}
-                <Animated.View
-                  style={[
-                    styles.bentoGridItem,
-                    { transform: [{ scale: getCardPressAnim('menu') }] },
-                  ]}
-                >
-                  <TouchableOpacity
-                    activeOpacity={0.9}
-                    onPressIn={() => handleCardPressIn('menu')}
-                    onPressOut={() => handleCardPressOut('menu')}
-                    onPress={() => handleNavigateItem('sales', 'editor')}
+                {can('menu') && (
+                  <Animated.View
                     style={[
-                      styles.bentoCard,
-                      activeItemId === 'menu'
-                        ? styles.bentoCardActive
-                        : styles.bentoCardInactive,
+                      styles.bentoGridItem,
+                      { transform: [{ scale: getCardPressAnim('menu') }] },
                     ]}
                   >
-                    <Ionicons
-                      name={activeItemId === 'menu' ? 'cafe' : 'cafe-outline'}
-                      size={22}
-                      color={activeItemId === 'menu' ? '#FFFFFF' : '#FF5F00'}
-                    />
-                    <Text
+                    <TouchableOpacity
+                      activeOpacity={0.9}
+                      onPressIn={() => handleCardPressIn('menu')}
+                      onPressOut={() => handleCardPressOut('menu')}
+                      onPress={() => handleNavigateItem('sales', 'editor')}
                       style={[
-                        styles.bentoCardLabel,
+                        styles.bentoCard,
                         activeItemId === 'menu'
-                          ? styles.bentoCardLabelActive
-                          : styles.bentoCardLabelInactive,
+                          ? styles.bentoCardActive
+                          : styles.bentoCardInactive,
                       ]}
-                      numberOfLines={1}
                     >
-                      Menu & Dishes
-                    </Text>
-                  </TouchableOpacity>
-                </Animated.View>
+                      <Ionicons
+                        name={activeItemId === 'menu' ? 'cafe' : 'cafe-outline'}
+                        size={22}
+                        color={activeItemId === 'menu' ? '#FFFFFF' : '#FF5F00'}
+                      />
+                      <Text
+                        style={[
+                          styles.bentoCardLabel,
+                          activeItemId === 'menu'
+                            ? styles.bentoCardLabelActive
+                            : styles.bentoCardLabelInactive,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {t('menu_dishes', 'Menu & Dishes')}
+                      </Text>
+                    </TouchableOpacity>
+                  </Animated.View>
+                )}
               </View>
             </Animated.View>
 
@@ -891,12 +903,12 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
                     {/* Middle Info */}
                     <View style={styles.pendingTextColumn}>
                       <Text style={styles.pendingTitleText} numberOfLines={1}>
-                        Payment Pending
+                        {t('payment_pending', 'Payment Pending')}
                       </Text>
                       <Text style={styles.pendingSubtitleText} numberOfLines={1}>
                         {pendingCustomerCount > 0
-                          ? `${pendingCustomerCount} customer · due today`
-                          : '1 customer · due today'}
+                          ? `${pendingCustomerCount} customer${pendingCustomerCount > 1 ? 's' : ''} · ${t('due_today', 'due today')}`
+                          : t('no_dues_pending', 'No dues pending')}
                       </Text>
                     </View>
 
@@ -927,9 +939,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
                       <View style={styles.pendingBadgeRow}>
                         <View style={styles.pendingDot} />
                         <Text style={styles.pendingAmountText}>
-                          {livePendingAmount > 0
-                            ? formatRupee(livePendingAmount)
-                            : '₹10'}
+                          {formatRupee(livePendingAmount || 0)}
                         </Text>
                       </View>
                     </View>
@@ -954,7 +964,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
                   >
                     <Ionicons name="people-outline" size={20} color="#FF5F00" />
                     <Text style={styles.financeItemTitle} numberOfLines={1}>
-                      Customers & Vendors
+                      {t('customers_vendors', 'Customers & Vendors')}
                     </Text>
                     <Ionicons
                       name="arrow-forward"
@@ -982,7 +992,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
                   >
                     <Ionicons name="bar-chart-outline" size={20} color="#FF5F00" />
                     <Text style={styles.financeItemTitle} numberOfLines={1}>
-                      Monthly Reports
+                      {t('monthly_reports', 'Monthly Reports')}
                     </Text>
                     <View style={styles.pdfExcelChip}>
                       <Text style={styles.pdfExcelChipText}>PDF · Excel</Text>
@@ -1021,7 +1031,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
                   <View style={styles.systemIconBox}>
                     <Ionicons name="settings" size={20} color="#111111" />
                   </View>
-                  <Text style={styles.systemCardLabel}>Settings</Text>
+                  <Text style={styles.systemCardLabel}>{t('settings', 'Settings')}</Text>
                 </TouchableOpacity>
 
                 {/* Help */}
@@ -1033,7 +1043,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
                   <View style={styles.systemIconBox}>
                     <Ionicons name="help-circle" size={22} color="#111111" />
                   </View>
-                  <Text style={styles.systemCardLabel}>Help</Text>
+                  <Text style={styles.systemCardLabel}>{t('help', 'Help')}</Text>
                 </TouchableOpacity>
 
                 {/* App Tour */}
@@ -1045,7 +1055,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
                   <View style={styles.systemIconBox}>
                     <Ionicons name="sparkles" size={20} color="#111111" />
                   </View>
-                  <Text style={styles.systemCardLabel}>App Tour</Text>
+                  <Text style={styles.systemCardLabel}>{t('app_tour', 'App Tour')}</Text>
                 </TouchableOpacity>
               </View>
             </Animated.View>

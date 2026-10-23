@@ -21,12 +21,12 @@ const CASHFREE_BASE_URL = CASHFREE_ENV === 'PROD'
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
-// Exact commercial plans
-const PLAN_PRICES: Record<string, { price: number; months: number; name: string }> = {
-  '1_month': { price: 499, months: 1, name: '1 Month' },
-  '3_months': { price: 1497, months: 3, name: '3 Months' },
-  '6_months': { price: 2799, months: 6, name: '6 Months' },
-  '1_year': { price: 4999, months: 12, name: '1 Year' },
+// Exact commercial plans (Base prices + 18% GST)
+const PLAN_PRICES: Record<string, { price: number; basePrice: number; months: number; name: string }> = {
+  '1_month': { price: 588.82, basePrice: 499, months: 1, name: '1 Month' },
+  '3_months': { price: 3538.82, basePrice: 2999, months: 3, name: '3 Months' },
+  '6_months': { price: 6488.82, basePrice: 5499, months: 6, name: '6 Months' },
+  '1_year': { price: 11798.82, basePrice: 9999, months: 12, name: '12 Months' },
 };
 
 serve(async (req) => {
@@ -168,9 +168,9 @@ serve(async (req) => {
       );
 
       let planId = '1_month';
-      if (orderAmount >= 4999) planId = '1_year';
-      else if (orderAmount >= 2799) planId = '6_months';
-      else if (orderAmount >= 1497) planId = '3_months';
+      if (orderAmount >= 9999) planId = '1_year';
+      else if (orderAmount >= 5499) planId = '6_months';
+      else if (orderAmount >= 2999) planId = '3_months';
 
       const plan = PLAN_PRICES[planId] || PLAN_PRICES['1_month'];
       const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);

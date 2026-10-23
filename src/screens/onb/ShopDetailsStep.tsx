@@ -1,10 +1,56 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Image, ActivityIndicator, KeyboardAvoidingView } from 'react-native';
+import React, { useState, useEffect, useMemo } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Image, ActivityIndicator, KeyboardAvoidingView, Keyboard } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, typography, spacing, radii, useTheme, Theme } from '../../theme';
 import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '../../components/common/AppButton';
 import { AppInput } from '../../components/common/AppInput';
+
+const INDIAN_STATES = [
+  'Tamil Nadu',
+  'Karnataka',
+  'Kerala',
+  'Andhra Pradesh',
+  'Telangana',
+  'Maharashtra',
+  'Puducherry',
+  'Gujarat',
+  'Delhi',
+  'Uttar Pradesh',
+  'West Bengal',
+  'Rajasthan',
+];
+
+const POPULAR_CITIES: Record<string, string[]> = {
+  'Tamil Nadu': [
+    'Chennai', 'Coimbatore', 'Madurai', 'Tiruchirappalli', 'Salem',
+    'Tiruppur', 'Erode', 'Vellore', 'Thoothukudi', 'Dindigul',
+    'Thanjavur', 'Ranipet', 'Sivakasi', 'Karur', 'Hosur', 'Nagercoil',
+  ],
+  'Karnataka': [
+    'Bengaluru', 'Mysuru', 'Hubballi', 'Mangaluru', 'Belagavi', 'Davanagere',
+  ],
+  'Kerala': [
+    'Thiruvananthapuram', 'Kochi', 'Kozhikode', 'Kollam', 'Thrissur', 'Kannur',
+  ],
+  'Andhra Pradesh': [
+    'Visakhapatnam', 'Vijayawada', 'Guntur', 'Nellore', 'Kurnool', 'Tirupati',
+  ],
+  'Telangana': [
+    'Hyderabad', 'Warangal', 'Nizamabad', 'Karimnagar', 'Khammam',
+  ],
+  'Maharashtra': [
+    'Mumbai', 'Pune', 'Nagpur', 'Thane', 'Nashik', 'Aurangabad',
+  ],
+  'Puducherry': [
+    'Puducherry', 'Karaikal', 'Mahe', 'Yanam',
+  ],
+};
+
+const DEFAULT_CITIES = [
+  'Chennai', 'Coimbatore', 'Madurai', 'Bengaluru', 'Salem', 'Tiruppur',
+  'Trichy', 'Hyderabad', 'Kochi', 'Mumbai',
+];
 
 interface ShopDetailsStepProps {
   shopName: string;
@@ -61,8 +107,46 @@ export const ShopDetailsStep: React.FC<ShopDetailsStepProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const { theme, isDark } = useTheme();
-  const styles = React.useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const isFormValid = shopName.trim().length > 0 && shopCity.trim().length > 0 && shopPincode.trim().length === 6;
+
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const onShow = (e: any) => {
+      setIsKeyboardVisible(true);
+      setKeyboardHeight(e.endCoordinates ? e.endCoordinates.height : 260);
+    };
+    const onHide = () => {
+      setIsKeyboardVisible(false);
+      setKeyboardHeight(0);
+    };
+
+    const showSub = Keyboard.addListener(showEvent, onShow);
+    const hideSub = Keyboard.addListener(hideEvent, onHide);
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  const suggestedStates = useMemo(() => {
+    if (!shopState) return INDIAN_STATES.slice(0, 8);
+    const filtered = INDIAN_STATES.filter(s => s.toLowerCase().includes(shopState.toLowerCase().trim()));
+    return filtered.length > 0 ? filtered : INDIAN_STATES.slice(0, 8);
+  }, [shopState]);
+
+  const suggestedCities = useMemo(() => {
+    const stateCities = POPULAR_CITIES[shopState] || DEFAULT_CITIES;
+    if (!shopCity) return stateCities.slice(0, 10);
+    const filtered = stateCities.filter(c => c.toLowerCase().includes(shopCity.toLowerCase().trim()));
+    return filtered.length > 0 ? filtered : stateCities.slice(0, 10);
+  }, [shopState, shopCity]);
 
   const topPadding = Math.max(insets.top, Platform.OS === 'android' ? 14 : 16);
   const bottomPadding = Math.max(insets.bottom, Platform.OS === 'android' ? 10 : 12);
@@ -93,10 +177,11 @@ export const ShopDetailsStep: React.FC<ShopDetailsStepProps> = ({
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 0}
       >
         <ScrollView
-          contentContainerStyle={[styles.scrollContent, { paddingBottom: 60 }]}
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: isKeyboardVisible ? keyboardHeight + 80 : 70 }]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
@@ -173,25 +258,55 @@ export const ShopDetailsStep: React.FC<ShopDetailsStepProps> = ({
               )}
             </TouchableOpacity>
 
-            <AppInput
-              label="State"
-              placeholder="e.g. State"
-              value={shopState}
-              onChangeText={onChangeState}
-              autoCapitalize="words"
-              returnKeyType="next"
-            />
-
-            <View style={styles.row}>
+            {/* State Input with Suggestions */}
+            <View style={styles.stateWrapper}>
               <AppInput
-                label="City / town"
-                placeholder="e.g. Chennai"
-                value={shopCity}
-                onChangeText={onChangeCity}
-                style={styles.cityField}
+                label="State"
+                placeholder="e.g. Tamil Nadu"
+                value={shopState}
+                onChangeText={onChangeState}
                 autoCapitalize="words"
                 returnKeyType="next"
               />
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={styles.chipsScroll}
+              >
+                {suggestedStates.map(st => (
+                  <TouchableOpacity
+                    key={st}
+                    onPress={() => onChangeState(st)}
+                    style={[
+                      styles.suggestionChip,
+                      shopState.toLowerCase() === st.toLowerCase() && styles.suggestionChipSelected,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.suggestionChipText,
+                        shopState.toLowerCase() === st.toLowerCase() && styles.suggestionChipTextSelected,
+                      ]}
+                    >
+                      {st}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+
+            <View style={styles.row}>
+              <View style={styles.cityCol}>
+                <AppInput
+                  label="City / town"
+                  placeholder="e.g. Chennai"
+                  value={shopCity}
+                  onChangeText={onChangeCity}
+                  autoCapitalize="words"
+                  returnKeyType="next"
+                />
+              </View>
 
               <AppInput
                 label="Pincode"
@@ -204,6 +319,34 @@ export const ShopDetailsStep: React.FC<ShopDetailsStepProps> = ({
                 returnKeyType="done"
               />
             </View>
+
+            {/* City Suggestions */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.chipsScroll}
+            >
+              {suggestedCities.map(ct => (
+                <TouchableOpacity
+                  key={ct}
+                  onPress={() => onChangeCity(ct)}
+                  style={[
+                    styles.suggestionChip,
+                    shopCity.toLowerCase() === ct.toLowerCase() && styles.suggestionChipSelected,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.suggestionChipText,
+                      shopCity.toLowerCase() === ct.toLowerCase() && styles.suggestionChipTextSelected,
+                    ]}
+                  >
+                    {ct}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
 
           {/* Optional Logo */}
           <View style={styles.logoRow}>
@@ -355,9 +498,42 @@ const createStyles = (theme: Theme, isDark: boolean) => {
     form: {
       gap: 14,
     },
+    stateWrapper: {
+      gap: 6,
+    },
+    chipsScroll: {
+      flexDirection: 'row',
+      gap: 8,
+      paddingVertical: 4,
+    },
+    suggestionChip: {
+      paddingHorizontal: 13,
+      paddingVertical: 6,
+      borderRadius: radii.pill,
+      backgroundColor: isDark ? colors.surfaceSecondary : '#F4F4F5',
+      borderWidth: 1,
+      borderColor: isDark ? colors.border : '#E4E4E7',
+    },
+    suggestionChipSelected: {
+      backgroundColor: '#FF5F00',
+      borderColor: '#FF5F00',
+    },
+    suggestionChipText: {
+      fontSize: 12,
+      fontFamily: typography.fonts.heading,
+      color: colors.textSecondary,
+      fontWeight: '600',
+    },
+    suggestionChipTextSelected: {
+      color: '#FFFFFF',
+      fontWeight: '700',
+    },
     row: {
       flexDirection: 'row',
       gap: 10,
+    },
+    cityCol: {
+      flex: 1.4,
     },
     cityField: {
       flex: 1.4,

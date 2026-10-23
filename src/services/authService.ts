@@ -1,8 +1,14 @@
 import { supabase } from '../lib/supabase';
 import { storage } from '../lib/storage';
-import { UserProfile, ShopMember, Shop, ShopType, UserRole } from '../types/models';
+import { UserProfile, ShopMember, Shop, ShopType, UserRole, PermissionKey } from '../types/models';
 import { twoFactorService, SendOtpResult, DEMO_REVIEW_PHONE } from './twoFactorService';
 import { generateUUID } from '../lib/uuid';
+
+const ROLE_DEFAULT_PERMISSIONS: Record<UserRole, Record<PermissionKey, boolean>> = {
+  Owner: { bill: true, total: true, exp: true, pend: true, report: true, menu: true, users: true, subscription: true },
+  Supervisor: { bill: true, total: true, exp: true, pend: true, report: true, menu: true, users: false, subscription: false },
+  Biller: { bill: true, total: true, exp: false, pend: false, report: false, menu: false, users: false, subscription: false },
+};
 
 const LOCAL_PROFILE_KEY = '@counterpro/user_profile';
 const LOCAL_MEMBER_KEY = '@counterpro/shop_member';
@@ -92,7 +98,7 @@ export const authService = {
           .order('created_at', { ascending: false })
           .limit(1);
 
-        let shopData = shopList && shopList.length > 0 ? shopList[0] : null;
+        let shopData = (shopList && shopList.length > 0 && !shopList[0].phone?.includes('_del_') && !shopList[0].name?.startsWith('[Deleted]')) ? shopList[0] : null;
         let memberRole: UserRole = 'Owner';
         let memberId = generateUUID();
         let memberOverrides: any = undefined;
@@ -135,7 +141,14 @@ export const authService = {
                 shopData = activeMemberRow.shops;
                 memberRole = (activeMemberRow.role as UserRole) || 'Biller';
                 memberId = activeMemberRow.id;
-                memberOverrides = activeMemberRow.permissions_override;
+                
+                let parsedOverrides = activeMemberRow.permissions_override;
+                if (typeof parsedOverrides === 'string') {
+                  try {
+                    parsedOverrides = JSON.parse(parsedOverrides);
+                  } catch {}
+                }
+                memberOverrides = (typeof parsedOverrides === 'object' && parsedOverrides !== null) ? parsedOverrides : {};
 
                 // Sync authenticated profile id and clean phone on shop_members
                 try {
@@ -155,7 +168,10 @@ export const authService = {
           const cachedUsers = await storage.getObject<ShopMember[]>('@counterpro/shop_users', []);
           const cachedMembers = await storage.getObject<ShopMember[]>('@counterpro/shop_members', []);
           const allLocalMembers = [...(cachedUsers || []), ...(cachedMembers || [])];
-          const matchedMember = allLocalMembers.find(m => m.phone?.replace(/\D/g, '') === cleanPhone);
+          const matchedMember = allLocalMembers.find(m => {
+            const cleanMPhone = (m.phone || '').replace(/\D/g, '').slice(-10);
+            return cleanMPhone === cleanPhone.slice(-10);
+          });
           if (matchedMember) {
             if (matchedMember.isActive === false) {
               return {
@@ -165,7 +181,7 @@ export const authService = {
             }
             memberRole = matchedMember.role;
             memberId = matchedMember.id;
-            memberOverrides = matchedMember.overrides;
+            memberOverrides = matchedMember.overrides || {};
             const localShop = await storage.getObject<Shop | null>('@counterpro/active_shop', null);
             if (localShop) {
               shopData = localShop as any;
@@ -217,7 +233,7 @@ export const authService = {
             printerEnabled: shopData.printer_enabled ?? shopData.printerEnabled ?? false,
             printerName: shopData.printer_name || shopData.printerName,
             tableManagementEnabled: shopData.table_management_enabled ?? shopData.tableManagementEnabled ?? false,
-            tableCount: shopData.table_count !== undefined ? Number(shopData.table_count) : (shopData.tableCount ?? 4),
+            tableCount: shopData.table_count !== undefined ? Number(shopData.table_count) : (shopData.tableCount ?? 6),
           };
 
           const loadedMember: ShopMember = {
@@ -274,7 +290,7 @@ export const authService = {
           dailyBackupEnabled: true,
           printerEnabled: false,
           tableManagementEnabled: false,
-          tableCount: 4,
+          tableCount: 6,
         };
         const demoMember: ShopMember = {
           id: `m_${profile.id}`,
@@ -326,6 +342,58 @@ export const authService = {
       }
     } catch {}
     return true;
+  },
+
+  async canUserPerform(shopId: string, memberIdOrUserId?: string | null, perm?: PermissionKey): Promise<boolean> {
+    if (!shopId || !perm) return true;
+    if (!memberIdOrUserId) {
+      const activeMember = await storage.getObject<ShopMember | null>(LOCAL_MEMBER_KEY, null);
+      if (!activeMember || activeMember.role === 'Owner') return true;
+      if (activeMember.isActive === false) return false;
+      if (activeMember.overrides && activeMember.overrides[perm] !== undefined) {
+        return Boolean(activeMember.overrides[perm]);
+      }
+      return Boolean(ROLE_DEFAULT_PERMISSIONS[activeMember.role]?.[perm]);
+    }
+
+    try {
+      const { data: member } = await (supabase.from('shop_members') as any)
+        .select('is_active, role, permissions_override')
+        .eq('shop_id', shopId)
+        .or(`id.eq.${memberIdOrUserId},user_id.eq.${memberIdOrUserId}`)
+        .maybeSingle();
+
+      if (member) {
+        if (member.is_active === false) {
+          await storage.removeItem(LOCAL_MEMBER_KEY);
+          return false;
+        }
+        if (member.role === 'Owner') return true;
+
+        let parsedOverrides = member.permissions_override;
+        if (typeof parsedOverrides === 'string') {
+          try {
+            parsedOverrides = JSON.parse(parsedOverrides);
+          } catch {}
+        }
+        if (parsedOverrides && typeof parsedOverrides === 'object' && parsedOverrides[perm] !== undefined) {
+          return Boolean(parsedOverrides[perm]);
+        }
+        const defaultPerm = ROLE_DEFAULT_PERMISSIONS[member.role as UserRole]?.[perm];
+        return defaultPerm !== undefined ? Boolean(defaultPerm) : false;
+      }
+    } catch (e) {
+      console.warn('canUserPerform DB check error:', e);
+    }
+
+    // Fallback to local member check
+    const activeMember = await storage.getObject<ShopMember | null>(LOCAL_MEMBER_KEY, null);
+    if (!activeMember || activeMember.role === 'Owner') return true;
+    if (activeMember.isActive === false) return false;
+    if (activeMember.overrides && activeMember.overrides[perm] !== undefined) {
+      return Boolean(activeMember.overrides[perm]);
+    }
+    return Boolean(ROLE_DEFAULT_PERMISSIONS[activeMember.role]?.[perm]);
   },
 
   async signOut(): Promise<void> {

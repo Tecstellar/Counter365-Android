@@ -16,9 +16,16 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, LinearGradient, Stop, Rect } from 'react-native-svg';
-import { colors } from '../../theme';
+import { Ionicons } from '@expo/vector-icons';
+import { colors, typography } from '../../theme';
 import { ProtoIcon } from '../../components/common/ProtoIcon';
 import { AuthBackgroundGlows } from '../../components/common/AuthBackgroundGlows';
+import { LegalDocumentModal } from '../../components/common/LegalDocumentModal';
+import {
+  PRIVACY_POLICY_SECTIONS,
+  TERMS_OF_SERVICE_SECTIONS,
+  DPDPA_COMPLIANCE_DATE,
+} from '../../constants/legalDocuments';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -29,6 +36,7 @@ interface PhoneStepProps {
   onNext: () => void;
   loading?: boolean;
   error?: string | null;
+  isVerified?: boolean;
 }
 
 export const PhoneStep: React.FC<PhoneStepProps> = ({
@@ -38,6 +46,7 @@ export const PhoneStep: React.FC<PhoneStepProps> = ({
   onNext,
   loading = false,
   error = null,
+  isVerified = false,
 }) => {
   const insets = useSafeAreaInsets();
   const inputRef = useRef<TextInput>(null);
@@ -45,9 +54,25 @@ export const PhoneStep: React.FC<PhoneStepProps> = ({
   const [isFocused, setIsFocused] = useState(false);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [reduceMotion, setReduceMotion] = useState(false);
+  const [isAgreed, setIsAgreed] = useState(isVerified);
+  const [showTermsModal, setShowTermsModal] = useState(false);
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+
+  // Strip +91 / 91 country prefix if picked up from device autofill to preserve exact 10 digits
+  const sanitizeIndianPhone = (val: string): string => {
+    if (!val) return '';
+    const digitsOnly = val.replace(/\D/g, '');
+    if (digitsOnly.length === 12 && digitsOnly.startsWith('91')) {
+      return digitsOnly.slice(2);
+    }
+    if (digitsOnly.length > 10) {
+      return digitsOnly.slice(-10);
+    }
+    return digitsOnly;
+  };
 
   // Authoritative digits derived directly from phone prop to prevent double-updates
-  const digits = phone.replace(/\D/g, '').slice(0, 10);
+  const digits = sanitizeIndianPhone(phone);
 
   // Check accessibility reduce motion
   useEffect(() => {
@@ -233,7 +258,7 @@ export const PhoneStep: React.FC<PhoneStepProps> = ({
 
   // Clean text change handler - calls exactly ONE updater to eliminate double-typing
   const handleChangeText = (text: string) => {
-    const raw = text.replace(/\D/g, '').slice(0, 10);
+    const raw = sanitizeIndianPhone(text);
     if (onChangePhone) {
       onChangePhone(raw);
     } else if (onKeyPress) {
@@ -450,38 +475,99 @@ export const PhoneStep: React.FC<PhoneStepProps> = ({
             </View>
           ) : null}
 
-          <Text style={[styles.helperText, { color: colors.mu }]}>
-            We'll send a verification code to this number
-          </Text>
+          {isVerified ? (
+            <View style={styles.verifiedNotice}>
+              <Ionicons name="checkmark-circle" size={17} color="#15803D" />
+              <Text style={styles.verifiedText}>
+                Phone verified! You already verified OTP. Tap below to register your shop.
+              </Text>
+            </View>
+          ) : (
+            <Text style={[styles.helperText, { color: colors.mu }]}>
+              We'll send a verification code to this number
+            </Text>
+          )}
 
-          {/* Send OTP Button (.btn) */}
+          {/* DPDPA 2023 Consent Checkbox Row */}
+          <View style={styles.consentRow}>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => setIsAgreed(prev => !prev)}
+              style={[
+                styles.checkboxBox,
+                (isAgreed || isVerified) && styles.checkboxBoxChecked,
+                { borderColor: (isAgreed || isVerified) ? '#FF5F00' : colors.ln || '#CBD5E1' },
+              ]}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: isAgreed || isVerified }}
+              accessibilityLabel="I agree to the Terms of Service and Privacy Policy"
+            >
+              {(isAgreed || isVerified) ? (
+                <ProtoIcon name="ck" size={13} color="#FFFFFF" strokeWidth={3} />
+              ) : null}
+            </TouchableOpacity>
+
+            <Text style={[styles.consentLabelText, { color: colors.ink }]}>
+              I agree to the{' '}
+              <Text
+                onPress={() => setShowTermsModal(true)}
+                style={styles.legalUnderlineLink}
+              >
+                Terms of Service
+              </Text>
+              {' '}and{' '}
+              <Text
+                onPress={() => setShowPrivacyModal(true)}
+                style={styles.legalUnderlineLink}
+              >
+                Privacy Policy
+              </Text>
+            </Text>
+          </View>
+
+          {/* Send OTP / Continue Registration Button (.btn) */}
           <TouchableOpacity
             onPress={onNext}
             activeOpacity={0.92}
-            disabled={!isValid || loading}
+            disabled={!isValid || (!isAgreed && !isVerified) || loading}
             style={[
               styles.submitButton,
-              (!isValid || loading) && styles.submitButtonDisabled,
+              (!isValid || (!isAgreed && !isVerified) || loading) && styles.submitButtonDisabled,
             ]}
           >
             {loading ? (
               <ActivityIndicator color="#FFFFFF" size="small" />
             ) : (
               <>
-                <Text style={styles.submitButtonText}>Send OTP</Text>
+                <Text style={styles.submitButtonText}>
+                  {isVerified ? 'Register Shop' : 'Send OTP'}
+                </Text>
                 <ProtoIcon name="ar" size={20} color="#FFFFFF" strokeWidth={2.2} />
               </>
             )}
           </TouchableOpacity>
-
-          {/* Legal / Terms footer */}
-          <Text style={[styles.legalText, { color: colors.mu }]}>
-            By continuing you agree to our{' '}
-            <Text style={[styles.legalLink, { color: colors.ink }]}>Terms of Service</Text> and{' '}
-            <Text style={[styles.legalLink, { color: colors.ink }]}>Privacy Policy</Text>
-          </Text>
         </Animated.View>
       </ScrollView>
+
+      {/* Terms of Service Modal (DPDPA 2023) */}
+      <LegalDocumentModal
+        visible={showTermsModal}
+        onClose={() => setShowTermsModal(false)}
+        title="Terms of Service"
+        subtitle="CounterPro Merchant Service & Regulatory Agreement"
+        badge="DPDPA 2023"
+        sections={TERMS_OF_SERVICE_SECTIONS}
+      />
+
+      {/* Privacy Policy Modal (DPDPA 2023) */}
+      <LegalDocumentModal
+        visible={showPrivacyModal}
+        onClose={() => setShowPrivacyModal(false)}
+        title="Privacy Policy"
+        subtitle={`Digital Personal Data Protection Act, 2023 • Updated ${DPDPA_COMPLIANCE_DATE}`}
+        badge="DPDPA 2023"
+        sections={PRIVACY_POLICY_SECTIONS}
+      />
     </KeyboardAvoidingView>
   );
 };
@@ -657,6 +743,26 @@ const styles = StyleSheet.create({
     fontFamily: 'Lexend',
     fontWeight: '600',
   },
+  verifiedNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 10,
+    marginBottom: 10,
+    gap: 8,
+  },
+  verifiedText: {
+    flex: 1,
+    color: '#15803D',
+    fontSize: 12.5,
+    fontFamily: 'Lexend',
+    fontWeight: '600',
+  },
   helperText: {
     fontFamily: 'Lexend',
     fontSize: 12,
@@ -689,14 +795,37 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
-  legalText: {
-    fontFamily: 'Lexend',
-    fontSize: 12,
-    textAlign: 'center',
-    lineHeight: 18,
-    marginTop: 16,
+  consentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 2,
+    marginBottom: 20,
+    paddingHorizontal: 2,
   },
-  legalLink: {
+  checkboxBox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  checkboxBoxChecked: {
+    backgroundColor: '#FF5F00',
+    borderColor: '#FF5F00',
+  },
+  consentLabelText: {
+    flex: 1,
+    fontFamily: 'Lexend',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  legalUnderlineLink: {
+    color: '#FF5F00',
+    textDecorationLine: 'underline',
     fontWeight: '700',
+    fontFamily: 'Lexend',
   },
 });

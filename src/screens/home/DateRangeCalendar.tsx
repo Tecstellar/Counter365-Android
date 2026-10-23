@@ -12,6 +12,7 @@ import { colors, typography, radii, spacing, shadows, useTheme, Theme } from '..
 interface DateRangeCalendarProps {
   startDate: Date;
   endDate: Date;
+  initialMode?: 'range' | 'single';
   onApplyRange: (start: Date, end: Date) => void;
   onClose?: () => void;
 }
@@ -27,11 +28,22 @@ const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 export const DateRangeCalendar: React.FC<DateRangeCalendarProps> = ({
   startDate,
   endDate,
+  initialMode,
   onApplyRange,
   onClose,
 }) => {
   const { theme, isDark } = useTheme();
   const styles = React.useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+
+  const isInitialSameDay =
+    startDate.getFullYear() === endDate.getFullYear() &&
+    startDate.getMonth() === endDate.getMonth() &&
+    startDate.getDate() === endDate.getDate();
+
+  const [mode, setMode] = useState<'range' | 'single'>(
+    initialMode || (isInitialSameDay ? 'single' : 'range')
+  );
+
   const [currentMonth, setCurrentMonth] = useState(startDate.getMonth());
   const [currentYear, setCurrentYear] = useState(startDate.getFullYear());
   const [rangeStart, setRangeStart] = useState<Date>(startDate);
@@ -58,12 +70,25 @@ export const DateRangeCalendar: React.FC<DateRangeCalendarProps> = ({
   };
 
   // Quick Presets
+  const applySingleDayPreset = (daysAgo: number) => {
+    const d = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
+    const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+    const end = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+
+    setMode('single');
+    setRangeStart(start);
+    setRangeEnd(end);
+    setIsSelectingEnd(false);
+    onApplyRange(start, end);
+  };
+
   const applyPreset = (daysBack: number) => {
     const end = new Date();
     end.setHours(23, 59, 59, 999);
     const start = new Date(end.getTime() - daysBack * 24 * 60 * 60 * 1000);
     start.setHours(0, 0, 0, 0);
 
+    setMode('range');
     setRangeStart(start);
     setRangeEnd(end);
     setIsSelectingEnd(false);
@@ -75,6 +100,7 @@ export const DateRangeCalendar: React.FC<DateRangeCalendarProps> = ({
     const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
     const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
 
+    setMode('range');
     setRangeStart(start);
     setRangeEnd(end);
     setIsSelectingEnd(false);
@@ -86,20 +112,32 @@ export const DateRangeCalendar: React.FC<DateRangeCalendarProps> = ({
     const clickedDate = new Date(currentYear, currentMonth, day);
     clickedDate.setHours(0, 0, 0, 0);
 
+    if (mode === 'single') {
+      const endOfDay = new Date(currentYear, currentMonth, day, 23, 59, 59, 999);
+      setRangeStart(clickedDate);
+      setRangeEnd(endOfDay);
+      setIsSelectingEnd(false);
+      return;
+    }
+
     if (!isSelectingEnd) {
-      // First click: select start date (dot 1)
+      // First click: select start date
       setRangeStart(clickedDate);
       setRangeEnd(clickedDate);
       setIsSelectingEnd(true);
     } else {
-      // Second click: complete range (dot 2)
+      // Second click: complete range
       if (clickedDate < rangeStart) {
-        setRangeEnd(rangeStart);
-        setRangeStart(clickedDate);
+        const startOfDay = new Date(clickedDate);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(rangeStart);
+        endOfDay.setHours(23, 59, 59, 999);
+        setRangeStart(startOfDay);
+        setRangeEnd(endOfDay);
       } else {
-        const endWithTime = new Date(clickedDate);
-        endWithTime.setHours(23, 59, 59, 999);
-        setRangeEnd(endWithTime);
+        const endOfDay = new Date(clickedDate);
+        endOfDay.setHours(23, 59, 59, 999);
+        setRangeEnd(endOfDay);
       }
       setIsSelectingEnd(false);
     }
@@ -142,16 +180,26 @@ export const DateRangeCalendar: React.FC<DateRangeCalendarProps> = ({
     return `${d.getDate()} ${SHORT_MONTHS[d.getMonth()]} ${d.getFullYear()}`;
   };
 
-  const hasFullRange = rangeStart.getTime() !== rangeEnd.getTime();
+  const isSingleSelection =
+    mode === 'single' ||
+    (rangeStart.getFullYear() === rangeEnd.getFullYear() &&
+      rangeStart.getMonth() === rangeEnd.getMonth() &&
+      rangeStart.getDate() === rangeEnd.getDate());
+
+  const hasFullRange = mode === 'range' && !isSingleSelection;
 
   return (
     <View style={styles.calendarCard}>
       {/* Active Range Header */}
       <View style={styles.rangeHeaderBox}>
         <View style={styles.rangeInfo}>
-          <Text style={styles.rangeKicker}>CUSTOM DATE RANGE</Text>
+          <Text style={styles.rangeKicker}>
+            {mode === 'single' ? 'CUSTOM SINGLE DATE' : 'CUSTOM DATE RANGE'}
+          </Text>
           <Text style={styles.rangeLabel}>
-            {formatDisplayDate(rangeStart)}  →  {formatDisplayDate(rangeEnd)}
+            {mode === 'single' || isSingleSelection
+              ? formatDisplayDate(rangeStart)
+              : `${formatDisplayDate(rangeStart)}  →  ${formatDisplayDate(rangeEnd)}`}
           </Text>
         </View>
         {onClose && (
@@ -161,20 +209,69 @@ export const DateRangeCalendar: React.FC<DateRangeCalendarProps> = ({
         )}
       </View>
 
+      {/* Mode Switcher Tabs */}
+      <View style={styles.modeToggleRow}>
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={() => {
+            setMode('range');
+          }}
+          style={[styles.modeToggleBtn, mode === 'range' && styles.modeToggleBtnActive]}
+        >
+          <Ionicons
+            name="calendar-outline"
+            size={13}
+            color={mode === 'range' ? '#FFFFFF' : colors.textSecondary}
+          />
+          <Text style={[styles.modeToggleText, mode === 'range' && styles.modeToggleTextActive]}>
+            Date Range
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={() => {
+            setMode('single');
+            const endOfDay = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), rangeStart.getDate(), 23, 59, 59, 999);
+            setRangeEnd(endOfDay);
+            setIsSelectingEnd(false);
+          }}
+          style={[styles.modeToggleBtn, mode === 'single' && styles.modeToggleBtnActive]}
+        >
+          <Ionicons
+            name="today-outline"
+            size={13}
+            color={mode === 'single' ? '#FFFFFF' : colors.textSecondary}
+          />
+          <Text style={[styles.modeToggleText, mode === 'single' && styles.modeToggleTextActive]}>
+            Single Date
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       {/* Quick Presets Row */}
       <View style={styles.presetRow}>
+        <TouchableOpacity
+          onPress={() => applySingleDayPreset(0)}
+          style={[styles.presetPill, isSameDay(today, rangeStart.getFullYear(), rangeStart.getMonth(), rangeStart.getDate()) && isSingleSelection && styles.presetPillActive]}
+        >
+          <Text style={[styles.presetPillText, isSameDay(today, rangeStart.getFullYear(), rangeStart.getMonth(), rangeStart.getDate()) && isSingleSelection && styles.presetPillTextActive]}>
+            Today
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => applySingleDayPreset(1)}
+          style={styles.presetPill}
+        >
+          <Text style={styles.presetPillText}>Yesterday</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity
           onPress={() => applyPreset(7)}
           style={styles.presetPill}
         >
           <Text style={styles.presetPillText}>Last 7 Days</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={() => applyPreset(14)}
-          style={styles.presetPill}
-        >
-          <Text style={styles.presetPillText}>Last 14 Days</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -230,9 +327,7 @@ export const DateRangeCalendar: React.FC<DateRangeCalendarProps> = ({
           const isEndpoint = isStart || isEnd;
 
           // Snake ribbon connectors:
-          // Left ribbon shows if this cell is in range and not start (or start after end)
           const showLeftRibbon = hasFullRange && inRange && !isStart;
-          // Right ribbon shows if this cell is in range and not end
           const showRightRibbon = hasFullRange && inRange && !isEnd;
 
           return (
@@ -267,7 +362,7 @@ export const DateRangeCalendar: React.FC<DateRangeCalendarProps> = ({
                   style={[
                     styles.dayText,
                     isEndpoint && styles.dayTextSelected,
-                    !isEndpoint && inRange && styles.dayTextInRange,
+                    !isEndpoint && inRange && hasFullRange && styles.dayTextInRange,
                     !isEndpoint && isCurrentToday && styles.dayTextToday,
                   ]}
                 >
@@ -282,13 +377,17 @@ export const DateRangeCalendar: React.FC<DateRangeCalendarProps> = ({
       {/* Selection Helper Message */}
       <View style={styles.helperRow}>
         <Ionicons
-          name={isSelectingEnd ? "calendar-outline" : "checkmark-circle"}
+          name={mode === 'single' ? 'today-outline' : isSelectingEnd ? 'calendar-outline' : 'checkmark-circle'}
           size={14}
-          color={isSelectingEnd ? colors.accent : "#16A34A"}
+          color={mode === 'single' ? colors.accent : isSelectingEnd ? colors.accent : '#16A34A'}
         />
         <Text style={styles.helperText}>
-          {isSelectingEnd
+          {mode === 'single'
+            ? `Single date: ${formatDisplayDate(rangeStart)}`
+            : isSelectingEnd
             ? 'Tap a second date to complete the range ribbon'
+            : isSingleSelection
+            ? `Selected: ${formatDisplayDate(rangeStart)} (tap Apply or pick end date)`
             : 'Range selected — tap Apply Filter to update'}
         </Text>
       </View>
@@ -299,7 +398,11 @@ export const DateRangeCalendar: React.FC<DateRangeCalendarProps> = ({
         onPress={() => onApplyRange(rangeStart, rangeEnd)}
         style={styles.applyBtn}
       >
-        <Text style={styles.applyBtnText}>Apply Filter</Text>
+        <Text style={styles.applyBtnText}>
+          {mode === 'single' || isSingleSelection
+            ? `Apply Date (${rangeStart.getDate()} ${SHORT_MONTHS[rangeStart.getMonth()]})`
+            : `Apply Range (${rangeStart.getDate()} ${SHORT_MONTHS[rangeStart.getMonth()]} → ${rangeEnd.getDate()} ${SHORT_MONTHS[rangeEnd.getMonth()]})`}
+        </Text>
       </TouchableOpacity>
     </View>
   );
@@ -343,6 +446,36 @@ const createStyles = (theme: Theme, isDark: boolean) => {
       color: colors.text,
       marginTop: 2,
     },
+    modeToggleRow: {
+      flexDirection: 'row',
+      backgroundColor: isDark ? colors.surfaceSecondary : '#F1F3F7',
+      borderRadius: 12,
+      padding: 3,
+      gap: 4,
+      marginBottom: 12,
+    },
+    modeToggleBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingVertical: 7,
+      borderRadius: 9,
+    },
+    modeToggleBtnActive: {
+      backgroundColor: colors.accent,
+      ...shadows.sm,
+    },
+    modeToggleText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 12,
+      fontWeight: '700',
+      color: colors.textSecondary,
+    },
+    modeToggleTextActive: {
+      color: '#FFFFFF',
+    },
     closeBtn: {
       width: 32,
       height: 32,
@@ -371,11 +504,18 @@ const createStyles = (theme: Theme, isDark: boolean) => {
       borderColor: colors.border,
       backgroundColor: isDark ? colors.surfaceSecondary : '#FAF7F2',
     },
+    presetPillActive: {
+      backgroundColor: colors.accent100,
+      borderColor: colors.accent,
+    },
     presetPillText: {
       fontSize: 11.5,
       fontFamily: typography.fonts.heading,
       fontWeight: '700',
       color: colors.text,
+    },
+    presetPillTextActive: {
+      color: colors.accent700,
     },
     monthNavRow: {
       flexDirection: 'row',

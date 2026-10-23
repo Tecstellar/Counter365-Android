@@ -10,16 +10,19 @@ import {
   ActivityIndicator,
   Platform,
   KeyboardAvoidingView,
+  Keyboard,
   Linking,
 } from 'react-native';
 import { colors, typography, radii, spacing, shadows, useTheme, Theme } from '../../theme';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppButton } from '../../components/common/AppButton';
 import { AppTag } from '../../components/common/AppTag';
 import { SegmentedControl } from '../../components/common/SegmentedControl';
 import { useShop } from '../../context/ShopContext';
 import { useCart } from '../../context/CartContext';
+import { useLanguage } from '../../context/LanguageContext';
 import { contactService, DeviceContactItem, ContactPermissionStatus } from '../../services/contactService';
 import { CustomerRecord, VendorRecord } from '../../types/models';
 import { formatRupee } from '../../lib/money';
@@ -36,9 +39,39 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
   focusCustomerName,
 }) => {
   const { theme, isDark } = useTheme();
-  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const insets = useSafeAreaInsets();
+  const modalNavClearance = Math.max(insets.bottom, 16);
+  const styles = useMemo(() => createStyles(theme, isDark, insets), [theme, isDark, insets]);
   const { shop } = useShop();
   const { flash } = useCart();
+  const { t } = useLanguage();
+
+  // Keyboard avoidance and height tracking for resilient upscroll in modals
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const onShow = (e: any) => {
+      setIsKeyboardVisible(true);
+      const h = e?.endCoordinates?.height || 280;
+      setKeyboardHeight(h);
+    };
+    const onHide = () => {
+      setIsKeyboardVisible(false);
+      setKeyboardHeight(0);
+    };
+
+    const showSub = Keyboard.addListener(showEvent, onShow);
+    const hideSub = Keyboard.addListener(hideEvent, onHide);
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const [activeTab, setActiveTab] = useState<'Customers' | 'Vendors'>('Customers');
   const [customers, setCustomers] = useState<CustomerRecord[]>([]);
@@ -52,10 +85,19 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
   // Manual Form State
   const [formName, setFormName] = useState('');
   const [formPhone, setFormPhone] = useState('');
-  const [formEmail, setFormEmail] = useState('');
   const [formLocation, setFormLocation] = useState('');
   const [formSupplyType, setFormSupplyType] = useState('Milk');
   const [matchedExistingCustomer, setMatchedExistingCustomer] = useState<CustomerRecord | null>(null);
+  const [matchedExistingVendor, setMatchedExistingVendor] = useState<VendorRecord | null>(null);
+  const [duplicateModalInfo, setDuplicateModalInfo] = useState<{
+    existingName: string;
+    newName: string;
+    cleanPhone: string;
+    existingType: 'customer' | 'vendor';
+    existingCustomer: CustomerRecord | null;
+    existingVendor: VendorRecord | null;
+  } | null>(null);
+  const [wantsToUpdateName, setWantsToUpdateName] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
   // Device Contacts State & Multi-select & Permissions
@@ -290,7 +332,6 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
     setAddStep('choice');
     setFormName('');
     setFormPhone('');
-    setFormEmail('');
     setFormLocation('');
     setFormSupplyType('Milk');
     setImportSupplyType('Milk');
@@ -298,6 +339,7 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
     setContactSearchQuery('');
     setDeviceContactLimit(20);
     setMatchedExistingCustomer(null);
+    setMatchedExistingVendor(null);
     setIsModalOpen(true);
   };
 
@@ -321,14 +363,33 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
     const clean = contact.phone ? contact.phone.replace(/[^0-9]/g, '').slice(-10) : '';
     setFormName(contact.name || '');
     setFormPhone(clean);
-    setFormEmail(contact.email || '');
 
-    const existing = (clean.length === 10 && activeTab === 'Customers')
-      ? customers.find(c => c.phone && c.phone.replace(/[^0-9]/g, '').slice(-10) === clean)
+    const existingCust = clean.length === 10
+      ? (customers.find(c => c.phone && c.phone.replace(/[^0-9]/g, '').slice(-10) === clean) || null)
       : null;
 
-    setMatchedExistingCustomer(existing || null);
-    setFormLocation(existing?.location || '');
+    const existingVend = clean.length === 10
+      ? (vendors.find(v => v.phone && v.phone.replace(/[^0-9]/g, '').slice(-10) === clean) || null)
+      : null;
+
+    setMatchedExistingCustomer(existingCust || null);
+    setMatchedExistingVendor(existingVend || null);
+    setDuplicateModalInfo(null);
+    setFormLocation(existingCust?.location || existingVend?.location || '');
+    if (existingVend?.supplyType) {
+      setFormSupplyType(existingVend.supplyType);
+    }
+
+    // Name means it also changes the selector:
+    // If the selected contact from the device has a new name for an existing number,
+    // pre-set wantsToUpdateName to true so it immediately updates the existing contact to this selected name!
+    const existingName = existingVend?.name || existingCust?.name || '';
+    if (existingName && contact.name && contact.name.trim().toLowerCase() !== existingName.toLowerCase()) {
+      setWantsToUpdateName(true);
+    } else {
+      setWantsToUpdateName(false);
+    }
+
     setAddStep('manual');
   };
 
@@ -365,8 +426,9 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
         if (result.invalidCount > 0) parts.push(`${result.invalidCount} skipped`);
         flash(parts.join(' • '));
       } else {
-        await contactService.addMultipleVendors(shop.id, selectedList, importSupplyType);
-        flash(`Added ${selectedList.length} vendor${selectedList.length > 1 ? 's' : ''} (${importSupplyType})`);
+        // Vendors: 1 number = 1 name = 1 contact only. If number exists, updates name to selected contact.
+        const result = await contactService.addMultipleVendors(shop.id, selectedList, importSupplyType);
+        flash(`Saved ${result.length} vendor${result.length === 1 ? '' : 's'} (${importSupplyType})`);
       }
       setIsModalOpen(false);
       setSelectedContactIds([]);
@@ -386,52 +448,129 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
     }
 
     const cleanPhone = formPhone.replace(/[^0-9]/g, '');
-    if (formPhone.trim() && cleanPhone.length !== 10) {
+    if (!formPhone.trim() || cleanPhone.length === 0) {
+      flash('Please enter the mobile number');
+      return;
+    }
+    if (cleanPhone.length !== 10) {
       flash('Mobile number must be exactly 10 digits');
       return;
     }
 
-    // Check for existing customer duplicate by 10-digit phone
-    const duplicateMatch = (activeTab === 'Customers' && cleanPhone.length === 10)
-      ? customers.find(c => c.phone && c.phone.replace(/[^0-9]/g, '').slice(-10) === cleanPhone)
+    // Check across BOTH customers and vendors by 10-digit phone
+    const matchedCustomer = cleanPhone.length === 10
+      ? (customers.find(c => c.phone && c.phone.replace(/[^0-9]/g, '').slice(-10) === cleanPhone) || null)
       : null;
+    const matchedVendor = cleanPhone.length === 10
+      ? (vendors.find(v => v.phone && v.phone.replace(/[^0-9]/g, '').slice(-10) === cleanPhone) || null)
+      : null;
+
+    const matchedContact = matchedCustomer || matchedVendor;
+
+    if (matchedContact) {
+      const existingName = matchedContact.name;
+      const existingType = matchedCustomer ? 'customer' : 'vendor';
+
+      // If user entered a different name and hasn't explicitly confirmed name update:
+      if (trimmedName.toLowerCase() !== existingName.toLowerCase() && !wantsToUpdateName) {
+        setDuplicateModalInfo({
+          existingName,
+          newName: trimmedName,
+          cleanPhone,
+          existingType,
+          existingCustomer: matchedCustomer,
+          existingVendor: matchedVendor,
+        });
+        return;
+      }
+    }
+
+    const finalName = wantsToUpdateName ? trimmedName : (matchedContact ? matchedContact.name : trimmedName);
+    await executeSaveOrUpdateContact(finalName, matchedCustomer, matchedVendor);
+  };
+
+  const executeSaveOrUpdateContact = async (
+    finalName: string,
+    matchedCustomer: CustomerRecord | null,
+    matchedVendor: VendorRecord | null
+  ) => {
+    if (!shop?.id) return;
+    const cleanPhone = formPhone.replace(/[^0-9]/g, '').slice(-10);
 
     setIsSaving(true);
     try {
       if (activeTab === 'Customers') {
-        if (duplicateMatch) {
-          // If already existing, update instead of duplicate creation
-          const notes = formEmail.trim() ? `Email: ${formEmail.trim()}` : duplicateMatch.notes;
-          await contactService.updateCustomer(shop.id, duplicateMatch.id, {
-            name: trimmedName,
+        if (matchedCustomer) {
+          await contactService.updateCustomer(shop.id, matchedCustomer.id, {
+            name: finalName,
             phone: cleanPhone || null,
-            location: formLocation.trim() || duplicateMatch.location || null,
-            notes: notes || null,
+            location: formLocation.trim() || matchedCustomer.location || null,
+            notes: matchedCustomer.notes || null,
           });
-          flash(`Updated existing customer ${trimmedName}`);
+          flash(`Customer updated: ${finalName}`);
+        } else if (matchedVendor) {
+          // Existed as vendor: update vendor name and create/link customer without duplicate
+          await contactService.updateVendor(shop.id, matchedVendor.id, {
+            name: finalName,
+            location: formLocation.trim() || matchedVendor.location || null,
+          });
+          await contactService.addCustomer(
+            shop.id,
+            finalName,
+            cleanPhone || undefined,
+            formLocation.trim() || matchedVendor.location || undefined
+          );
+          flash(`Updated ${finalName} in contacts`);
         } else {
           await contactService.addCustomer(
             shop.id,
-            trimmedName,
-            formPhone.trim() || undefined,
-            formLocation.trim() || undefined,
-            formEmail.trim() ? `Email: ${formEmail.trim()}` : undefined
+            finalName,
+            cleanPhone || undefined,
+            formLocation.trim() || undefined
           );
-          flash(`Customer ${trimmedName} saved`);
+          flash(`Customer ${finalName} saved`);
         }
       } else {
-        await contactService.addVendor(
-          shop.id,
-          trimmedName,
-          formSupplyType.trim() || 'Supplies',
-          formPhone.trim() || undefined,
-          formLocation.trim() || undefined
-        );
-        flash(`Vendor ${trimmedName} saved`);
+        // activeTab === 'Vendors'
+        if (matchedVendor) {
+          await contactService.updateVendor(shop.id, matchedVendor.id, {
+            name: finalName,
+            phone: cleanPhone || null,
+            supplyType: formSupplyType.trim() || matchedVendor.supplyType || 'Supplies',
+            location: formLocation.trim() || matchedVendor.location || null,
+          });
+          flash(`Vendor updated: ${finalName}`);
+        } else if (matchedCustomer) {
+          // Existed as customer: update customer name and add vendor without duplicate
+          await contactService.updateCustomer(shop.id, matchedCustomer.id, {
+            name: finalName,
+            location: formLocation.trim() || matchedCustomer.location || null,
+          });
+          await contactService.addVendor(
+            shop.id,
+            finalName,
+            formSupplyType.trim() || 'Supplies',
+            cleanPhone || undefined,
+            formLocation.trim() || matchedCustomer.location || undefined
+          );
+          flash(`Updated ${finalName} in contacts`);
+        } else {
+          await contactService.addVendor(
+            shop.id,
+            finalName,
+            formSupplyType.trim() || 'Supplies',
+            cleanPhone || undefined,
+            formLocation.trim() || undefined
+          );
+          flash(`Vendor ${finalName} saved`);
+        }
       }
 
       setIsModalOpen(false);
+      setDuplicateModalInfo(null);
+      setWantsToUpdateName(false);
       setMatchedExistingCustomer(null);
+      setMatchedExistingVendor(null);
       await loadContacts();
     } catch (err) {
       flash('Error saving contact');
@@ -509,7 +648,7 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
             <Ionicons name="arrow-back" size={20} color={colors.text} />
           </TouchableOpacity>
           <View style={styles.headerTitleWrap}>
-            <Text style={styles.title}>Customers & Vendors</Text>
+            <Text style={styles.title}>{t('customers_vendors', 'Customers & Vendors')}</Text>
             <Text style={styles.subtitle}>Directory & Ledgers</Text>
           </View>
           <TouchableOpacity
@@ -519,7 +658,7 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
           >
             <Ionicons name="person-add" size={14} color="#FFFFFF" />
             <Text style={styles.topAddBtnText}>
-              {activeTab === 'Customers' ? '+ Add Customer' : '+ Add Vendor'}
+              {activeTab === 'Customers' ? `+ ${t('add_customer', 'Add Customer')}` : `+ ${t('add_vendor', 'Add Vendor')}`}
             </Text>
           </TouchableOpacity>
         </View>
@@ -533,6 +672,7 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
             setCustomerLimit(20);
             setVendorLimit(20);
           }}
+          renderLabel={opt => opt === 'Customers' ? t('customers', 'Customers') : t('vendors', 'Vendors')}
         />
 
         {/* Search Bar for Directory */}
@@ -540,11 +680,7 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
           <Ionicons name="search-outline" size={17} color={colors.textSecondary} style={{ marginRight: 6 }} />
           <TextInput
             style={styles.directorySearchInput}
-            placeholder={
-              activeTab === 'Customers'
-                ? `Search ${customers.length} customer${customers.length === 1 ? '' : 's'}...`
-                : `Search ${vendors.length} vendor${vendors.length === 1 ? '' : 's'}...`
-            }
+            placeholder={t('search_contacts', 'Search contacts...')}
             placeholderTextColor={colors.textSecondary}
             value={directorySearchQuery}
             onChangeText={setDirectorySearchQuery}
@@ -564,7 +700,7 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
             activeOpacity={0.75}
           >
             <Text style={[styles.filterPillText, filterTag === 'active' && styles.filterPillTextSelected]}>
-              Active ({activeTab === 'Customers' ? activeCustomersCount : activeVendorsCount})
+              {t('active', 'Active')} ({activeTab === 'Customers' ? activeCustomersCount : activeVendorsCount})
             </Text>
           </TouchableOpacity>
 
@@ -574,7 +710,7 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
             activeOpacity={0.75}
           >
             <Text style={[styles.filterPillText, filterTag === 'all' && styles.filterPillTextSelected]}>
-              All ({activeTab === 'Customers' ? customers.length : vendors.length})
+              {t('all', 'All')} ({activeTab === 'Customers' ? customers.length : vendors.length})
             </Text>
           </TouchableOpacity>
 
@@ -883,11 +1019,22 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
         onRequestClose={() => setIsModalOpen(false)}
       >
         <KeyboardAvoidingView
-          style={styles.modalOverlay}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 20}
+          style={[
+            styles.modalOverlay,
+            Platform.OS === 'android' && isKeyboardVisible && {
+              paddingBottom: Math.min(keyboardHeight, 140),
+            },
+          ]}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 20 : 0}
         >
-          <View style={styles.modalContent}>
+          <View
+            style={[
+              styles.modalContent,
+              isKeyboardVisible && { maxHeight: '94%' },
+              { paddingBottom: isKeyboardVisible ? 12 : modalNavClearance + 12 },
+            ]}
+          >
             {/* Modal Header */}
             <View style={styles.modalHeader}>
               <View>
@@ -1075,7 +1222,16 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
                     <Text style={styles.loadingText}>Reading phone contacts...</Text>
                   </View>
                 ) : permissionStatus !== 'blocked' && permissionStatus !== 'denied' && (
-                  <ScrollView style={styles.contactListScroll} keyboardShouldPersistTaps="handled">
+                  <ScrollView
+                    style={styles.contactListScroll}
+                    contentContainerStyle={{
+                      paddingBottom: isKeyboardVisible ? keyboardHeight + 40 : 40,
+                      flexGrow: 1,
+                    }}
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={true}
+                    keyboardDismissMode="on-drag"
+                  >
                     {visibleDeviceContacts.length > 0 ? (
                       <>
                         {visibleDeviceContacts.map(c => {
@@ -1213,34 +1369,110 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
             {/* STEP 3: MANUAL FORM VIEW (Review & Edit or Manual Entry) */}
             {addStep === 'manual' && (() => {
               const cleanPhone = formPhone.replace(/[^0-9]/g, '').slice(-10);
-              const liveDuplicate = (activeTab === 'Customers' && cleanPhone.length === 10)
+              const liveCustomer = cleanPhone.length === 10
                 ? customers.find(c => c.phone && c.phone.replace(/[^0-9]/g, '').slice(-10) === cleanPhone)
                 : null;
+              const liveVendor = cleanPhone.length === 10
+                ? vendors.find(v => v.phone && v.phone.replace(/[^0-9]/g, '').slice(-10) === cleanPhone)
+                : null;
+              const liveMatch = liveCustomer || liveVendor;
+              const existingName = liveMatch?.name || '';
+              const existingType = liveCustomer ? 'Customer' : 'Vendor';
+              const isDifferentName = Boolean(
+                existingName &&
+                formName.trim() &&
+                formName.trim().toLowerCase() !== existingName.toLowerCase()
+              );
 
               return (
                 <ScrollView
-                  style={styles.manualFormScroll}
-                  contentContainerStyle={{ paddingBottom: 160 }}
+                  style={[styles.manualFormScroll, isKeyboardVisible && { maxHeight: 520 }]}
+                  contentContainerStyle={{
+                    paddingBottom: isKeyboardVisible ? keyboardHeight + 80 : 120,
+                    flexGrow: 1,
+                  }}
                   keyboardShouldPersistTaps="handled"
                   showsVerticalScrollIndicator={true}
+                  keyboardDismissMode="on-drag"
                 >
                   <View style={styles.manualForm}>
-                    {/* Live Duplicate Warning & Update Indicator */}
-                    {liveDuplicate && (
+                    {/* Live Duplicate Warning & Update Name Options */}
+                    {liveMatch && (
                       <View style={styles.duplicateNoticeBanner}>
                         <View style={styles.duplicateNoticeHeader}>
                           <Ionicons name="information-circle" size={18} color="#D97706" />
-                          <Text style={styles.duplicateNoticeTitle}>Existing Customer Found</Text>
+                          <Text style={styles.duplicateNoticeTitle}>
+                            {isDifferentName ? 'Contact Already Exists' : `Existing ${existingType} Found`}
+                          </Text>
                         </View>
                         <Text style={styles.duplicateNoticeBody}>
-                          {liveDuplicate.name} is already registered with +91 {cleanPhone}
-                          {liveDuplicate.totalBills > 0 || liveDuplicate.pendingBalance > 0
-                            ? ` (${liveDuplicate.totalBills} bills • ${formatRupee(liveDuplicate.pendingBalance)} pending)`
+                          This mobile number (+91 {cleanPhone}) is already registered in the name of{' '}
+                          <Text style={{ fontWeight: '700', color: theme.colors.text }}>{existingName}</Text>
+                          {liveVendor?.supplyType ? ` (${liveVendor.supplyType})` : ''}
+                          {liveCustomer && (liveCustomer.totalBills > 0 || liveCustomer.pendingBalance > 0)
+                            ? ` (${liveCustomer.totalBills} bills • ${formatRupee(liveCustomer.pendingBalance)} pending)`
                             : ''}.
                         </Text>
-                        <Text style={styles.duplicateNoticeFooter}>
-                          Saving will update this customer's details instead of creating a duplicate.
-                        </Text>
+
+                        {isDifferentName ? (
+                          <View style={styles.duplicateUpdateActions}>
+                            <Text style={styles.duplicateNoticeFooter}>
+                              You typed a new name "{formName.trim()}". Choose how to proceed:
+                            </Text>
+                            <View style={styles.duplicateBtnRow}>
+                              <TouchableOpacity
+                                style={[
+                                  styles.duplicateUpdateChoiceBtn,
+                                  wantsToUpdateName && styles.duplicateUpdateChoiceBtnActive,
+                                ]}
+                                onPress={() => setWantsToUpdateName(true)}
+                              >
+                                <Ionicons
+                                  name={wantsToUpdateName ? 'checkmark-circle' : 'checkmark-circle-outline'}
+                                  size={16}
+                                  color={wantsToUpdateName ? '#FFFFFF' : theme.colors.accent}
+                                />
+                                <Text
+                                  style={[
+                                    styles.duplicateUpdateChoiceText,
+                                    wantsToUpdateName && styles.duplicateUpdateChoiceTextActive,
+                                  ]}
+                                >
+                                  Update Name to "{formName.trim()}"
+                                </Text>
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                style={[
+                                  styles.duplicateKeepChoiceBtn,
+                                  !wantsToUpdateName && styles.duplicateKeepChoiceBtnActive,
+                                ]}
+                                onPress={() => {
+                                  setFormName(existingName);
+                                  setWantsToUpdateName(false);
+                                }}
+                              >
+                                <Ionicons
+                                  name="arrow-undo-outline"
+                                  size={14}
+                                  color={!wantsToUpdateName ? '#FFFFFF' : theme.colors.textMuted}
+                                />
+                                <Text
+                                  style={[
+                                    styles.duplicateKeepChoiceText,
+                                    !wantsToUpdateName && styles.duplicateKeepChoiceTextActive,
+                                  ]}
+                                >
+                                  Keep "{existingName}"
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        ) : (
+                          <Text style={styles.duplicateNoticeFooter}>
+                            Saving will update this {existingType.toLowerCase()}'s details instead of creating a duplicate.
+                          </Text>
+                        )}
                       </View>
                     )}
 
@@ -1269,20 +1501,6 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
                         value={formPhone}
                         onChangeText={t => setFormPhone(t.replace(/[^0-9]/g, '').slice(0, 10))}
                         maxLength={10}
-                      />
-                    </View>
-
-                    {/* Email Input (Optional) */}
-                    <View style={styles.formGroup}>
-                      <Text style={styles.label}>Email Address (Optional)</Text>
-                      <TextInput
-                        style={styles.input}
-                        placeholder="e.g. customer@gmail.com"
-                        placeholderTextColor={theme.colors.inputPlaceholder}
-                        keyboardType="email-address"
-                        autoCapitalize="none"
-                        value={formEmail}
-                        onChangeText={setFormEmail}
                       />
                     </View>
 
@@ -1346,7 +1564,17 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
                       </TouchableOpacity>
 
                       <AppButton
-                        title={isSaving ? 'Saving...' : liveDuplicate ? 'Update Existing Customer' : 'Save'}
+                        title={
+                          isSaving
+                            ? 'Saving...'
+                            : liveMatch
+                            ? isDifferentName
+                              ? wantsToUpdateName
+                                ? `Update Name to "${formName.trim()}"`
+                                : 'Update Existing Contact'
+                              : `Update Existing ${existingType}`
+                            : 'Save'
+                        }
                         variant="primary"
                         onPress={handleSaveManualContact}
                         loading={isSaving}
@@ -1359,6 +1587,84 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
             })()}
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* 0. DUPLICATE RESOLUTION MODAL */}
+      {/* ========================================================================= */}
+      <Modal
+        visible={!!duplicateModalInfo}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDuplicateModalInfo(null)}
+      >
+        <View style={styles.duplicateModalOverlay}>
+          <View style={styles.duplicateModalCard}>
+            <View style={styles.duplicateModalIconWrap}>
+              <Ionicons name="alert-circle" size={36} color="#D97706" />
+            </View>
+
+            <Text style={styles.duplicateModalTitle}>Contact Already Exists</Text>
+
+            <Text style={styles.duplicateModalMessage}>
+              This customer already exists in the name of{' '}
+              <Text style={styles.duplicateModalBold}>{duplicateModalInfo?.existingName}</Text>
+              {' '}(+91 {duplicateModalInfo?.cleanPhone}).
+            </Text>
+
+            <Text style={styles.duplicateModalSubtext}>
+              You entered a new name: "{duplicateModalInfo?.newName}". If you want to update the contact's name, choose "Update Name" below.
+            </Text>
+
+            <View style={styles.duplicateModalActions}>
+              <TouchableOpacity
+                style={styles.duplicateModalUpdateBtn}
+                activeOpacity={0.85}
+                onPress={async () => {
+                  if (!duplicateModalInfo) return;
+                  const targetName = duplicateModalInfo.newName;
+                  const c = duplicateModalInfo.existingCustomer;
+                  const v = duplicateModalInfo.existingVendor;
+                  setDuplicateModalInfo(null);
+                  setWantsToUpdateName(true);
+                  await executeSaveOrUpdateContact(targetName, c, v);
+                }}
+              >
+                <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.duplicateModalUpdateText}>
+                  Update Name to "{duplicateModalInfo?.newName}"
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.duplicateModalKeepBtn}
+                activeOpacity={0.85}
+                onPress={async () => {
+                  if (!duplicateModalInfo) return;
+                  const origName = duplicateModalInfo.existingName;
+                  const c = duplicateModalInfo.existingCustomer;
+                  const v = duplicateModalInfo.existingVendor;
+                  setDuplicateModalInfo(null);
+                  setWantsToUpdateName(false);
+                  setFormName(origName);
+                  await executeSaveOrUpdateContact(origName, c, v);
+                }}
+              >
+                <Ionicons name="shield-checkmark-outline" size={18} color={theme.colors.text} style={{ marginRight: 6 }} />
+                <Text style={styles.duplicateModalKeepText}>
+                  Keep Existing Name ("{duplicateModalInfo?.existingName}")
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.duplicateModalCancelBtn}
+                onPress={() => setDuplicateModalInfo(null)}
+              >
+                <Text style={styles.duplicateModalCancelText}>Cancel & Change Number</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </Modal>
 
       {/* ========================================================================= */}
@@ -1458,10 +1764,22 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
         onRequestClose={() => !isSaving && setEditingContact(null)}
       >
         <KeyboardAvoidingView
-          style={styles.modalOverlay}
+          style={[
+            styles.modalOverlay,
+            Platform.OS === 'android' && isKeyboardVisible && {
+              paddingBottom: Math.min(keyboardHeight, 140),
+            },
+          ]}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 20 : 0}
         >
-          <View style={styles.modalContent}>
+          <View
+            style={[
+              styles.modalContent,
+              isKeyboardVisible && { maxHeight: '94%' },
+              { paddingBottom: isKeyboardVisible ? 12 : modalNavClearance + 12 },
+            ]}
+          >
             <View style={styles.modalHeader}>
               <View>
                 <Text style={styles.modalTitle}>
@@ -1478,7 +1796,16 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={{ paddingVertical: 14 }} keyboardShouldPersistTaps="handled">
+            <ScrollView
+              style={{ paddingVertical: 14 }}
+              contentContainerStyle={{
+                paddingBottom: isKeyboardVisible ? keyboardHeight + 80 : 30,
+                flexGrow: 1,
+              }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={true}
+              keyboardDismissMode="on-drag"
+            >
               <View style={styles.formGroup}>
                 <Text style={styles.label}>Name *</Text>
                 <TextInput
@@ -1766,8 +2093,9 @@ export const ContactsScreen: React.FC<ContactsScreenProps> = ({
   );
 };
 
-const createStyles = (theme: Theme, isDark: boolean) => {
+const createStyles = (theme: Theme, isDark: boolean, insets?: { top: number; bottom: number; left: number; right: number }) => {
   const colors = theme.colors;
+  const bottomInset = insets?.bottom || 0;
   return StyleSheet.create({
     container: {
       flex: 1,
@@ -1775,7 +2103,7 @@ const createStyles = (theme: Theme, isDark: boolean) => {
     },
     scrollContent: {
       padding: 16,
-      paddingBottom: 40,
+      paddingBottom: Math.max(bottomInset, 16) + 84,
       gap: 14,
     },
     header: {
@@ -2346,6 +2674,163 @@ const createStyles = (theme: Theme, isDark: boolean) => {
       fontSize: 11,
       color: colors.textSecondary,
       fontStyle: 'italic',
+    },
+    duplicateUpdateActions: {
+      marginTop: 8,
+      gap: 6,
+    },
+    duplicateBtnRow: {
+      flexDirection: 'row',
+      gap: 8,
+      marginTop: 4,
+    },
+    duplicateUpdateChoiceBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 8,
+      paddingHorizontal: 8,
+      borderRadius: radii.sm,
+      backgroundColor: isDark ? 'rgba(234, 88, 12, 0.2)' : '#FFEDD5',
+      borderWidth: 1,
+      borderColor: colors.accent,
+      gap: 4,
+    },
+    duplicateUpdateChoiceBtnActive: {
+      backgroundColor: colors.accent,
+    },
+    duplicateUpdateChoiceText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 11,
+      color: colors.accent,
+    },
+    duplicateUpdateChoiceTextActive: {
+      color: '#FFFFFF',
+    },
+    duplicateKeepChoiceBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 8,
+      paddingHorizontal: 8,
+      borderRadius: radii.sm,
+      backgroundColor: isDark ? colors.surfaceSecondary : colors.neutral100,
+      borderWidth: 1,
+      borderColor: colors.border,
+      gap: 4,
+    },
+    duplicateKeepChoiceBtnActive: {
+      backgroundColor: colors.surfaceSecondary,
+      borderColor: colors.textMuted,
+    },
+    duplicateKeepChoiceText: {
+      fontFamily: typography.fonts.body,
+      fontSize: 11,
+      color: colors.text,
+    },
+    duplicateKeepChoiceTextActive: {
+      fontFamily: typography.fonts.heading,
+      color: colors.text,
+    },
+    duplicateModalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.65)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    duplicateModalCard: {
+      width: '100%',
+      maxWidth: 420,
+      backgroundColor: colors.surface,
+      borderRadius: radii.xl,
+      padding: 24,
+      alignItems: 'center',
+      gap: 12,
+      ...shadows.card,
+    },
+    duplicateModalIconWrap: {
+      width: 60,
+      height: 60,
+      borderRadius: 30,
+      backgroundColor: isDark ? 'rgba(217, 119, 6, 0.2)' : '#FEF3C7',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    duplicateModalTitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: typography.sizes.lg,
+      color: colors.text,
+      textAlign: 'center',
+    },
+    duplicateModalMessage: {
+      fontFamily: typography.fonts.body,
+      fontSize: typography.sizes.base,
+      color: colors.text,
+      textAlign: 'center',
+      lineHeight: 22,
+    },
+    duplicateModalBold: {
+      fontWeight: '700',
+      color: colors.accent,
+      fontFamily: typography.fonts.heading,
+    },
+    duplicateModalSubtext: {
+      fontFamily: typography.fonts.body,
+      fontSize: typography.sizes.xs,
+      color: colors.textMuted,
+      textAlign: 'center',
+      lineHeight: 17,
+    },
+    duplicateModalActions: {
+      width: '100%',
+      gap: 10,
+      marginTop: 8,
+    },
+    duplicateModalUpdateBtn: {
+      width: '100%',
+      minHeight: 46,
+      borderRadius: radii.pill,
+      backgroundColor: colors.accent,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 16,
+    },
+    duplicateModalUpdateText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: typography.sizes.sm,
+      color: '#FFFFFF',
+    },
+    duplicateModalKeepBtn: {
+      width: '100%',
+      minHeight: 46,
+      borderRadius: radii.pill,
+      backgroundColor: isDark ? colors.surfaceSecondary : colors.neutral100,
+      borderWidth: 1,
+      borderColor: colors.border,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 16,
+    },
+    duplicateModalKeepText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: typography.sizes.sm,
+      color: colors.text,
+    },
+    duplicateModalCancelBtn: {
+      width: '100%',
+      minHeight: 38,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    duplicateModalCancelText: {
+      fontFamily: typography.fonts.body,
+      fontSize: typography.sizes.sm,
+      color: colors.textMuted,
     },
     formGroup: {
       gap: 6,

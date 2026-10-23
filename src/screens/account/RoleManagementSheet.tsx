@@ -15,7 +15,7 @@ interface RoleManagementSheetProps {
   onRemoveUser: () => void;
 }
 
-const PERM_ROWS: Array<{ key: PermissionKey; name: string }> = [
+export const PERM_ROWS: Array<{ key: PermissionKey; name: string }> = [
   { key: 'bill', name: 'Take bills' },
   { key: 'total', name: "See the day's takings" },
   { key: 'exp', name: 'Add expenses' },
@@ -25,12 +25,12 @@ const PERM_ROWS: Array<{ key: PermissionKey; name: string }> = [
   { key: 'users', name: 'Add or remove users' },
 ];
 
-const ROLES_INFO: Array<{ role: UserRole; sub: string }> = [
+export const ROLES_INFO: Array<{ role: UserRole; sub: string }> = [
   { role: 'Supervisor', sub: 'Counter ops, expenses, menu & reports' },
   { role: 'Biller', sub: 'Bills and the day total only' },
 ];
 
-const DEFAULT_ROLE_PERMS: Record<UserRole, Record<PermissionKey, boolean>> = {
+export const DEFAULT_ROLE_PERMS: Record<UserRole, Record<PermissionKey, boolean>> = {
   Owner: { bill: true, total: true, exp: true, pend: true, report: true, menu: true, users: true, subscription: true },
   Supervisor: { bill: true, total: true, exp: true, pend: true, report: true, menu: true, users: false, subscription: false },
   Biller: { bill: true, total: true, exp: false, pend: false, report: false, menu: false, users: false, subscription: false },

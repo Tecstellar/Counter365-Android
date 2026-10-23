@@ -298,7 +298,8 @@ export const subscriptionService = {
     planId: SubscriptionPlanId,
     orderId: string,
     paymentRef?: string,
-    isLaunchOffer?: boolean
+    isLaunchOffer?: boolean,
+    customAmount?: number
   ): Promise<{
     success: boolean;
     subscription?: SubscriptionRecord;
@@ -321,7 +322,7 @@ export const subscriptionService = {
       if (!launchPlan) {
         return { success: false, error: 'Invalid launch offer plan selected' };
       }
-      price = launchPlan.launchPrice;
+      price = customAmount || launchPlan.taxBreakdown.totalAmount;
       durationMonths = launchPlan.durationMonths;
       planName = `${launchPlan.name} (Launch Offer)`;
     } else {
@@ -329,7 +330,7 @@ export const subscriptionService = {
       if (!planConfig) {
         return { success: false, error: 'Invalid subscription plan selected' };
       }
-      price = planConfig.price;
+      price = customAmount || planConfig.taxBreakdown.totalAmount;
       durationMonths = planConfig.durationMonths;
       planName = planConfig.name;
     }
@@ -462,14 +463,14 @@ export const subscriptionService = {
     const { shopId, adminId, durationMonths, paymentRef, adminNotes, isLaunchOffer } = params;
 
     const launchPrices: Record<number, number> = {
-      3: 2999,
-      6: 4799,
-      12: 5999,
+      3: 3538.82,
+      6: 6488.82,
+      12: 11798.82,
     };
     const regularPrices: Record<number, number> = {
-      3: 1499,
-      6: 2799,
-      12: 4999,
+      3: 3538.82,
+      6: 6488.82,
+      12: 11798.82,
     };
 
     if (isLaunchOffer) {

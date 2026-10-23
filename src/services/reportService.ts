@@ -156,7 +156,7 @@ export const reportService = {
     monthBills.forEach(b => {
       if (b.paymentMode === 'Cash') {
         cashAmt += (b.paidAmount !== undefined ? b.paidAmount : b.totalAmount);
-      } else if (b.paymentMode === 'GPay') {
+      } else if (b.paymentMode === 'GPay' || (b.paymentMode as string) === 'UPI') {
         upiAmt += (b.paidAmount !== undefined ? b.paidAmount : b.totalAmount);
       } else if (b.paymentMode === 'Cash + GPay') {
         cashAmt += (b.cashAmount || 0);

@@ -27,7 +27,7 @@ import {
   calculatePlanTax,
   PlanTaxBreakdown,
 } from '../../constants/subscriptionPlans';
-import { cashfreeService, CF_CHECKOUT_URL } from '../../services/cashfreeService';
+import { payuService } from '../../services/payuService';
 import { subscriptionService } from '../../services/subscriptionService';
 import { useShop } from '../../context/ShopContext';
 import { useCart } from '../../context/CartContext';
@@ -60,6 +60,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
   const [isVerifying, setIsVerifying] = useState(false);
   const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
   const [activePaymentUrl, setActivePaymentUrl] = useState<string | null>(null);
+  const [activePaymentHtml, setActivePaymentHtml] = useState<string | null>(null);
   const [checkoutSessionId, setCheckoutSessionId] = useState<string | null>(null);
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -103,10 +104,10 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
     if (!orderIdToVerify || !shop.id || isVerifyingRef.current) return;
     isVerifyingRef.current = true;
     setIsVerifying(true);
-    setStatusMessage('Verifying payment with Cashfree...');
+    setStatusMessage('Verifying payment with PayU...');
 
     try {
-      const verifyRes = await cashfreeService.verifyOrder(
+      const verifyRes = await payuService.verifyOrder(
         orderIdToVerify,
         shop.id,
         planIdToVerify
@@ -241,10 +242,11 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
         taxBreakdown,
       };
 
-      const orderRes = await cashfreeService.initiateOrder(orderPlanPayload as any, {
+      const orderRes = await payuService.initiateOrder(orderPlanPayload as any, {
         id: shop.id,
         name: shop.name || 'Counter365',
         phone: shop.phone,
+        email: (shop as any).email,
       });
 
       if (!orderRes.success || !orderRes.orderId) {
@@ -255,6 +257,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
 
       setActiveOrderId(orderRes.orderId);
       setActivePaymentUrl(orderRes.paymentUrl || null);
+      setActivePaymentHtml(orderRes.paymentHtml || null);
 
       // Persist in AsyncStorage so it survives app switches or restarts
       await AsyncStorage.setItem(
@@ -266,9 +269,8 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
         })
       );
 
-      // Open in-app Cashfree WebView directly if session ID exists
-      if (orderRes.paymentSessionId) {
-        setCheckoutSessionId(orderRes.paymentSessionId);
+      // Open in-app PayU WebView directly
+      if (orderRes.paymentHtml) {
         setShowCheckoutModal(true);
       } else if (orderRes.paymentUrl) {
         try {
@@ -281,10 +283,10 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
         }
       }
 
-      setStatusMessage('Complete payment in Cashfree. Your plan will activate automatically.');
+      setStatusMessage('Complete payment in PayU. Your plan will activate automatically.');
     } catch (err: any) {
       console.error('Payment initiation error:', err);
-      setStatusMessage('Network error while connecting to Cashfree. Please retry.');
+      setStatusMessage('Network error while connecting to PayU. Please retry.');
     } finally {
       setIsProcessing(false);
     }
@@ -299,6 +301,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
     await AsyncStorage.removeItem(PENDING_SUB_KEY);
     setActiveOrderId(null);
     setActivePaymentUrl(null);
+    setActivePaymentHtml(null);
     setStatusMessage(null);
     setIsProcessing(false);
     setIsVerifying(false);
@@ -327,17 +330,12 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                   <Ionicons name="arrow-back" size={18} color={colors.accent} />
                   <Text style={styles.backButtonText}>Back to Plans</Text>
                 </TouchableOpacity>
-              ) : isLaunchEligible ? (
+              ) : (
                 <View style={styles.launchBadgeRow}>
                   <View style={styles.launchBadge}>
                     <Text style={styles.launchBadgeText}>COUNTER365 PRO</Text>
                   </View>
-                  <Text style={styles.countdownIndicatorText}>
-                    ⏳ {eligibilityData.daysRemaining} {eligibilityData.daysRemaining === 1 ? 'day' : 'days'} left
-                  </Text>
                 </View>
-              ) : (
-                <Text style={styles.kicker}>COUNTER365 PLANS</Text>
               )}
               <Text style={styles.title}>
                 {activeOrderId
@@ -377,14 +375,20 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                 )}
 
                 <View style={styles.inFlightActionCol}>
-                  {activePaymentUrl && (
+                  {(activePaymentHtml || activePaymentUrl) && (
                     <TouchableOpacity
                       activeOpacity={0.8}
-                      onPress={() => Linking.openURL(activePaymentUrl)}
+                      onPress={() => {
+                        if (activePaymentHtml) {
+                          setShowCheckoutModal(true);
+                        } else if (activePaymentUrl) {
+                          Linking.openURL(activePaymentUrl).catch(() => {});
+                        }
+                      }}
                       style={styles.reopenLinkBtn}
                     >
-                      <Ionicons name="open-outline" size={16} color={colors.accent900} />
-                      <Text style={styles.reopenLinkText}>Reopen Cashfree Payment Page</Text>
+                      <Ionicons name="card-outline" size={16} color={colors.accent900} />
+                      <Text style={styles.reopenLinkText}>Reopen PayU Payment Page</Text>
                     </TouchableOpacity>
                   )}
 
@@ -649,7 +653,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                 <View style={styles.securityNote}>
                   <Ionicons name="shield-checkmark" size={15} color="#059669" />
                   <Text style={styles.securityText}>
-                    100% Secure via Cashfree Payments &bull; UPI, Cards, NetBanking supported.
+                    100% Secure via PayU Payments &bull; UPI, Cards, NetBanking supported.
                   </Text>
                 </View>
               </>
@@ -685,11 +689,11 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                     {isProcessing ? (
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                         <ActivityIndicator color="#FFFFFF" size="small" />
-                        <Text style={styles.payBtnText}>Connecting to Cashfree...</Text>
+                        <Text style={styles.payBtnText}>Connecting to PayU...</Text>
                       </View>
                     ) : (
                       <Text style={styles.payBtnText}>
-                        Pay ₹{taxBreakdown.totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} via Cashfree
+                        Pay ₹{taxBreakdown.totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} via PayU
                       </Text>
                     )}
                   </TouchableOpacity>
@@ -703,7 +707,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
         </View>
       </View>
 
-      {/* In-App Cashfree Payment WebView Modal */}
+      {/* In-App PayU Payment WebView Modal */}
       <Modal
         visible={showCheckoutModal}
         animationType="slide"
@@ -715,7 +719,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
             <View style={styles.webViewTitleRow}>
               <Ionicons name="shield-checkmark" size={20} color="#059669" />
               <View>
-                <Text style={styles.webViewTitle}>Cashfree Secure Payment</Text>
+                <Text style={styles.webViewTitle}>PayU Secure Payment</Text>
                 <Text style={styles.webViewSubtitle}>
                   Counter365 {selectedPlan.name} &bull; ₹{taxBreakdown.totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </Text>
@@ -731,7 +735,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                   activeOpacity={0.8}
                 >
                   <Ionicons name="open-outline" size={15} color="#0284C7" />
-                  <Text style={styles.webViewUpiBtnText}>UPI App</Text>
+                  <Text style={styles.webViewUpiBtnText}>Browser</Text>
                 </TouchableOpacity>
               )}
               <TouchableOpacity
@@ -743,7 +747,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
             </View>
           </View>
 
-          {checkoutSessionId ? (
+          {activePaymentHtml || activePaymentUrl ? (
             <View style={{ flex: 1, position: 'relative' }}>
               <WebView
                 originWhitelist={['*', 'upi:*', 'tez:*', 'gpay:*', 'phonepe:*', 'paytmmp:*', 'intent:*', 'counterpro:*', 'counter365:*']}
@@ -754,7 +758,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                 renderLoading={() => (
                   <View style={styles.webViewLoader}>
                     <ActivityIndicator size="large" color={colors.accent900} />
-                    <Text style={styles.webViewLoaderText}>Connecting to Cashfree Payment Gateway...</Text>
+                    <Text style={styles.webViewLoaderText}>Connecting to PayU Payment Gateway...</Text>
                   </View>
                 )}
                 onShouldStartLoadWithRequest={(request) => {
@@ -770,7 +774,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                   ) {
                     setShowCheckoutModal(false);
                     let orderIdToVerify = activeOrderId;
-                    const match = url.match(/order_id=([^&]+)/);
+                    const match = url.match(/(?:order_id|txnid)=([^&]+)/);
                     if (match && match[1]) {
                       orderIdToVerify = match[1];
                     }
@@ -820,16 +824,16 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
 
                   return true;
                 }}
-                source={{
-                  uri: activePaymentUrl || (
-                    checkoutSessionId ? `${CF_CHECKOUT_URL}${checkoutSessionId}` : 'https://payments.cashfree.com'
-                  ),
-                }}
+                source={
+                  activePaymentHtml
+                    ? { html: activePaymentHtml, baseUrl: payuService.PAYU_BASE_URL }
+                    : { uri: activePaymentUrl || payuService.PAYU_BASE_URL }
+                }
                 renderError={() => (
                   <View style={styles.webViewLoader}>
                     <Ionicons name="alert-circle-outline" size={36} color="#DC2626" />
                     <Text style={[styles.webViewLoaderText, { color: '#DC2626', fontWeight: 'bold' }]}>
-                      Unable to load Cashfree checkout
+                      Unable to load PayU checkout
                     </Text>
                     <Text style={[styles.webViewLoaderText, { fontSize: 12, marginTop: 4 }]}>
                       Payment session may have expired or network disconnected.
@@ -854,7 +858,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                   ) {
                     setShowCheckoutModal(false);
                     let orderIdToVerify = activeOrderId;
-                    const match = navState.url.match(/order_id=([^&]+)/);
+                    const match = navState.url.match(/(?:order_id|txnid)=([^&]+)/);
                     if (match && match[1]) {
                       orderIdToVerify = match[1];
                     }

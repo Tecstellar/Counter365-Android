@@ -2,93 +2,127 @@ import { Linking } from 'react-native';
 import { Bill, DayClosingReport, PendingPaymentRecord } from '../types/models';
 import { formatRupee } from '../lib/money';
 
-function encodeFallbackBill(bill: Bill, shopName: string, dateStr: string, timeStr: string): string {
-  try {
-    const payload = {
-      n: bill.billNumber,
-      d: dateStr,
-      tm: timeStr,
-      s: shopName,
-      c: bill.customerName || '',
-      cp: bill.customerPhone || '',
-      tb: bill.tableNumber || '',
-      m: bill.paymentMode,
-      sub: bill.subtotal || bill.totalAmount,
-      gst: bill.gstAmount || 0,
-      gr: bill.gstRate || 0,
-      t: bill.totalAmount,
-      p: bill.paidAmount ?? (bill.paymentMode === 'Pending' ? 0 : bill.totalAmount),
-      due: bill.pendingAmount || 0,
-      i: (bill.items || []).map(item => [
-        item.itemName || (item as any).name || 'Item',
-        item.quantity,
-        item.unitPrice,
-        item.lineTotal || (item.unitPrice * item.quantity),
-      ]),
-    };
-    const jsonStr = JSON.stringify(payload);
-    if (typeof btoa === 'function') {
-      return encodeURIComponent(btoa(unescape(encodeURIComponent(jsonStr))));
-    } else if (typeof Buffer !== 'undefined') {
-      return encodeURIComponent(Buffer.from(jsonStr, 'utf-8').toString('base64'));
-    }
-  } catch (e) {
-    // Non-fatal if encoding fails
-  }
-  return '';
-}
-
 export const whatsappService = {
-  formatCustomerBill(bill: Bill, shopName: string, shopUpiId?: string | null): string {
-    const timeStr = new Date(bill.createdAt || Date.now()).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-    const dateStr = new Date(bill.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-    const tableLine = bill.tableNumber ? `*Table: ${bill.tableNumber}*\n` : '';
-    const customerLine = (bill.customerName || bill.customerPhone)
-      ? `*Customer: ${bill.customerName || ''}${bill.customerPhone ? ' (' + bill.customerPhone + ')' : ''}*\n`
-      : '';
-    
-    // Items breakdown
-    let itemsSummary = '';
-    if (bill.items && bill.items.length > 0) {
-      itemsSummary = bill.items
-        .map(it => {
-          const dishTitle = it.itemName || (it as any).name || 'Item';
-          return `• ${dishTitle} × ${it.quantity} = ${formatRupee(it.lineTotal || it.unitPrice * it.quantity)}`;
-        })
-        .join('\n') + '\n--------------------------------\n';
-    }
-
-    // Subtotal and GST breakdown if applicable
-    let breakdown = '';
-    if (bill.gstAmount && bill.gstAmount > 0) {
-      breakdown = `Subtotal: ${formatRupee(bill.subtotal || (bill.totalAmount - bill.gstAmount))}\nGST (${bill.gstRate || 5}%): ${formatRupee(bill.gstAmount)}\n`;
-    }
-
-    // Payment mode and balance status
-    let paymentDetail = `*Payment Status:* ✅ PAID (${bill.paymentMode})`;
-    if (bill.paymentMode === 'Partial Pay') {
-      paymentDetail = `*Payment Status:* ⏳ PARTIALLY PAID\n*Paid Now:* ${formatRupee(bill.paidAmount)} | *Balance Due:* ${formatRupee(bill.pendingAmount)}`;
-    } else if (bill.paymentMode === 'Pending') {
-      paymentDetail = `*Payment Status:* ⚠️ PAYMENT PENDING\n*Balance Due:* ${formatRupee(bill.pendingAmount || bill.totalAmount)}`;
-    } else if (bill.paymentMode === 'Cash + GPay') {
-      paymentDetail = `*Payment Status:* ✅ PAID (Split)\n*Paid via:* Cash ${formatRupee(bill.cashAmount || 0)} + GPay ${formatRupee(bill.gpayAmount || 0)}`;
-    }
-
-    // Only display UPI if customer has outstanding pending amount and shop has a valid UPI ID
-    let upiLine = '';
-    const cleanUpi = shopUpiId?.trim();
-    const hasBalanceDue = (bill.paymentMode === 'Partial Pay' || bill.paymentMode === 'Pending') && ((bill.pendingAmount || 0) > 0 || bill.paymentMode === 'Pending');
-    if (hasBalanceDue && cleanUpi && cleanUpi.includes('@') && !cleanUpi.toLowerCase().includes('example') && !cleanUpi.toLowerCase().includes('placeholder')) {
-      upiLine = `\n📲 *Pay Due via UPI ID:* ${cleanUpi}\n`;
-    }
+  /**
+   * Formats a short, clean, customer-facing WhatsApp bill message.
+   * Scenarios:
+   * A. Fully Paid
+   * B. Partially Paid
+   * C. Fully Pending
+   * No individual line items in text; detailed receipt accessible via short PDF link.
+   */
+  formatCustomerBill(
+    bill: Bill,
+    shopName: string,
+    shopUpiId?: string | null,
+    shopPhone?: string | null,
+    customPdfUrl?: string | null
+  ): string {
+    const rawCustName = (bill.customerName || '').trim();
+    const custName = (rawCustName && rawCustName !== 'Not tracked')
+      ? rawCustName
+      : 'Valued Customer';
 
     const rawBillId = bill.id || (bill.billNumber ? bill.billNumber.replace(/[^a-zA-Z0-9_-]/g, '') : 'latest');
-    const fallbackQuery = encodeFallbackBill(bill, shopName, dateStr, timeStr);
-    const pdfUrl = fallbackQuery
-      ? `https://counter365.tecstellar.com/b/${rawBillId}?d=${fallbackQuery}`
-      : `https://counter365.tecstellar.com/b/${rawBillId}`;
+    const defaultUrl = `https://counter365.tecstellar.com/b/${rawBillId}`;
+    const pdfUrl = customPdfUrl || defaultUrl;
 
-    return `*${shopName}*\nBill ${bill.billNumber} — ${dateStr}, ${timeStr}\n${tableLine}${customerLine}--------------------------------\n${itemsSummary}${breakdown}*TOTAL AMOUNT: ${formatRupee(bill.totalAmount)}*\n${paymentDetail}${upiLine}\n--------------------------------\n📄 *Official Bill & PDF Receipt:*\n${pdfUrl}\n\nThank you for visiting! Please visit again 🙏\n_Billed via Counter365 · Official Receipt_`;
+    const cleanUpi = shopUpiId?.trim();
+    const hasValidUpi = !!(
+      cleanUpi &&
+      cleanUpi.includes('@') &&
+      !cleanUpi.toLowerCase().includes('example') &&
+      !cleanUpi.toLowerCase().includes('placeholder') &&
+      !cleanUpi.toLowerCase().includes('your-upi')
+    );
+
+    const cleanPhone = shopPhone?.trim();
+    const hasContact = !!cleanPhone;
+
+    const isFullyPending =
+      bill.paymentMode === 'Pending' ||
+      ((bill.paidAmount === 0 || bill.paidAmount === undefined) &&
+        (bill.pendingAmount || 0) > 0 &&
+        bill.totalAmount > 0);
+
+    const isPartiallyPaid =
+      !isFullyPending &&
+      (bill.paymentMode === 'Partial Pay' ||
+        ((bill.paidAmount || 0) > 0 && (bill.pendingAmount || 0) > 0));
+
+    // ==========================================
+    // A. Fully Paid
+    // ==========================================
+    if (!isFullyPending && !isPartiallyPaid) {
+      const paymentMethod = bill.paymentMode || 'Cash';
+      let msg = `Hi ${custName} 👋\n\n`;
+      msg += `Thank you for choosing *${shopName}*!\n\n`;
+      msg += `💰 *Total Amount:* ${formatRupee(bill.totalAmount)}\n`;
+      msg += `✅ *Payment Status:* PAID (${paymentMethod})\n\n`;
+      msg += `📄 *View Receipt:*\n${pdfUrl}\n\n`;
+      if (hasContact) {
+        msg += `📞 *Contact:* ${cleanPhone}\n\n`;
+      }
+      msg += `Thank you for your business!`;
+      return msg;
+    }
+
+    // ==========================================
+    // B. Partially Paid
+    // ==========================================
+    if (isPartiallyPaid) {
+      const paid = bill.paidAmount || 0;
+      const balance = bill.pendingAmount || Math.max(0, bill.totalAmount - paid);
+      let msg = `Hi ${custName} 👋\n\n`;
+      msg += `Thank you for choosing *${shopName}*!\n\n`;
+      msg += `💰 *Total Amount:* ${formatRupee(bill.totalAmount)}\n`;
+      msg += `💵 *Total Paid:* ${formatRupee(paid)}\n`;
+      msg += `🔴 *Balance Due:* ${formatRupee(balance)}\n`;
+      msg += `⚠️ *Payment Status:* PARTIALLY PAID\n\n`;
+      msg += `📄 *View Receipt:*\n${pdfUrl}\n\n`;
+
+      let hasTrailingBlock = false;
+      if (hasValidUpi) {
+        msg += `💳 *UPI ID:* ${cleanUpi}\n`;
+        hasTrailingBlock = true;
+      }
+      if (hasContact) {
+        msg += `📞 *Contact:* ${cleanPhone}\n`;
+        hasTrailingBlock = true;
+      }
+      if (hasTrailingBlock) {
+        msg += `\n`;
+      }
+      msg += `Thank you for your business!`;
+      return msg;
+    }
+
+    // ==========================================
+    // C. Fully Pending
+    // ==========================================
+    const pendingBalance = bill.pendingAmount || bill.totalAmount;
+    let msg = `Hi ${custName} 👋\n\n`;
+    msg += `Thank you for choosing *${shopName}*!\n\n`;
+    msg += `💰 *Total Amount:* ${formatRupee(bill.totalAmount)}\n`;
+    msg += `💵 *Total Paid:* ₹0.00\n`;
+    msg += `🔴 *Balance Due:* ${formatRupee(pendingBalance)}\n`;
+    msg += `⚠️ *Payment Status:* PENDING\n\n`;
+    msg += `📄 *View Receipt:*\n${pdfUrl}\n\n`;
+
+    let hasTrailingBlock = false;
+    if (hasValidUpi) {
+      msg += `💳 *UPI ID:* ${cleanUpi}\n`;
+      hasTrailingBlock = true;
+    }
+    if (hasContact) {
+      msg += `📞 *Contact:* ${cleanPhone}\n`;
+      hasTrailingBlock = true;
+    }
+    if (hasTrailingBlock) {
+      msg += `\n`;
+    }
+    msg += `Thank you for your business!`;
+    return msg;
   },
 
   formatPendingReminder(record: PendingPaymentRecord, shopName: string, shopUpiId?: string | null): string {
@@ -116,12 +150,12 @@ export const whatsappService = {
         ? `whatsapp://send?phone=${cleanPhone}&text=${encodedText}`
         : `whatsapp://send?text=${encodedText}`;
 
-      const supported = await Linking.canOpenURL(url);
-      if (supported) {
+      // Fast direct open attempt for native WhatsApp
+      try {
         await Linking.openURL(url);
         return true;
-      } else {
-        // Web WhatsApp fallback
+      } catch {
+        // Fallback to web WhatsApp link if direct scheme was rejected
         const webUrl = cleanPhone
           ? `https://wa.me/${cleanPhone}?text=${encodedText}`
           : `https://api.whatsapp.com/send?text=${encodedText}`;

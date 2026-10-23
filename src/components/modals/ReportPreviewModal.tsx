@@ -8,8 +8,10 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets, EdgeInsets } from 'react-native-safe-area-context';
 import { MonthlyReportData, Shop } from '../../types/models';
 import { formatRupee } from '../../lib/money';
 import { useTheme, Theme, typography } from '../../theme';
@@ -42,7 +44,8 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
   onUpgradePress,
 }) => {
   const { theme } = useTheme();
-  const styles = React.useMemo(() => createStyles(theme), [theme]);
+  const insets = useSafeAreaInsets();
+  const styles = React.useMemo(() => createStyles(theme, insets), [theme, insets]);
 
   const handlePdfClick = () => {
     if (isQuotaExceeded) {
@@ -249,8 +252,9 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
   );
 };
 
-const createStyles = (theme: Theme) => {
+const createStyles = (theme: Theme, insets?: EdgeInsets) => {
   const colors = theme.colors;
+  const bottomInset = insets?.bottom || 0;
   return StyleSheet.create({
     overlay: {
       flex: 1,
@@ -484,7 +488,7 @@ const createStyles = (theme: Theme) => {
     footer: {
       paddingHorizontal: 18,
       paddingTop: 12,
-      paddingBottom: 24,
+      paddingBottom: Platform.OS === 'android' ? Math.max(bottomInset, 48) + 18 : Math.max(bottomInset, 20) + 16,
       borderTopWidth: 1,
       borderTopColor: colors.border,
       gap: 10,

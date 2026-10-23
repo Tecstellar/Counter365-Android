@@ -101,6 +101,11 @@ export const expenseService = {
       creator?: { id?: string; name?: string; role?: string };
     }
   ): Promise<ExpenseRecord> {
+    const canExp = await authService.canUserPerform(shopId, options?.creator?.id, 'exp');
+    if (!canExp) {
+      throw new Error("You don't have access for that");
+    }
+
     if (options?.creator?.role === 'Biller') {
       throw new Error('Unauthorized: Billers cannot create expenses.');
     }
@@ -113,6 +118,9 @@ export const expenseService = {
     }
 
     const list = await this.getExpenses(shopId);
+    const localNow = new Date();
+    const localDateStr = `${localNow.getFullYear()}-${String(localNow.getMonth() + 1).padStart(2, '0')}-${String(localNow.getDate()).padStart(2, '0')}`;
+
     const newExp: ExpenseRecord = {
       id: generateUUID(),
       shopId,
@@ -120,10 +128,10 @@ export const expenseService = {
       amount,
       category: options?.category || 'General',
       paymentMode: options?.paymentMode || 'Cash',
-      createdByName: options?.creator?.name || 'Owner',
-      createdByRole: options?.creator?.role || 'Owner',
+      createdByName: options?.creator?.name || 'Supervisor',
+      createdByRole: options?.creator?.role || 'Supervisor',
       createdById: options?.creator?.id || null,
-      expenseDate: new Date().toISOString().split('T')[0],
+      expenseDate: localDateStr,
       createdAt: new Date().toISOString(),
     };
     const updated = [newExp, ...list];
@@ -168,6 +176,11 @@ export const expenseService = {
     amount: number,
     actor?: { id?: string; name?: string; role?: string }
   ): Promise<ExpenseRecord[]> {
+    const canExp = await authService.canUserPerform(shopId, actor?.id, 'exp');
+    if (!canExp) {
+      throw new Error("You don't have access for that");
+    }
+
     if (actor?.role === 'Biller') {
       throw new Error('Unauthorized: Billers cannot edit expenses.');
     }
@@ -228,6 +241,11 @@ export const expenseService = {
     expenseId: string,
     actor?: { id?: string; name?: string; role?: string }
   ): Promise<ExpenseRecord[]> {
+    const canExp = await authService.canUserPerform(shopId, actor?.id, 'exp');
+    if (!canExp) {
+      throw new Error("You don't have access for that");
+    }
+
     if (actor?.role === 'Biller') {
       throw new Error('Unauthorized: Billers cannot delete expenses.');
     }

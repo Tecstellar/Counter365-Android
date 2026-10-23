@@ -5,7 +5,7 @@ import { calculateGST } from '../lib/money';
 interface CartContextType {
   cart: CartItem[];
   addItem: (item: MenuItem, isHalf?: boolean) => void;
-  addCustomItem: (amount: number) => void;
+  addCustomItem: (amount: number, customName?: string) => void;
   increaseQty: (key: string) => void;
   decreaseQty: (key: string) => void;
   decreaseItem: (itemId: string) => void;
@@ -78,7 +78,8 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const price = isHalf ? (item.halfPrice || Math.round(item.price * 0.6)) : item.price;
-    const name = isHalf ? `${item.name} (Half)` : item.name;
+    const baseName = item.name.replace(/\s*\((?:half|full)\)/gi, '').trim();
+    const name = isHalf ? `${baseName} (Half)` : baseName;
     const key = `${item.id}|${isHalf ? 'half' : 'full'}`;
 
     setCart(prev => {
@@ -112,14 +113,14 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const addCustomItem = (amount: number) => {
+  const addCustomItem = (amount: number, customName?: string) => {
     const key = `custom_${Date.now()}`;
     setCart(prev => [
       ...prev,
       {
         key,
         itemId: key,
-        name: `Other ₹${amount}`,
+        name: customName || `Other ₹${amount}`,
         unitPrice: amount,
         quantity: 1,
         isHalf: false,

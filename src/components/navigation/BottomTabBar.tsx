@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { colors, typography, radii, shadows, useTheme, Theme } from '../../theme';
 import { AppRoute } from '../../types/navigation';
+import { useLanguage } from '../../context/LanguageContext';
 
 interface BottomTabBarProps {
   currentRoute: AppRoute;
@@ -25,6 +26,7 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
+  const { t } = useLanguage();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
 
   const isHomeActive =
@@ -41,28 +43,28 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
   const tabs: TabConfig[] = [
     {
       route: 'home',
-      label: 'Home',
+      label: t('home', 'Home'),
       icon: 'home-outline',
       iconActive: 'home',
       isActive: isHomeActive,
     },
     {
       route: 'bills',
-      label: 'Bills',
+      label: t('bills', 'Bills'),
       icon: 'receipt-outline',
       iconActive: 'receipt',
       isActive: isBillsActive,
     },
     {
       route: 'sales',
-      label: 'New Bill',
+      label: t('new_bill', 'New Bill'),
       icon: 'add-circle-outline',
       iconActive: 'add-circle',
       isActive: isSalesActive,
     },
     {
       route: 'account',
-      label: 'Account',
+      label: t('account', 'Account'),
       icon: 'person-outline',
       iconActive: 'person',
       isActive: isAccountActive,

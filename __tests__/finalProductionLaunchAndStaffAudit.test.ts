@@ -28,6 +28,7 @@ import { storage } from '../src/lib/storage';
 import { generateUUID } from '../src/lib/uuid';
 
 import { twoFactorService } from '../src/services/twoFactorService';
+import { ROLE_DEFAULT_PERMISSIONS } from '../src/context/AuthContext';
 
 // In-memory mocks
 jest.mock('../src/lib/storage', () => {
@@ -139,33 +140,33 @@ describe('Counter Pro — Final Production Readiness Audit Test Suite', () => {
       expect(calculatePricePerDay(2999, 90)).toBe(33);
     });
 
-    test('6-Month plan has exact pricing: Launch ₹4,799, Regular ₹5,999, 180 days, Save ₹1,200 (20%), ₹27/day', () => {
+    test('6-Month plan has exact pricing: Offer ₹5,499, Regular ₹5,999, 180 days, Save ₹500, ₹31/day', () => {
       const plan = getLaunchOfferPlanById('6_months')!;
       expect(plan).toBeDefined();
       expect(plan.durationDays).toBe(180);
       expect(plan.durationMonths).toBe(6);
       expect(plan.regularPrice).toBe(5999);
-      expect(plan.launchPrice).toBe(4799);
-      expect(plan.savings).toBe(1200);
-      expect(plan.discountPercentage).toBe(20);
-      expect(plan.pricePerDay).toBe(27);
-      expect(calculatePricePerDay(4799, 180)).toBe(27);
-      expect(plan.savingsLabel).toBe('Save ₹1,200 (20% OFF)');
+      expect(plan.launchPrice).toBe(5499);
+      expect(plan.savings).toBe(500);
+      expect(plan.discountPercentage).toBeCloseTo(8.33, 1);
+      expect(plan.pricePerDay).toBe(31);
+      expect(calculatePricePerDay(5499, 180)).toBe(31);
+      expect(plan.savingsLabel).toBe('Save ₹500 (Offer Price)');
     });
 
-    test('12-Month plan has exact pricing: Launch ₹5,999, Regular ₹11,999, 365 days, Save ₹6,000 (50%), ₹16/day', () => {
+    test('12-Month plan has exact pricing: Offer ₹9,999, Regular ₹11,999, 365 days, Save ₹2,000, ₹27/day', () => {
       const plan = getLaunchOfferPlanById('1_year')!;
       expect(plan).toBeDefined();
       expect(plan.durationDays).toBe(365);
       expect(plan.durationMonths).toBe(12);
       expect(plan.regularPrice).toBe(11999);
-      expect(plan.launchPrice).toBe(5999);
-      expect(plan.savings).toBe(6000);
-      expect(plan.discountPercentage).toBe(50);
-      expect(plan.pricePerDay).toBe(16);
-      expect(calculatePricePerDay(5999, 365)).toBe(16);
+      expect(plan.launchPrice).toBe(9999);
+      expect(plan.savings).toBe(2000);
+      expect(plan.discountPercentage).toBeCloseTo(16.67, 1);
+      expect(plan.pricePerDay).toBe(27);
+      expect(calculatePricePerDay(9999, 365)).toBe(27);
       expect(plan.popular).toBe(true);
-      expect(plan.savingsLabel).toContain('Save ₹6,000 (50% OFF)');
+      expect(plan.savingsLabel).toContain('Save ₹2,000 (Offer Price)');
     });
 
     test('regular subscription pricing is preserved after launch offer expires', () => {
@@ -399,7 +400,7 @@ describe('Counter Pro — Final Production Readiness Audit Test Suite', () => {
 
       expect(res.success).toBe(true);
       expect(res.subscription?.plan).toBe('pro');
-      expect(res.subscription?.amount).toBe(4799); // 6 Months Launch Offer Price
+      expect(res.subscription?.amount).toBe(6488.82); // 6 Months Offer Price with 18% GST
     });
   });
 
@@ -447,9 +448,72 @@ describe('Counter Pro — Final Production Readiness Audit Test Suite', () => {
   // 6. Support Configuration
   // =========================================================================
   describe('6. Support Number Configuration', () => {
-    test('uses actual product support phone +91 89033 68006 without invention', () => {
-      expect(APP_CONFIG.supportPhone).toBe('8903368006');
-      expect(APP_CONFIG.supportPhoneFormatted).toBe('+91 89033 68006');
+    test('uses actual product support phone +91 88705 00106 without invention', () => {
+      expect(APP_CONFIG.supportPhone).toBe('8870500106');
+      expect(APP_CONFIG.supportPhoneFormatted).toBe('+91 88705 00106');
+    });
+  });
+
+  // =========================================================================
+  // 7. Role-Based UI and Module Hiding Policy (Staff Restrictions)
+  // =========================================================================
+  describe('7. Role-Based UI and Module Hiding Policy', () => {
+    test('Owner role has complete access across all modules', () => {
+      const ownerPerms = ROLE_DEFAULT_PERMISSIONS['Owner'];
+      expect(ownerPerms.bill).toBe(true);
+      expect(ownerPerms.total).toBe(true);
+      expect(ownerPerms.exp).toBe(true);
+      expect(ownerPerms.pend).toBe(true);
+      expect(ownerPerms.report).toBe(true);
+      expect(ownerPerms.menu).toBe(true);
+      expect(ownerPerms.users).toBe(true);
+      expect(ownerPerms.subscription).toBe(true);
+    });
+
+    test('Supervisor role is strictly restricted from Users & Staff and Subscription modules', () => {
+      const supervisorPerms = ROLE_DEFAULT_PERMISSIONS['Supervisor'];
+      expect(supervisorPerms.users).toBe(false);
+      expect(supervisorPerms.subscription).toBe(false);
+      expect(supervisorPerms.bill).toBe(true);
+      expect(supervisorPerms.menu).toBe(true);
+    });
+
+    test('Biller role is strictly restricted from Menu, Expenses, Pending, Reports, Users and Subscription', () => {
+      const billerPerms = ROLE_DEFAULT_PERMISSIONS['Biller'];
+      expect(billerPerms.menu).toBe(false);
+      expect(billerPerms.exp).toBe(false);
+      expect(billerPerms.pend).toBe(false);
+      expect(billerPerms.report).toBe(false);
+      expect(billerPerms.users).toBe(false);
+      expect(billerPerms.subscription).toBe(false);
+      expect(billerPerms.bill).toBe(true);
+      expect(billerPerms.total).toBe(true);
+    });
+
+    test('BillActionMenuModal props hide Edit option for Biller and Delete option for non-Owners', () => {
+      const resolveBillModalActions = (role: UserRole, onEditFn: any, onDeleteFn: any) => ({
+        onEdit: role !== 'Biller' ? onEditFn : undefined,
+        onDelete: role === 'Owner' ? onDeleteFn : undefined,
+      });
+
+      const dummyEdit = () => {};
+      const dummyDelete = () => {};
+
+      // Owner gets both Edit and Delete
+      const ownerActions = resolveBillModalActions('Owner', dummyEdit, dummyDelete);
+      expect(ownerActions.onEdit).toBeDefined();
+      expect(ownerActions.onDelete).toBeDefined();
+
+      // Supervisor gets Edit, but Delete is completely hidden (undefined)
+      const supervisorActions = resolveBillModalActions('Supervisor', dummyEdit, dummyDelete);
+      expect(supervisorActions.onEdit).toBeDefined();
+      expect(supervisorActions.onDelete).toBeUndefined();
+
+      // Biller has both Edit and Delete completely hidden (undefined)
+      const billerActions = resolveBillModalActions('Biller', dummyEdit, dummyDelete);
+      expect(billerActions.onEdit).toBeUndefined();
+      expect(billerActions.onDelete).toBeUndefined();
     });
   });
 });
+

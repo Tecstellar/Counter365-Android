@@ -10,7 +10,7 @@ import { contactService } from './contactService';
 import { generateDefaultInvoicePrefix, formatInvoiceNumber } from '../lib/invoiceUtils';
 import { authService } from './authService';
 
-const LOCAL_BILLS_KEY = '@counterpro/bills';
+export const LOCAL_BILLS_KEY = '@counterpro/bills';
 const LOCAL_BILL_COUNT_KEY = '@counterpro/bill_count';
 
 /**
@@ -216,7 +216,8 @@ export const billingService = {
       deleted_by_name: bill.deletedByName || null,
       deleted_by_role: bill.deletedByRole || null,
       deleted_by_id: bill.deletedById || null,
-      completed_at: bill.completedAt || new Date().toISOString(),
+      created_at: bill.createdAt || new Date().toISOString(),
+      completed_at: bill.completedAt || bill.createdAt || new Date().toISOString(),
       settled_at: bill.settledAt || null,
     };
 
@@ -573,6 +574,7 @@ export const billingService = {
     cart: CartItem[];
     paymentMode: PaymentMethod;
     gstEnabled: boolean;
+    gstRate?: number;
     customerName?: string;
     customerPhone?: string;
     customerId?: string;
@@ -582,12 +584,22 @@ export const billingService = {
     tableNumber?: string | null;
     creator?: { name?: string; role?: string; id?: string };
     discount?: { type: 'percentage' | 'fixed'; value: number; appliedBy?: string; approvedBy?: string };
+    createdAt?: string;
   }): Promise<{ bill: Bill; isDuplicate: boolean }> {
-    // 0. Server-side session/active validation for staff
+    // 0. Server-side session/active validation & permission validation for staff
     if (params.creator?.id) {
       const isActive = await authService.isUserActiveInShop(params.shopId, params.creator.id);
       if (!isActive) {
         throw new Error('Your staff account has been deactivated. Please contact the shop owner.');
+      }
+      const canBill = await authService.canUserPerform(params.shopId, params.creator.id, 'bill');
+      if (!canBill) {
+        throw new Error("You don't have access for that");
+      }
+    } else {
+      const canBill = await authService.canUserPerform(params.shopId, undefined, 'bill');
+      if (!canBill) {
+        throw new Error("You don't have access for that");
       }
     }
 
@@ -639,10 +651,12 @@ export const billingService = {
     }
 
     const finalSubtotal = originalSubtotal - discountAmount;
-    const gstRate = params.gstEnabled ? 5 : 0;
-    const gstAmount = params.gstEnabled ? calculateGST(finalSubtotal, 5) : 0;
+    const gstRate = params.gstEnabled
+      ? (params.gstRate !== undefined && params.gstRate !== null ? params.gstRate : 5)
+      : 0;
+    const gstAmount = params.gstEnabled ? calculateGST(finalSubtotal, gstRate) : 0;
     const totalAmount = finalSubtotal + gstAmount;
-    const originalTotal = originalSubtotal + (params.gstEnabled ? calculateGST(originalSubtotal, 5) : 0);
+    const originalTotal = originalSubtotal + (params.gstEnabled ? calculateGST(originalSubtotal, gstRate) : 0);
 
     let paidAmount = totalAmount;
     let pendingAmount = 0;
@@ -704,8 +718,8 @@ export const billingService = {
         quantity: c.quantity,
         lineTotal: c.lineTotal,
       })),
-      createdAt: new Date().toISOString(),
-      completedAt: new Date().toISOString(),
+      createdAt: params.createdAt ? new Date(params.createdAt).toISOString() : new Date().toISOString(),
+      completedAt: params.createdAt ? new Date(params.createdAt).toISOString() : new Date().toISOString(),
       createdByName: params.creator?.name || 'Owner',
       createdByRole: (params.creator?.role as any) || 'Owner',
       createdById: params.creator?.id || null,
@@ -714,7 +728,7 @@ export const billingService = {
           id: generateUUID(),
           amount: paidAmount,
           paymentMode: params.paymentMode,
-          paidAt: new Date().toISOString(),
+          paidAt: params.createdAt ? new Date(params.createdAt).toISOString() : new Date().toISOString(),
           receivedByName: params.creator?.name || 'Owner',
           receivedById: params.creator?.id || null,
         }
@@ -760,17 +774,23 @@ export const billingService = {
     }
 
     // 2. Direct Supabase write for bills, items, payments, pendings
-    try {
-      await this.persistBillToCloud(bill, params.paymentMode, cashAmount, gpayAmount);
-    } catch (dbErr) {
-      console.warn('Direct cloud persist failed, queueing for background sync:', dbErr);
-      await syncEngine.enqueue({
-        operationId,
-        shopId: params.shopId,
-        action: 'create_bill',
-        payload: bill,
+    // Fast path: race cloud persist with 350ms so UI never lags on mobile network.
+    // If network is slow, it safely completes or enqueues in background.
+    const persistTask = this.persistBillToCloud(bill, params.paymentMode, cashAmount, gpayAmount)
+      .catch(async (dbErr) => {
+        console.warn('Direct cloud persist failed, queueing for background sync:', dbErr);
+        await syncEngine.enqueue({
+          operationId,
+          shopId: params.shopId,
+          action: 'create_bill',
+          payload: bill,
+        });
       });
-    }
+
+    await Promise.race([
+      persistTask,
+      new Promise(resolve => setTimeout(resolve, 350)),
+    ]);
 
     return { bill, isDuplicate: false };
   },
@@ -784,6 +804,7 @@ export const billingService = {
     cart: CartItem[];
     paymentMode: PaymentMethod;
     gstEnabled: boolean;
+    gstRate?: number;
     customerName?: string;
     customerPhone?: string;
     customerId?: string | null;
@@ -809,8 +830,12 @@ export const billingService = {
     if (!existingBill) throw new Error('Bill not found');
 
     const subtotal = params.cart.reduce((sum, item) => sum + item.lineTotal, 0);
-    const gstRate = params.gstEnabled ? 5 : 0;
-    const gstAmount = params.gstEnabled ? calculateGST(subtotal, 5) : 0;
+    const gstRate = params.gstEnabled
+      ? (params.gstRate !== undefined && params.gstRate !== null
+          ? params.gstRate
+          : (existingBill.gstRate || 5))
+      : 0;
+    const gstAmount = params.gstEnabled ? calculateGST(subtotal, gstRate) : 0;
     const totalAmount = subtotal + gstAmount;
 
     let paidAmount = totalAmount;
@@ -1228,7 +1253,137 @@ export const billingService = {
   },
 
   /**
-   * Derive real pending payments from actual bills and Supabase pending_payments
+   * Restore a cancelled/voided bill back to active register with complete audit trail
+   */
+  async restoreBill(
+    shopId: string,
+    billId: string,
+    restorer: { name: string; role: string; id?: string }
+  ): Promise<Bill> {
+    if (restorer.role !== 'Owner') {
+      if (restorer.role === 'Biller') {
+        throw new Error('Unauthorized: Billers cannot restore bills. Only the shop Owner can restore cancelled bills.');
+      }
+      throw new Error(`Unauthorized: Only the shop Owner can restore cancelled bills. ${restorer.role}s cannot restore bills.`);
+    }
+
+    if (restorer.id) {
+      const isActive = await authService.isUserActiveInShop(shopId, restorer.id);
+      if (!isActive) {
+        throw new Error('Unauthorized: User is inactive or deleted from shop.');
+      }
+    }
+
+    const allBills = await this.getBills(shopId);
+    const target = allBills.find(b => b.id === billId);
+    if (!target) {
+      throw new Error('Bill not found');
+    }
+
+    // Determine restored status (if edited prior to cancel, returns to edited; otherwise completed)
+    const restoredStatus: 'completed' | 'edited' = target.isEdited ? 'edited' : 'completed';
+
+    const restoredBill: Bill = {
+      ...target,
+      status: restoredStatus,
+      isDeleted: false,
+      isCancelled: false,
+      cancellationReason: undefined,
+      deletedAt: undefined,
+      deletedByName: undefined,
+      deletedByRole: undefined,
+      deletedById: null,
+    };
+
+    // 1. Update local storage
+    const updatedList = allBills.map(b => (b.id === billId ? restoredBill : b));
+    await storage.setObject(LOCAL_BILLS_KEY, updatedList);
+
+    // Also re-adjust local customer cache dues immediately if pending
+    if (target.customerName && target.pendingAmount > 0) {
+      try {
+        const localCusts = await storage.getObject<any[]>('@counterpro/customers', []);
+        const cleanPhone = target.customerPhone ? target.customerPhone.replace(/[^0-9]/g, '').slice(-10) : '';
+        const match = localCusts.find(c =>
+          c.shopId === shopId && (
+            (cleanPhone && c.phone && c.phone.replace(/[^0-9]/g, '').slice(-10) === cleanPhone) ||
+            c.name === target.customerName
+          )
+        );
+        if (match) {
+          match.pendingBalance = (match.pendingBalance || 0) + target.pendingAmount;
+          match.statusTag = match.pendingBalance > 0 ? 'Pending' : 'Regular';
+          await storage.setObject('@counterpro/customers', localCusts);
+        }
+      } catch {}
+    }
+
+    // 2. Restore in Supabase
+    try {
+      await (supabase.from('bills') as any).update({
+        status: restoredStatus,
+        is_deleted: false,
+        is_cancelled: false,
+        cancellation_reason: null,
+        deleted_at: null,
+        deleted_by_name: null,
+        deleted_by_role: null,
+        deleted_by_id: null,
+      }).eq('id', billId);
+
+      // Restore open pending payment for this bill if applicable
+      if (target.pendingAmount && target.pendingAmount > 0) {
+        await (supabase.from('pending_payments') as any)
+          .update({ status: 'pending' })
+          .eq('bill_id', billId);
+
+        // Re-adjust customer pending balance in Supabase
+        if (target.customerName) {
+          const cleanPhone = target.customerPhone ? target.customerPhone.replace(/[^0-9]/g, '').slice(-10) : '';
+          const { data: customerData } = await (supabase.from('customers') as any)
+            .select('id, pending_balance, total_bills')
+            .eq('shop_id', shopId)
+            .eq('phone', cleanPhone)
+            .maybeSingle();
+
+          if (customerData) {
+            const currentBalance = customerData.pending_balance || 0;
+            const newBalance = currentBalance + target.pendingAmount;
+            await (supabase.from('customers') as any)
+              .update({
+                pending_balance: newBalance,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', customerData.id);
+          }
+        }
+      }
+
+      // Record audit log
+      await (supabase.from('audit_logs') as any).insert({
+        shop_id: shopId,
+        actor_user_id: restorer.id && isValidUUID(restorer.id) ? restorer.id : null,
+        action: 'bill.restored',
+        entity_type: 'bill',
+        entity_id: billId,
+        metadata: {
+          bill_number: target.billNumber,
+          original_total: target.totalAmount,
+          restored_by: restorer.name,
+          restored_by_role: restorer.role,
+        },
+      });
+    } catch (err) {
+      console.warn('restoreBill Supabase notice:', err);
+    }
+
+    return restoredBill;
+  },
+
+  /**
+   * Derive real pending payments from actual bills and Supabase pending_payments,
+   * grouped by customer so multiple bills under the same person appear as one clean ledger item
+   * with their total due amount and an expandable breakdown of individual bills.
    */
   async getPendingPayments(shopId: string): Promise<PendingPaymentRecord[]> {
     if (!shopId) return [];
@@ -1237,20 +1392,172 @@ export const billingService = {
     // Only active bills with an actual positive pending balance
     const pendingBills = bills.filter(b => Number(b.pendingAmount || 0) > 0);
 
-    return pendingBills.map(b => ({
-      id: b.id,
-      shopId: b.shopId,
-      billId: b.id,
-      billNumber: b.billNumber,
-      customerName: b.customerName || 'Not tracked',
-      customerPhone: b.customerPhone,
-      amountDue: b.pendingAmount,
-      amountPaid: b.paidAmount,
-      ageDescription: 'Today',
-      status: 'open',
-      bills: [{ billNumber: b.billNumber, date: b.createdAt, amount: b.pendingAmount }],
-      createdAt: b.createdAt,
-    }));
+    // Group pending bills by customer (by clean phone if available, else customerName)
+    const groups = new Map<string, typeof pendingBills>();
+
+    for (const b of pendingBills) {
+      const cleanPhone = b.customerPhone ? b.customerPhone.replace(/[^0-9]/g, '').slice(-10) : '';
+      const key = cleanPhone && cleanPhone.length === 10
+        ? `phone_${cleanPhone}`
+        : `name_${(b.customerName || 'Not tracked').toLowerCase().trim()}`;
+
+      const existing = groups.get(key) || [];
+      existing.push(b);
+      groups.set(key, existing);
+    }
+
+    const records: PendingPaymentRecord[] = [];
+
+    for (const [, groupBills] of groups.entries()) {
+      // Sort group bills by date (newest first for primary info, but track oldest date)
+      groupBills.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      const primary = groupBills[0];
+      const oldestBill = groupBills[groupBills.length - 1];
+
+      const totalDue = groupBills.reduce((sum, b) => sum + Number(b.pendingAmount || 0), 0);
+      const totalPaid = groupBills.reduce((sum, b) => sum + Number(b.paidAmount || 0), 0);
+
+      // Determine age description
+      let ageDesc = 'Today';
+      try {
+        const createdMs = new Date(oldestBill.createdAt).getTime();
+        const diffDays = Math.floor((Date.now() - createdMs) / (1000 * 60 * 60 * 24));
+        if (diffDays > 1) {
+          ageDesc = `${diffDays} days ago`;
+        } else if (diffDays === 1) {
+          ageDesc = 'Yesterday';
+        }
+      } catch {}
+
+      records.push({
+        id: groupBills.length > 1 ? `group_${primary.id}` : primary.id,
+        shopId: primary.shopId,
+        billId: primary.id,
+        billNumber: groupBills.length > 1 ? `${primary.billNumber} (+${groupBills.length - 1} more)` : primary.billNumber,
+        customerName: primary.customerName || 'Not tracked',
+        customerPhone: primary.customerPhone,
+        amountDue: totalDue,
+        amountPaid: totalPaid,
+        ageDescription: ageDesc,
+        status: 'open',
+        bills: groupBills.map(b => ({
+          billId: b.id,
+          billNumber: b.billNumber,
+          date: b.createdAt,
+          amount: b.pendingAmount,
+        })),
+        createdAt: primary.createdAt,
+      });
+    }
+
+    return records;
+  },
+
+  /**
+   * Clear multiple pending bills for a customer in sequence (e.g. FIFO or user-selected bills)
+   */
+  async clearMultiplePendingBills(
+    shopId: string,
+    billIds: string[],
+    paidNowAmount?: number,
+    paymentMode: PaymentMethod = 'Cash',
+    collector?: { name?: string; role?: string; id?: string }
+  ): Promise<PendingPaymentRecord[]> {
+    const canPend = await authService.canUserPerform(shopId, collector?.id, 'pend');
+    if (!canPend) {
+      throw new Error("You don't have access for that");
+    }
+
+    if (!billIds || billIds.length === 0) {
+      return await this.getPendingPayments(shopId);
+    }
+
+    const allSaved = await storage.getObject<Bill[]>(LOCAL_BILLS_KEY, []);
+    const nowIso = new Date().toISOString();
+    const dbMode = toSupabasePaymentMode(paymentMode);
+
+    // Filter target bills for this shop that have positive pending amount
+    const matchedBills = allSaved
+      .filter(b => b.shopId === shopId && billIds.includes(b.id) && (b.pendingAmount || 0) > 0)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+    let remainingToDistribute = paidNowAmount !== undefined && paidNowAmount !== null && paidNowAmount > 0
+      ? paidNowAmount
+      : matchedBills.reduce((s, b) => s + (b.pendingAmount || 0), 0);
+
+    const updatedBillsMap = new Map<string, Bill>();
+
+    for (const b of matchedBills) {
+      if (remainingToDistribute <= 0) break;
+      const currentDue = b.pendingAmount > 0 ? b.pendingAmount : b.totalAmount;
+      const collectForThisBill = Math.min(currentDue, remainingToDistribute);
+      const remainingDue = Math.max(0, currentDue - collectForThisBill);
+      const isFullSettlement = remainingDue === 0;
+      const newPaidAmount = (b.paidAmount || 0) + collectForThisBill;
+
+      const initialPaid = b.initialPaidAmount !== undefined
+        ? b.initialPaidAmount
+        : (b.paymentMode === 'Pending' ? 0 : (b.paidAmount || 0));
+
+      const newCollection: BillPaymentCollection = {
+        id: generateUUID(),
+        amount: collectForThisBill,
+        paymentMode,
+        paidAt: nowIso,
+        receivedByName: collector?.name || 'Owner',
+        receivedById: collector?.id || null,
+      };
+
+      const updatedBill: Bill = {
+        ...b,
+        paidAmount: newPaidAmount,
+        pendingAmount: remainingDue,
+        initialPaidAmount: initialPaid,
+        paymentMode: isFullSettlement ? (b.paymentMode === 'Pending' ? paymentMode : b.paymentMode) : b.paymentMode,
+        settledAt: isFullSettlement ? nowIso : (b.settledAt || null),
+        completedAt: nowIso,
+        collections: [...(b.collections || []), newCollection],
+      };
+
+      updatedBillsMap.set(b.id, updatedBill);
+      remainingToDistribute -= collectForThisBill;
+
+      // Sync this bill to Supabase asynchronously in background
+      (async () => {
+        try {
+          const updateData: any = {
+            paid_amount: newPaidAmount,
+            pending_amount: remainingDue,
+            completed_at: nowIso,
+            collections: updatedBill.collections,
+          };
+          if (isFullSettlement) {
+            updateData.settled_at = nowIso;
+            if (b.paymentMode === 'Pending') {
+              updateData.payment_mode = dbMode;
+            }
+          }
+          if (isValidUUID(b.id)) {
+            await (supabase.from('bills') as any).update(updateData).eq('id', b.id);
+            if (isFullSettlement) {
+              await (supabase.from('pending_payments') as any)
+                .update({ status: 'settled', settled_at: nowIso, amount_paid: newPaidAmount, amount_due: 0 })
+                .eq('bill_id', b.id);
+            } else {
+              await (supabase.from('pending_payments') as any)
+                .update({ amount_due: remainingDue, amount_paid: newPaidAmount })
+                .eq('bill_id', b.id);
+            }
+          }
+        } catch {}
+      })().catch(() => {});
+    }
+
+    // Persist all updated bills to local storage immediately
+    const updatedAllBills = allSaved.map(b => updatedBillsMap.get(b.id) || b);
+    await storage.setObject(LOCAL_BILLS_KEY, updatedAllBills);
+
+    return await this.getPendingPayments(shopId);
   },
 
   /**
@@ -1265,7 +1572,12 @@ export const billingService = {
     paymentMode: PaymentMethod = 'Cash',
     collector?: { name?: string; role?: string; id?: string }
   ): Promise<PendingPaymentRecord[]> {
-    const cleanId = String(targetBillId || '').replace(/^pend_/, '').trim();
+    const canPend = await authService.canUserPerform(shopId, collector?.id, 'pend');
+    if (!canPend) {
+      throw new Error("You don't have access for that");
+    }
+
+    const cleanId = String(targetBillId || '').replace(/^pend_/, '').replace(/^group_/, '').trim();
     const bills = await this.getBills(shopId);
     const allSaved = await storage.getObject<Bill[]>(LOCAL_BILLS_KEY, []);
 

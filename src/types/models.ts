@@ -34,6 +34,8 @@ export interface Shop {
   dailyBackupEnabled: boolean;
   printerEnabled: boolean;
   printerName?: string | null;
+  printerUrl?: string | null;
+  printerConnectionType?: string | null;
   tableManagementEnabled?: boolean;
   tableCount?: number;
   maxStaffLimit?: number;
@@ -74,6 +76,7 @@ export interface MenuItem {
   imageStatus?: 'pending' | 'generating' | 'completed' | 'failed' | null;
   costPrice?: number | null;
   sortOrder: number;
+  icon?: string | null;
 }
 
 export interface MenuCategory {
@@ -176,7 +179,7 @@ export interface PendingPaymentRecord {
   amountPaid: number;
   ageDescription: string;
   status: 'open' | 'settled' | 'cancelled';
-  bills: Array<{ billNumber: string; date: string; amount: number }>;
+  bills: Array<{ billNumber: string; date: string; amount: number; billId?: string }>;
   createdAt: string;
 }
 

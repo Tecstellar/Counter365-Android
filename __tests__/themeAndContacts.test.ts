@@ -10,6 +10,7 @@ const mockQueryBuilder = {
   upsert: jest.fn().mockReturnThis(),
   delete: jest.fn().mockReturnThis(),
   eq: jest.fn().mockReturnThis(),
+  neq: jest.fn().mockReturnThis(),
   order: jest.fn().mockResolvedValue({ data: [], error: null }),
   maybeSingle: jest.fn().mockResolvedValue({ data: { id: '00000000-0000-0000-0000-000000000001' }, error: null }),
 };
@@ -210,6 +211,93 @@ describe('Theme and Customer Contacts Integration', () => {
       const allCustomers = await contactService.getCustomers(shopId);
       const matchingPhone = allCustomers.filter(c => c.phone?.slice(-10) === '9840198401');
       expect(matchingPhone.length).toBe(1);
+    });
+
+    it('identifies existing vendor by normalized 10-digit phone and updates safely instead of duplicating', async () => {
+      // 1. Add vendor
+      const originalVendor = await contactService.addVendor(
+        shopId,
+        'Chittappa Provisions',
+        'Groceries',
+        '9876500001',
+        'South Mada St'
+      );
+
+      // 2. Search by phone with formatting
+      const foundVendor = await contactService.findExistingVendorByPhone(shopId, '+91 98765 00001');
+      expect(foundVendor).not.toBeNull();
+      expect(foundVendor?.id).toBe(originalVendor.id);
+      expect(foundVendor?.name).toBe('Chittappa Provisions');
+
+      // 3. Attempting to add duplicate vendor updates existing record rather than creating a duplicate
+      const duplicateAdd = await contactService.addVendor(
+        shopId,
+        'Chittappa Store',
+        'Wholesale',
+        '98765-00001',
+        'South Mada St Ext'
+      );
+      expect(duplicateAdd.id).toBe(originalVendor.id);
+      expect(duplicateAdd.name).toBe('Chittappa Store');
+
+      // 4. Verify vendor list has only 1 entry for this 10-digit phone
+      const allVendors = await contactService.getVendors(shopId);
+      const matchingVendors = allVendors.filter(v => v.phone?.slice(-10) === '9876500001');
+      expect(matchingVendors.length).toBe(1);
+    });
+
+    it('findAnyContactByPhone finds contact across both customers and vendors (Jyothi Gas Cylinder scenario)', async () => {
+      // 1. Add Jyothi as a Vendor for Gas Cylinder
+      const jyothiVendor = await contactService.addVendor(
+        shopId,
+        'Jyothi',
+        'Gas Cylinder',
+        '9876543299',
+        'Area 5'
+      );
+      expect(jyothiVendor.name).toBe('Jyothi');
+      expect(jyothiVendor.supplyType).toBe('Gas Cylinder');
+
+      // 2. Search cross-contact by phone (+91 98765 43299)
+      const foundContact = await contactService.findAnyContactByPhone(shopId, '+91 98765 43299');
+      expect(foundContact).not.toBeNull();
+      expect(foundContact?.type).toBe('vendor');
+      expect(foundContact?.name).toBe('Jyothi');
+
+      // 3. Import batch customers deduplicates against existing vendor phone numbers
+      const importResult = await contactService.importCustomersWithResult(shopId, [
+        { name: 'New Name Client', phone: '9876543299' },
+      ]);
+      expect(importResult.alreadyExistingCount).toBe(1);
+      expect(importResult.added.length).toBe(0);
+    });
+
+    it('addMultipleVendors updates existing vendor name when uploading contact and guarantees exactly 1 contact per phone', async () => {
+      // 1. Initial vendor exists with phone 9876599999 and name "Initial Vendor"
+      const initial = await contactService.addVendor(
+        shopId,
+        'Initial Vendor',
+        'Milk',
+        '9876599999'
+      );
+      expect(initial.name).toBe('Initial Vendor');
+
+      // 2. Upload / import contact with the same phone but new name "Updated Supplier"
+      const result = await contactService.addMultipleVendors(
+        shopId,
+        [{ name: 'Updated Supplier', phone: '+91 98765 99999' }],
+        'Dairy'
+      );
+
+      // 3. Result updates the contact's name and preserves 1 contact
+      expect(result.length).toBe(1);
+      expect(result[0].name).toBe('Updated Supplier');
+
+      // 4. Verify getVendors only returns 1 contact for this number with the updated name
+      const all = await contactService.getVendors(shopId);
+      const matching = all.filter(v => v.phone?.slice(-10) === '9876599999');
+      expect(matching.length).toBe(1);
+      expect(matching[0].name).toBe('Updated Supplier');
     });
   });
 

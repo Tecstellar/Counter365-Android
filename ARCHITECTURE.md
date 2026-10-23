@@ -716,5 +716,43 @@ Architecture is approved only when:
 -   [ ] Printer strategy decided
 -   [ ] Sharing strategy decided
 -   [ ] Testing strategy decided
--   [ ] Security strategy decided
--   [ ] Migration strategy decided
+-   [x] Security strategy decided
+-   [x] Migration strategy decided
+
+------------------------------------------------------------------------
+
+# 27. Anti-Duplicate Shop Protection & Phone Uniqueness Policy
+
+### 1. Database Level Enforcement (Migration 0028)
+- `shops.phone` is constrained by `idx_shops_phone_unique` and `shops_phone_unique`.
+- A database-level trigger `trigger_prevent_duplicate_shop_phone` prevents any insert or update of a shop with an existing phone number.
+
+### 2. Application Service Level Enforcement (`shopService.ts`)
+- **`registerShop`**: Pre-queries Supabase for existing shops with the normalized phone number. If found, it reuses the authoritative shop ID and updates the shop via `upsert`, strictly prohibiting duplicate row generation.
+- **`saveShop`**: Validates `shop.phone` against remote Supabase rows; if an existing shop with a different ID is detected, it adopts the authoritative remote ID.
+- **`ensureShopExists`**: When a local shop ID is missing in Supabase, checks whether the phone number is already registered remotely. If so, adopts the remote shop rather than provisioning a duplicate placeholder.
+- **`getActiveShop`**: Proactively verifies that local cached shop ID matches the remote authoritative shop for the user's phone, synchronizing cache automatically.
+
+------------------------------------------------------------------------
+
+# 28. Over-The-Air (OTA) Update Architecture
+
+### 1. EAS Update Infrastructure (`app.json` & `eas.json`)
+- **EAS Project ID**: `3a8aa2b0-0cce-48b2-a9d5-e9fdfb40426c`
+- **Update URL**: `https://u.expo.dev/3a8aa2b0-0cce-48b2-a9d5-e9fdfb40426c`
+- **Runtime Version Policy**: `"appVersion"` (guarantees native binary compatibility so OTA updates never apply across incompatible native code versions).
+- **Update Strategy**: `"checkAutomatically": "ON_LOAD"`, `"fallbackToCacheTimeout": 0` (immediate startup from cache, background download of new bundle).
+- **Channels**:
+  - `production` -> linked to `production` build profile.
+  - `preview` -> linked to `preview` build profile.
+  - `development` -> linked to `development` build profile.
+
+### 2. Application Layer Integration (`otaUpdateService.ts`)
+- **Lifecycle Checks**: Automatically checks for OTA updates in the background on app launch and when `AppState` changes to `active`.
+- **Manual Verification**: In `AccountScreen`, users can tap "Check for Updates" to interactively check and apply updates with an immediate restart prompt.
+- **Publishing Command**:
+  ```bash
+  eas update --branch production --message "Release notes"
+  ```
+
+

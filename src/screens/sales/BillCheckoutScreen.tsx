@@ -12,6 +12,7 @@ import {
   PanResponder,
   AccessibilityInfo,
   Modal,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { typography, radii, shadows, useTheme, Theme } from '../../theme';
@@ -393,9 +394,52 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
   const [whatsAppModalError, setWhatsAppModalError] = useState<string | null>(null);
   const [thermalPaperSize, setThermalPaperSize] = useState<ThermalPaperSize>('80mm');
   const [savedBillSuccess, setSavedBillSuccess] = useState<Bill | null>(null);
+  const [billDateOption, setBillDateOption] = useState<'today' | 'yesterday' | 'custom'>('today');
+  const [customBillDate, setCustomBillDate] = useState<Date>(new Date());
+  const [isCustomDatePickerOpen, setIsCustomDatePickerOpen] = useState(false);
+  const [autoCloseCountdown, setAutoCloseCountdown] = useState<number>(0);
 
   // Thermal printer reactive state: dynamically follows printerEnabled toggle in Account Settings
   const isPrinterConfigured = Boolean(shop.printerEnabled);
+
+  // Auto-close timer for bill save success modal:
+  // If thermal printer is enabled: 10 seconds.
+  // If thermal printer is disabled: 3 seconds.
+  useEffect(() => {
+    if (!savedBillSuccess) {
+      setAutoCloseCountdown(0);
+      return;
+    }
+    const duration = isPrinterConfigured ? 10 : 3;
+    setAutoCloseCountdown(duration);
+
+    const interval = setInterval(() => {
+      setAutoCloseCountdown(prev => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setSavedBillSuccess(null);
+          onBackToMenu();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [savedBillSuccess, isPrinterConfigured]);
+
+  const effectiveBillDate = useMemo(() => {
+    if (editingBill?.createdAt) return new Date(editingBill.createdAt);
+    if (billDateOption === 'yesterday') {
+      const d = new Date();
+      d.setDate(d.getDate() - 1);
+      return d;
+    }
+    if (billDateOption === 'custom') {
+      return customBillDate;
+    }
+    return new Date();
+  }, [editingBill, billDateOption, customBillDate]);
 
   const isPendingOrPartial = paymentMode === 'Pending' || paymentMode === 'Partial Pay';
   const selectedModeConfig = paymentModesList.find(m => m.mode === paymentMode) || paymentModesList[0];
@@ -872,6 +916,7 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
           customerPhone: effectivePhone || undefined,
           customerId: finalCustomerId || undefined,
           creator: userMeta,
+          createdAt: effectiveBillDate.toISOString(),
         });
 
         clearCart();
@@ -1068,10 +1113,34 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
             )}
           </View>
 
-          {/* Big ₹ amount with animated count-up */}
-          <Text style={styles.totalAmountText}>
-            ₹{displayTotal.toLocaleString('en-IN')}
-          </Text>
+          {/* Amount Row: Big ₹ amount with animated count-up and opposite calendar button */}
+          <View style={styles.totalAmountRow}>
+            <Text style={styles.totalAmountText}>
+              ₹{displayTotal.toLocaleString('en-IN')}
+            </Text>
+            {!editingBill && (
+              <TouchableOpacity
+                activeOpacity={0.75}
+                onPress={() => setIsCustomDatePickerOpen(true)}
+                style={[
+                  styles.calendarCornerBtn,
+                  billDateOption !== 'today' && styles.calendarCornerBtnActive,
+                ]}
+                accessibilityLabel="Select Bill Date"
+              >
+                <Ionicons
+                  name="calendar"
+                  size={18}
+                  color={billDateOption !== 'today' ? '#FF5F00' : '#E7E5E4'}
+                />
+                {billDateOption !== 'today' && (
+                  <Text style={styles.calendarCornerDateText}>
+                    {effectiveBillDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
 
           {/* Item count and item names preview */}
           <TouchableOpacity
@@ -1392,6 +1461,14 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
               Bill #{String(savedBillSuccess?.billNumber || '').replace(/^#/, '')}
             </Text>
 
+            {/* Auto Close Indicator Badge */}
+            <View style={styles.autoCloseIndicatorBadge}>
+              <Ionicons name="time-outline" size={13} color="#FF5F00" />
+              <Text style={styles.autoCloseIndicatorText}>
+                Auto-closing in {autoCloseCountdown}s
+              </Text>
+            </View>
+
             {/* Exactly matching receipt ticket */}
             <SavedBillTicketCard
               billNumber={savedBillSuccess?.billNumber || 1}
@@ -1471,6 +1548,101 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
             )}
           </View>
         </View>
+      </Modal>
+
+      {/* Custom Past Date Selector Modal */}
+      <Modal
+        visible={isCustomDatePickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsCustomDatePickerOpen(false)}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setIsCustomDatePickerOpen(false)}
+          style={styles.dateModalBackdrop}
+        >
+          <TouchableWithoutFeedback>
+            <View style={styles.dateModalCard}>
+              <View style={styles.dateModalHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Ionicons name="calendar" size={18} color="#FF5F00" />
+                  <Text style={styles.dateModalTitle}>Select Past Bill Date</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setIsCustomDatePickerOpen(false)}
+                  style={styles.dateModalCloseBtn}
+                >
+                  <Ionicons name="close" size={18} color={isDark ? '#9CA3AF' : '#475569'} />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.dateModalSub}>
+                Choose any recent date to record a backdated bill:
+              </Text>
+
+              {/* Past days quick options (Today, Yesterday, 2..14 days ago - strictly past dates only) */}
+              <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
+                <View style={styles.pastDaysGrid}>
+                  {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].map(daysAgo => {
+                    const d = new Date();
+                    d.setDate(d.getDate() - daysAgo);
+                    const isToday = daysAgo === 0;
+                    const isYesterday = daysAgo === 1;
+                    const isSelected = isToday
+                      ? billDateOption === 'today'
+                      : isYesterday
+                      ? billDateOption === 'yesterday'
+                      : billDateOption === 'custom' &&
+                        customBillDate.toDateString() === d.toDateString();
+                    const dayLabel = isToday
+                      ? 'Today'
+                      : isYesterday
+                      ? 'Yesterday'
+                      : `${daysAgo}d ago`;
+                    const dateLabel = d.toLocaleDateString('en-IN', {
+                      weekday: 'short',
+                      day: 'numeric',
+                      month: 'short',
+                    });
+
+                    return (
+                      <TouchableOpacity
+                        key={daysAgo}
+                        activeOpacity={0.75}
+                        onPress={() => {
+                          if (isToday) {
+                            setBillDateOption('today');
+                            flash('Bill date set to Today');
+                          } else if (isYesterday) {
+                            setBillDateOption('yesterday');
+                            flash('Bill date set to Yesterday');
+                          } else {
+                            setCustomBillDate(d);
+                            setBillDateOption('custom');
+                            flash(`Bill date set to ${dateLabel}`);
+                          }
+                          setIsCustomDatePickerOpen(false);
+                        }}
+                        style={[
+                          styles.pastDayBtn,
+                          isSelected && styles.pastDayBtnSelected,
+                        ]}
+                      >
+                        <Text style={[styles.pastDayLabel, isSelected && styles.pastDayLabelSelected]}>
+                          {dayLabel}
+                        </Text>
+                        <Text style={[styles.pastDayDate, isSelected && styles.pastDayDateSelected]}>
+                          {dateLabel}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+            </View>
+          </TouchableWithoutFeedback>
+        </TouchableOpacity>
       </Modal>
 
       {/* WhatsApp Prompt Modal (When Save & Share clicked or customer details needed) */}
@@ -1933,6 +2105,33 @@ const createStyles = (theme: Theme, isDark: boolean) => {
       fontWeight: '800',
       color: '#FF8A3D',
       letterSpacing: 0.5,
+    },
+    totalAmountRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginVertical: 4,
+    },
+    calendarCornerBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      backgroundColor: 'rgba(255, 255, 255, 0.08)',
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: 'rgba(255, 255, 255, 0.14)',
+    },
+    calendarCornerBtnActive: {
+      backgroundColor: 'rgba(255, 95, 0, 0.2)',
+      borderColor: 'rgba(255, 95, 0, 0.5)',
+    },
+    calendarCornerDateText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 12,
+      fontWeight: '700',
+      color: '#FF8A3D',
     },
     totalAmountText: {
       fontFamily: typography.fonts.numbers,
@@ -3086,6 +3285,164 @@ const createStyles = (theme: Theme, isDark: boolean) => {
     savedSuccessDoneBtnTextPrimary: {
       color: '#FFFFFF',
       fontWeight: '800',
+    },
+    autoCloseIndicatorBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 12,
+      backgroundColor: isDark ? 'rgba(255, 95, 0, 0.15)' : '#FFF3EB',
+      marginTop: 6,
+      marginBottom: 4,
+    },
+    autoCloseIndicatorText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 11,
+      fontWeight: '700',
+      color: orangeText,
+    },
+    billDateCard: {
+      backgroundColor: surface,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: line,
+      padding: 12,
+      marginHorizontal: 16,
+      marginTop: 8,
+      gap: 8,
+    },
+    billDateHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    billDateTitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 12,
+      fontWeight: '800',
+      color: ink,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    backdatedActivePill: {
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: 8,
+      backgroundColor: isDark ? 'rgba(245, 158, 11, 0.18)' : '#FEF3C7',
+    },
+    backdatedActivePillText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 11,
+      fontWeight: '800',
+      color: isDark ? '#FBBF24' : '#D97706',
+    },
+    billDatePillsRow: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    billDatePill: {
+      flex: 1,
+      height: 36,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: line,
+      backgroundColor: alt,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    billDatePillActive: {
+      backgroundColor: orange,
+      borderColor: orange,
+    },
+    billDatePillText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 12,
+      fontWeight: '700',
+      color: muted,
+    },
+    billDatePillTextActive: {
+      color: '#FFFFFF',
+      fontWeight: '800',
+    },
+    dateModalBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.65)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    dateModalCard: {
+      width: '100%',
+      maxWidth: 340,
+      backgroundColor: surface,
+      borderRadius: 20,
+      padding: 20,
+      borderWidth: 1,
+      borderColor: line,
+      gap: 12,
+    },
+    dateModalHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    dateModalTitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 16,
+      fontWeight: '800',
+      color: ink,
+    },
+    dateModalCloseBtn: {
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      backgroundColor: alt,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    dateModalSub: {
+      fontFamily: typography.fonts.body,
+      fontSize: 12,
+      color: muted,
+    },
+    pastDaysGrid: {
+      gap: 6,
+    },
+    pastDayBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderRadius: 10,
+      backgroundColor: alt,
+      borderWidth: 1,
+      borderColor: line,
+    },
+    pastDayBtnSelected: {
+      borderColor: orange,
+      backgroundColor: orangeSoft,
+    },
+    pastDayLabel: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 13,
+      fontWeight: '700',
+      color: ink,
+    },
+    pastDayLabelSelected: {
+      color: orangeText,
+      fontWeight: '800',
+    },
+    pastDayDate: {
+      fontFamily: typography.fonts.body,
+      fontSize: 12,
+      color: muted,
+    },
+    pastDayDateSelected: {
+      color: orangeText,
+      fontWeight: '700',
     },
   });
 };

@@ -19,24 +19,29 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { AppButton } from '../../components/common/AppButton';
 import { AppTag } from '../../components/common/AppTag';
-import { RoleManagementSheet } from './RoleManagementSheet';
+import { RoleManagementSheet, PERM_ROWS, DEFAULT_ROLE_PERMS } from './RoleManagementSheet';
 import { SubscriptionPlansModal } from '../../components/subscription/SubscriptionPlansModal';
 import { SupportModal } from '../../components/modals/SupportModal';
 import { APP_CONFIG } from '../../constants/appConfig';
 import { useAuth } from '../../context/AuthContext';
 import { useShop } from '../../context/ShopContext';
 import { useCart } from '../../context/CartContext';
+import { useLanguage } from '../../context/LanguageContext';
 import { ShopMember, UserRole, PermissionKey } from '../../types/models';
 import Constants from 'expo-constants';
 import { storage } from '../../lib/storage';
 import { imageService } from '../../services/imageService';
 import { supabase } from '../../lib/supabase';
 import * as Print from 'expo-print';
-import { printerService } from '../../services/printerService';
+import { printerService, DiscoveredPrinter } from '../../services/printerService';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { twoFactorService } from '../../services/twoFactorService';
 import { generateDefaultInvoicePrefix } from '../../lib/invoiceUtils';
 import { subscriptionService } from '../../services/subscriptionService';
 import { SubscriptionRecord } from '../../types/models';
+import { otaUpdateService } from '../../services/otaUpdateService';
+import { LegalDocumentModal } from '../../components/common/LegalDocumentModal';
+import { PRIVACY_POLICY_SECTIONS, TERMS_OF_SERVICE_SECTIONS, DPDPA_COMPLIANCE_DATE } from '../../constants/legalDocuments';
 
 const DELETE_ACCOUNT_REASONS: Array<{
   id: string;
@@ -62,7 +67,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
   onLogout,
   onNavigateToSupport,
 }) => {
-  const { currentRole, can, profile, logout, updateProfile } = useAuth();
+  const { currentRole, can, profile, currentMember, logout, updateProfile, refreshMemberSession } = useAuth();
   const {
     shop,
     members,
@@ -74,11 +79,14 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
     deleteShopPermanently,
     subscriptionStatus,
     refreshSubscription,
+    refreshShop,
   } = useShop();
   const { flash } = useCart();
+  const { t } = useLanguage();
+  const insets = useSafeAreaInsets();
   const { theme, isDark, toggleTheme } = useTheme();
   const colors = theme.colors;
-  const styles = React.useMemo(() => createStyles(theme), [theme]);
+  const styles = React.useMemo(() => createStyles(theme, insets), [theme, insets]);
 
   // Subscription modal state
   const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
@@ -108,6 +116,15 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
       }).catch(() => {});
     }
   }, [shop?.id, subscriptionStatus?.isPaidActive]);
+
+  useEffect(() => {
+    if (refreshShop) {
+      refreshShop().catch(() => {});
+    }
+    if (refreshMemberSession) {
+      refreshMemberSession().catch(() => {});
+    }
+  }, []);
   const [isSavingShopEdit, setIsSavingShopEdit] = useState(false);
 
   // Users & Staff State (Supervisor & Biller)
@@ -115,12 +132,24 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
   const [newUserName, setNewUserName] = useState('');
   const [newUserPhone, setNewUserPhone] = useState('');
   const [newUserRole, setNewUserRole] = useState<UserRole>('Supervisor');
+  const [newUserOverrides, setNewUserOverrides] = useState<Partial<Record<PermissionKey, boolean>>>({});
   const [isSavingUser, setIsSavingUser] = useState(false);
   const [selectedMemberForSheet, setSelectedMemberForSheet] = useState<ShopMember | null>(null);
 
+  const handleToggleNewUserPerm = (permKey: PermissionKey, currentValue: boolean) => {
+    try {
+      Haptics.selectionAsync();
+    } catch {}
+    setNewUserOverrides(prev => ({
+      ...prev,
+      [permKey]: !currentValue,
+    }));
+  };
+
   // Table Management State
-  const [tableCountInput, setTableCountInput] = useState(String(shop.tableCount || 4));
+  const [tableCountInput, setTableCountInput] = useState(String(shop.tableCount || 6));
   const [isSavingTableCount, setIsSavingTableCount] = useState(false);
+  const [isTableEditorOpen, setIsTableEditorOpen] = useState(false);
 
   // GST State
   const [isGstEditorOpen, setIsGstEditorOpen] = useState(false);
@@ -129,6 +158,14 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
 
   // Real Thermal Printer State
   const [isScanningPrinters, setIsScanningPrinters] = useState(false);
+  const [scanCompleted, setScanCompleted] = useState(false);
+  const [discoveredPrinters, setDiscoveredPrinters] = useState<DiscoveredPrinter[]>([]);
+  const [scanExplanation, setScanExplanation] = useState<string | null>(null);
+  const [connectingPrinterId, setConnectingPrinterId] = useState<string | null>(null);
+  const [isPrintingTest, setIsPrintingTest] = useState(false);
+  const [isAddingIpPrinter, setIsAddingIpPrinter] = useState(false);
+  const [customPrinterIp, setCustomPrinterIp] = useState('');
+  const [isSavingCustomIp, setIsSavingCustomIp] = useState(false);
 
   // Cloud Backup State
   const [isSyncingBackup, setIsSyncingBackup] = useState(false);
@@ -138,6 +175,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
   const [isPrivacyModalOpen, setIsPrivacyModalOpen] = useState(false);
   const [isTermsModalOpen, setIsTermsModalOpen] = useState(false);
   const [isAccountActionsModalOpen, setIsAccountActionsModalOpen] = useState(false);
+  const [isAccountManagementExpanded, setIsAccountManagementExpanded] = useState(false);
   const [isDeletingShop, setIsDeletingShop] = useState(false);
 
   // Delete Account with Survey Reason Modal
@@ -162,15 +200,17 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
   const [newOtpError, setNewOtpError] = useState<string | null>(null);
 
   const handleOpenPlayStoreReview = async () => {
-    const playStoreUrl = APP_CONFIG.playStoreUrl || 'https://play.google.com/store/apps/details?id=com.counterpro.bill';
+    const playStoreAppUrl = 'market://details?id=com.counterpro.app';
+    const playStoreWebUrl = APP_CONFIG.playStoreUrl || 'https://play.google.com/store/apps/details?id=com.counterpro.app';
     try {
-      const canOpen = await Linking.canOpenURL(playStoreUrl);
-      if (canOpen) {
-        await Linking.openURL(playStoreUrl);
+      const supported = await Linking.canOpenURL(playStoreAppUrl).catch(() => false);
+      if (supported && Platform.OS === 'android') {
+        await Linking.openURL(playStoreAppUrl);
       } else {
-        await Linking.openURL(playStoreUrl);
+        await Linking.openURL(playStoreWebUrl);
       }
     } catch {
+      Linking.openURL(playStoreWebUrl).catch(() => {});
       flash('Opening Google Play Store...');
     }
   };
@@ -421,10 +461,12 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
 
     setIsSavingUser(true);
     try {
-      await addMember(name, newUserRole, phone);
+      await addMember(name, newUserRole, phone, newUserOverrides);
       setNewUserName('');
       setNewUserPhone('');
+      setNewUserOverrides({});
       setIsAddUserOpen(false);
+      flash(t('staff_added_success', 'Staff member added successfully'));
     } catch (err: any) {
       flash(err?.message || 'Failed to add user');
     } finally {
@@ -432,15 +474,21 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
     }
   };
 
-  // --- Table Settings Handlers ---
+  // Table Settings Handlers
   const handleToggleTableSettings = async () => {
     const next = !shop.tableManagementEnabled;
-    const count = Number(tableCountInput) || shop.tableCount || 4;
+    const count = Number(tableCountInput) || shop.tableCount || 6;
     await updateShop({
       tableManagementEnabled: next,
       tableCount: count,
     });
-    flash(next ? `Dining table management enabled (${count} tables)` : 'Table management disabled (Counter mode)');
+    if (next) {
+      setIsTableEditorOpen(true);
+      flash(`Dining table management enabled (${count} tables)`);
+    } else {
+      setIsTableEditorOpen(false);
+      flash('Table management disabled');
+    }
   };
 
   const handleSaveTableCountInput = async () => {
@@ -457,6 +505,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
         tableManagementEnabled: true,
         tableCount: safeCount,
       });
+      setIsTableEditorOpen(false);
       flash(`Saved ${safeCount} dining tables`);
     } catch (err) {
       flash('Failed to save tables');
@@ -484,7 +533,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
       return;
     }
     const nextEnabled = !shop.gstEnabled;
-    const rate = Number(gstRateInput) || 5;
+    const rate = Number(gstRateInput) || shop.gstRate || 5;
     await updateShop({ gstEnabled: nextEnabled, gstRate: rate });
     if (nextEnabled) {
       setIsGstEditorOpen(true);
@@ -500,7 +549,8 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
     setIsSavingGst(true);
     try {
       await updateShop({ gstEnabled: true, gstRate: rate });
-      flash(`GST set to ${rate}%`);
+      setIsGstEditorOpen(false);
+      flash(`GST ${rate}% saved and applied to all bills`);
     } finally {
       setIsSavingGst(false);
     }
@@ -515,7 +565,8 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
     setIsSavingGst(true);
     try {
       await updateShop({ gstEnabled: true, gstRate: rate });
-      flash(`GST rate ${rate}% saved`);
+      setIsGstEditorOpen(false);
+      flash(`GST rate ${rate}% saved and applied to all bills`);
     } finally {
       setIsSavingGst(false);
     }
@@ -528,87 +579,149 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
       printerEnabled: nextEnabled,
     });
     if (nextEnabled) {
-      flash('Thermal printer enabled. Ready to pair hardware');
+      flash('Thermal printer enabled');
+      if (!shop.printerName) {
+        handleScanRealPrinter();
+      }
     } else {
       flash('Thermal printer disabled');
     }
   };
 
   const handleScanRealPrinter = async () => {
+    if (isScanningPrinters) return;
     setIsScanningPrinters(true);
+    setScanCompleted(false);
+    setScanExplanation(null);
+    setDiscoveredPrinters([]);
+
     try {
-      if (Platform.OS === 'ios' || Platform.OS === 'android') {
-        const selected = await Print.selectPrinterAsync();
-        if (selected && selected.name) {
+      const res = await printerService.scanForPrinters();
+      if (res.printers && res.printers.length > 0) {
+        setDiscoveredPrinters(res.printers);
+        // On iOS AirPrint picker, exactly 1 selected printer is returned
+        if (Platform.OS === 'ios' && res.printers.length === 1) {
+          const selected = res.printers[0];
           await updateShop({
             printerEnabled: true,
             printerName: selected.name,
+            printerUrl: selected.url,
+            printerConnectionType: selected.connectionType,
           });
+          await printerService.saveActivePrinter(selected);
           flash(`Connected to ${selected.name}`);
-          return;
         }
+      } else {
+        setDiscoveredPrinters([]);
+        setScanExplanation(res.explanation || 'No printers found');
+      }
+    } catch (err: any) {
+      setDiscoveredPrinters([]);
+      setScanExplanation(err?.message || 'Scanning failed. Check Bluetooth/Wi-Fi and permissions.');
+    } finally {
+      setIsScanningPrinters(false);
+      setScanCompleted(true);
+    }
+  };
+
+  const handleConnectDiscoveredPrinter = async (p: DiscoveredPrinter) => {
+    if (connectingPrinterId) return;
+    setConnectingPrinterId(p.id);
+    try {
+      const verifyRes = await printerService.verifyPrinterConnection(p);
+      if (!verifyRes.verified) {
+        flash(verifyRes.error || 'Connection failed: printer unreachable');
+        return;
       }
       await updateShop({
         printerEnabled: true,
-        printerName: shop.printerName || 'Hardware Thermal ESC/POS Printer',
+        printerName: p.name,
+        printerUrl: p.url,
+        printerConnectionType: p.connectionType,
       });
-      flash('Hardware printer ready via Print Service');
+      await printerService.saveActivePrinter(p);
+      flash(`Connected to ${p.name}`);
     } catch (err: any) {
+      flash('Connection error: ' + (err?.message || 'Could not connect to device'));
+    } finally {
+      setConnectingPrinterId(null);
+    }
+  };
+
+  const handleAddNetworkIpPrinter = async () => {
+    const ip = customPrinterIp.trim();
+    if (!ip) {
+      flash('Enter valid printer IP address (e.g. 192.168.1.100)');
+      return;
+    }
+    setIsSavingCustomIp(true);
+    try {
+      const res = await printerService.connectNetworkPrinter(ip);
+      if (!res.success || !res.printer) {
+        flash(res.error || 'Could not verify printer at this IP');
+        return;
+      }
       await updateShop({
         printerEnabled: true,
-        printerName: shop.printerName || 'Hardware Thermal ESC/POS Printer',
+        printerName: res.printer.name,
+        printerUrl: res.printer.url,
+        printerConnectionType: 'network',
       });
-      flash('Hardware thermal printer connected');
+      setIsAddingIpPrinter(false);
+      setCustomPrinterIp('');
+      flash(`Connected to ${res.printer.name}`);
+    } catch (err: any) {
+      flash('Network printer error: ' + (err?.message || 'Failed to connect'));
     } finally {
-      setIsScanningPrinters(false);
+      setIsSavingCustomIp(false);
     }
   };
 
   const handleDisconnectPrinter = async () => {
     await updateShop({
       printerName: '',
+      printerUrl: '',
+      printerConnectionType: null,
     });
+    await printerService.disconnectPrinter();
+    setDiscoveredPrinters([]);
+    setScanCompleted(false);
     flash('Thermal printer disconnected');
   };
 
   const handleTestPrint = async () => {
+    if (!shop.printerName) {
+      flash('No active printer connected');
+      return;
+    }
+    if (isPrintingTest) return;
+    setIsPrintingTest(true);
     try {
-      const testBill = {
-        id: 'test_receipt',
-        billNumber: 1,
-        items: [
-          { itemName: 'Special Tea', quantity: 2, price: 15, lineTotal: 30 },
-          { itemName: 'Medu Vada', quantity: 2, price: 15, lineTotal: 30 },
-        ],
-        subtotal: 60,
-        gstAmount: 0,
-        totalAmount: 60,
-        paidAmount: 60,
-        pendingAmount: 0,
-        paymentMode: 'Cash' as const,
-        createdAt: new Date().toISOString(),
-      };
       flash('Sending test slip to thermal printer...');
-      await printerService.printReceipt(
-        testBill as any,
+      const res = await printerService.printTestSlip(
         shop.name || 'Counter365 Store',
         shop.address || 'Hardware Printer Test',
-        shop.phone || ''
+        shop.phone || '',
+        shop.printerUrl || undefined
       );
+      if (res.success) {
+        flash('Test slip printed successfully');
+      } else {
+        flash('Print error: ' + (res.error || 'Check printer power and paper'));
+      }
     } catch (err: any) {
       flash('Print error: ' + (err?.message || 'Could not print test slip'));
+    } finally {
+      setIsPrintingTest(false);
     }
   };
 
-  // --- Cloud Backup Handlers ---
+  // Cloud Backup Handlers (Protected: always ON to ensure zero data loss)
   const handleToggleBackup = async () => {
-    if (!can('report')) {
-      flash('Locked. Please ask the owner');
-      return;
-    }
-    const next = !shop.dailyBackupEnabled;
-    await updateShop({ dailyBackupEnabled: next });
-    flash(next ? 'Daily cloud backup enabled at 11:00 PM' : 'Daily cloud backup disabled');
+    try {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    } catch {}
+    flash('Daily cloud & offline backup cannot be turned off. It keeps your sales and offline bills permanently safe.');
   };
 
   const handleTriggerManualBackup = async () => {
@@ -686,6 +799,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
             setIsDeletingShop(true);
             try {
               await deleteShopPermanently({
+                shopId: shop.id,
                 ownerUserId: profile?.id,
                 ownerName: profile?.fullName,
                 phone: profile?.phone || shop.phone,
@@ -737,26 +851,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
           </TouchableOpacity>
 
           <View style={styles.profileMetaWrap}>
-            <Text style={styles.profileName} numberOfLines={1}>{shop.name || 'Raja tea stall'}</Text>
-            <Text style={styles.profileOwnerSub} numberOfLines={1}>
-              Owner: {shop.ownerName || profile?.fullName || 'Owner'} • {shop.shopType} • +91 {shop.phone || profile?.phone}
-            </Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
-              <View style={styles.invoicePrefixChip}>
-                <Ionicons name="receipt-outline" size={11} color="#FF5F00" />
-                <Text style={styles.invoicePrefixChipText}>
-                  Prefix: {shop.invoicePrefix || generateDefaultInvoicePrefix(shop.name)} ({shop.invoiceResetCycle === 'yearly' ? 'Yearly' : 'Monthly'})
-                </Text>
-              </View>
-            </View>
-            {Boolean(shop.address || shop.city) && (
-              <View style={styles.profileLocRow}>
-                <Ionicons name="location-outline" size={11} color={colors.textMuted} />
-                <Text style={styles.profileLocSub} numberOfLines={1}>
-                  {shop.address ? `${shop.address}${shop.city ? `, ${shop.city}` : ''}` : shop.city}
-                </Text>
-              </View>
-            )}
+            <Text style={styles.profileName} numberOfLines={1}>{shop.name || 'Fryso Cafe'}</Text>
           </View>
 
           {currentRole === 'Owner' && (
@@ -767,8 +862,8 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
           )}
         </TouchableOpacity>
 
-        {/* 2. Dynamic Subscription / Free Tier Card (Owner) OR Staff Role Card (Supervisor / Biller) */}
-        {currentRole === 'Owner' ? (
+        {/* 2. Dynamic Subscription / Free Tier Card (Owner only) */}
+        {currentRole === 'Owner' && (
           <View style={styles.subscriptionCard}>
             <View style={styles.subHeader}>
               <Image
@@ -788,10 +883,10 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
               >
                 <Text style={styles.freeActiveBadgeText}>
                   {subscriptionStatus.isPaidActive
-                    ? 'Pro Active'
+                    ? t('pro_active', 'Pro Active')
                     : subscriptionStatus.billLimitReached
-                    ? '100 / 100 Used'
-                    : `Starter Quota: ${subscriptionStatus.totalBillsCreated} / 100`}
+                    ? `100 / 100 ${t('used', 'Used')}`
+                    : `${t('starter_quota', 'Starter Quota')}: ${subscriptionStatus.totalBillsCreated} / 100`}
                 </Text>
               </View>
             </View>
@@ -815,14 +910,16 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
               <Text style={styles.subPrice}>
                 {subscriptionStatus.isPaidActive
                   ? `${subscriptionStatus.activePlanName} (₹${subscriptionStatus.activePlanPrice})`
-                  : `Starter Quota (${subscriptionStatus.totalBillsCreated} of 100 Sales)`}
+                  : `${t('starter_quota', 'Starter Quota')} (${subscriptionStatus.totalBillsCreated} ${t('of_100_sales', 'of 100 Sales')})`}
               </Text>
               <Text style={styles.subRenew}>
                 {subscriptionStatus.isPaidActive
-                  ? `${subscriptionStatus.daysRemaining} days remaining`
+                  ? (subscriptionStatus.subscriptionEndDateFormatted
+                      ? `Valid until: ${subscriptionStatus.subscriptionEndDateFormatted}`
+                      : 'Pro Active')
                   : subscriptionStatus.billLimitReached
-                  ? 'Limit Reached'
-                  : `${subscriptionStatus.billsRemaining} bills remaining`}
+                  ? t('limit_reached', 'Limit Reached')
+                  : `${subscriptionStatus.billsRemaining} ${t('bills_remaining', 'bills remaining')}`}
               </Text>
             </View>
 
@@ -833,36 +930,17 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
             >
               <Text style={styles.managePlanText}>
                 {subscriptionStatus.isPaidActive
-                  ? 'Manage Plan'
+                  ? t('manage_plan', 'Manage Plan')
                   : subscriptionStatus.billLimitReached
-                  ? 'Subscribe to Continue'
-                  : 'Upgrade to Pro'}
+                  ? t('subscribe_to_continue', 'Subscribe to Continue')
+                  : t('upgrade_to_pro', 'Upgrade to Pro')}
               </Text>
             </TouchableOpacity>
           </View>
-        ) : (
-          <View style={styles.staffRoleCard}>
-            <View style={styles.staffRoleHeader}>
-              <Text style={styles.staffRoleKicker}>COUNTER ACCESS LEVEL</Text>
-              <View style={styles.staffRoleBadge}>
-                <Text style={styles.staffRoleBadgeText}>{currentRole.toUpperCase()}</Text>
-              </View>
-            </View>
-            <Text style={styles.staffRoleTitle}>
-              {currentRole === 'Supervisor' ? 'Store Supervisor' : 'Billing Operator'}
-            </Text>
-            <Text style={styles.staffRoleSub}>
-              {currentRole === 'Supervisor'
-                ? 'You have supervisor access to create bills, record expenses, view reports, and manage the menu.'
-                : 'You have billing operator access to create customer bills and receipts.'}
-            </Text>
-          </View>
         )}
 
-
-
-        {/* 3. Users & Staff Section (Owner & Supervisor) */}
-        {currentRole !== 'Biller' && (() => {
+        {/* 3. Users & Staff Section (Owner only) */}
+        {can('users') && (() => {
           const activeMembers = members.filter(u => u.isActive !== false);
           const inactiveMembers = members.filter(u => u.isActive === false);
           const maxLimit = shop.maxStaffLimit || 5;
@@ -872,8 +950,8 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
             <View style={styles.section}>
               <View style={styles.sectionHeaderRow}>
                 <View>
-                  <Text style={styles.sectionHeading}>Users & Staff ({activeMembers.length} active)</Text>
-                  <Text style={styles.sectionSubHeading}>Allocation: {members.length}/{maxLimit} (Active + Inactive)</Text>
+                  <Text style={styles.sectionHeading}>{t('users_and_staff', 'Users & Staff')} ({activeMembers.length} {t('active_count', 'active')})</Text>
+                  <Text style={styles.sectionSubHeading}>{t('allocation', 'Allocation')}: {members.length}/{maxLimit} ({t('active_plus_inactive', 'Active + Inactive')})</Text>
                 </View>
                 {currentRole === 'Owner' && (
                   <TouchableOpacity
@@ -881,7 +959,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                     style={styles.addUserBtn}
                   >
                     <Text style={styles.addUserText}>
-                      {isAddUserOpen ? 'Cancel' : '+ Add user'}
+                      {isAddUserOpen ? t('cancel_add_user', 'Cancel') : t('add_user', '+ Add user')}
                     </Text>
                   </TouchableOpacity>
                 )}
@@ -891,12 +969,12 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
               <View style={styles.usersList}>
                 {activeMembers.length === 0 ? (
                   <View style={styles.emptyStaffNotice}>
-                    <Text style={styles.emptyStaffText}>No active staff members. Add a Supervisor or Biller below.</Text>
+                    <Text style={styles.emptyStaffText}>{t('no_active_staff', 'No active staff members. Add a Supervisor or Biller below.')}</Text>
                   </View>
                 ) : (
                   activeMembers.map((u: ShopMember) => {
                     const hasOverrides = u.overrides && Object.keys(u.overrides).length > 0;
-                    const extraText = u.role === 'Owner' ? 'master ID' : hasOverrides ? 'has overrides' : '';
+                    const extraText = u.role === 'Owner' ? t('master_id', 'master ID') : hasOverrides ? t('has_overrides', 'has overrides') : '';
 
                     return (
                       <TouchableOpacity
@@ -929,10 +1007,10 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                 <View style={styles.inactiveStaffBox}>
                   <View style={styles.inactiveStaffHeader}>
                     <Ionicons name="archive-outline" size={15} color={colors.textSecondary} />
-                    <Text style={styles.inactiveStaffTitle}>Inactive Staff Records ({inactiveMembers.length})</Text>
+                    <Text style={styles.inactiveStaffTitle}>{t('inactive_staff_records', 'Inactive Staff Records')} ({inactiveMembers.length})</Text>
                   </View>
                   <Text style={styles.inactiveStaffNotice}>
-                    Historical billing attribution and records are preserved. Inactive accounts count toward staff allocation limit.
+                    {t('inactive_staff_notice', 'Historical billing attribution and records are preserved. Inactive accounts count toward staff allocation limit.')}
                   </Text>
                   {inactiveMembers.map((u: ShopMember) => (
                     <TouchableOpacity
@@ -949,7 +1027,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                         <Text style={styles.userName}>{u.fullName}</Text>
                         {u.phone ? <Text style={styles.userPhoneText}>+91 {u.phone}</Text> : null}
                         <Text style={styles.deactivatedSubText}>
-                          Deactivated • Role: {u.role}
+                          {t('deactivated', 'Deactivated')} • {u.role === 'Supervisor' ? t('supervisor', 'Supervisor') : u.role === 'Biller' ? t('biller', 'Biller') : u.role}
                         </Text>
                       </View>
                       <AppTag label="INACTIVE" variant="neutral" />
@@ -958,15 +1036,6 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                 </View>
               )}
 
-              {/* Locked Notice if not owner */}
-              {currentRole !== 'Owner' && (
-                <View style={styles.lockedUsersRow}>
-                  <Ionicons name="lock-closed" size={16} color={colors.textSecondary} />
-                  <Text style={styles.lockedUsersText}>
-                    Only the owner ID can add or remove users. Ask the owner.
-                  </Text>
-                </View>
-              )}
 
               {/* Add User Form OR Allocation Support Template */}
               {currentRole === 'Owner' && isAddUserOpen && (
@@ -974,10 +1043,10 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                   <View style={styles.supportTemplateCard}>
                     <View style={styles.supportTemplateHeader}>
                       <Ionicons name="alert-circle" size={22} color="#EA580C" />
-                      <Text style={styles.supportTemplateHeading}>Staff Allocation Limit Reached</Text>
+                      <Text style={styles.supportTemplateHeading}>{t('staff_allocation_limit_reached', 'Staff Allocation Limit Reached')}</Text>
                     </View>
                     <Text style={styles.supportTemplateText}>
-                      Your staff allocation limit ({members.length}/{maxLimit}) has been reached. Please contact our support team for assistance with adding or reactivating staff.
+                      {t('staff_limit_message', 'Your staff allocation limit has been reached. Please contact our support team for assistance with adding or reactivating staff.')}
                     </Text>
                     <View style={styles.supportBtnRow}>
                       <TouchableOpacity
@@ -985,7 +1054,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                         onPress={() => Linking.openURL(`tel:${APP_CONFIG.supportPhone}`)}
                       >
                         <Ionicons name="call" size={14} color="#FFFFFF" />
-                        <Text style={styles.supportCallBtnText}>Call Support ({APP_CONFIG.supportPhoneFormatted})</Text>
+                        <Text style={styles.supportCallBtnText}>{t('call_support', 'Call Support')} ({APP_CONFIG.supportPhoneFormatted})</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
                         style={styles.supportWaBtn}
@@ -995,23 +1064,23 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                         }}
                       >
                         <Ionicons name="logo-whatsapp" size={14} color="#FFFFFF" />
-                        <Text style={styles.supportWaBtnText}>WhatsApp Support</Text>
+                        <Text style={styles.supportWaBtnText}>{t('whatsapp_support', 'WhatsApp Support')}</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
                 ) : (
                   <View style={styles.addUserFormCard}>
-                    <Text style={styles.addUserFormTitle}>Add Store Staff</Text>
+                    <Text style={styles.addUserFormTitle}>{t('add_store_staff', 'Add Store Staff')}</Text>
                     <TextInput
                       style={styles.addUserInput}
-                      placeholder="Staff Member Name (e.g. Karthik)"
+                      placeholder={t('staff_name_placeholder', 'Staff Member Name (e.g. Karthik)')}
                       placeholderTextColor={colors.textSecondary}
                       value={newUserName}
                       onChangeText={setNewUserName}
                     />
                     <TextInput
                       style={styles.addUserInput}
-                      placeholder="10-Digit Mobile Number"
+                      placeholder={t('mobile_placeholder', '10-Digit Mobile Number')}
                       placeholderTextColor={colors.textSecondary}
                       keyboardType="numeric"
                       maxLength={10}
@@ -1022,7 +1091,10 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                     {/* Role Selector: Supervisor vs Biller */}
                     <View style={styles.rolePickerRow}>
                       <TouchableOpacity
-                        onPress={() => setNewUserRole('Supervisor')}
+                        onPress={() => {
+                          setNewUserRole('Supervisor');
+                          setNewUserOverrides({});
+                        }}
                         style={[
                           styles.roleChoiceBtn,
                           newUserRole === 'Supervisor' && styles.roleChoiceBtnActive,
@@ -1034,13 +1106,16 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                             newUserRole === 'Supervisor' && styles.roleChoiceTextActive,
                           ]}
                         >
-                          Supervisor
+                          {t('supervisor', 'Supervisor')}
                         </Text>
-                        <Text style={styles.roleChoiceSub}>Full Access</Text>
+                        <Text style={styles.roleChoiceSub}>{t('full_access', 'Full Access')}</Text>
                       </TouchableOpacity>
 
                       <TouchableOpacity
-                        onPress={() => setNewUserRole('Biller')}
+                        onPress={() => {
+                          setNewUserRole('Biller');
+                          setNewUserOverrides({});
+                        }}
                         style={[
                           styles.roleChoiceBtn,
                           newUserRole === 'Biller' && styles.roleChoiceBtnActive,
@@ -1052,10 +1127,76 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                             newUserRole === 'Biller' && styles.roleChoiceTextActive,
                           ]}
                         >
-                          Biller
+                          {t('biller', 'Biller')}
                         </Text>
-                        <Text style={styles.roleChoiceSub}>Billing Only</Text>
+                        <Text style={styles.roleChoiceSub}>{t('billing_only', 'Billing Only')}</Text>
                       </TouchableOpacity>
+                    </View>
+
+                    {/* Module Permissions Toggles for New User */}
+                    <View style={{ marginTop: 14, marginBottom: 8 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, paddingHorizontal: 2 }}>
+                        <Text style={{ fontFamily: 'Jost', fontSize: 13, fontWeight: '700', color: colors.text, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                          {t('module_permissions', 'Module Permissions')}
+                        </Text>
+                        <Text style={{ fontFamily: 'Lexend', fontSize: 11, color: colors.textSecondary }}>
+                          {Object.keys(newUserOverrides).length > 0 ? t('custom_overrides', 'Customized') : t('as_per_role', 'As per role')}
+                        </Text>
+                      </View>
+
+                      <View style={{ gap: 6 }}>
+                        {PERM_ROWS.map(p => {
+                          const basePerm = DEFAULT_ROLE_PERMS[newUserRole]?.[p.key] ?? false;
+                          const overrideVal = newUserOverrides[p.key];
+                          const isGranted = overrideVal !== undefined ? overrideVal : basePerm;
+                          const isOverridden = overrideVal !== undefined && overrideVal !== basePerm;
+
+                          return (
+                            <TouchableOpacity
+                              key={p.key}
+                              activeOpacity={0.7}
+                              onPress={() => handleToggleNewUserPerm(p.key, isGranted)}
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                paddingVertical: 10,
+                                paddingHorizontal: 12,
+                                backgroundColor: isDark ? '#1C1C1E' : '#F9FAFB',
+                                borderRadius: 10,
+                                borderWidth: 1,
+                                borderColor: isDark ? '#2C2C2E' : '#E5E7EB',
+                              }}
+                            >
+                              <Text style={{ fontFamily: 'Lexend', fontSize: 13, color: colors.text, flex: 1 }}>
+                                {p.name}
+                              </Text>
+
+                              {isOverridden && (
+                                <View style={{ marginRight: 8, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: isDark ? '#374151' : '#E5E7EB' }}>
+                                  <Text style={{ fontSize: 9, fontFamily: 'Lexend', fontWeight: '700', color: isDark ? '#9CA3AF' : '#4B5563' }}>
+                                    OVERRIDE
+                                  </Text>
+                                </View>
+                              )}
+
+                              <View
+                                style={[
+                                  styles.toggleTrack,
+                                  isGranted && styles.toggleTrackActive,
+                                ]}
+                              >
+                                <View
+                                  style={[
+                                    styles.toggleKnob,
+                                    isGranted && styles.toggleKnobActive,
+                                  ]}
+                                />
+                              </View>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
                     </View>
 
                     <View style={styles.addUserActionRow}>
@@ -1063,10 +1204,10 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                         onPress={() => setIsAddUserOpen(false)}
                         style={styles.cancelUserBtn}
                       >
-                        <Text style={styles.cancelUserText}>Cancel</Text>
+                        <Text style={styles.cancelUserText}>{t('cancel', 'Cancel')}</Text>
                       </TouchableOpacity>
                       <AppButton
-                        title={isSavingUser ? 'Adding...' : 'Save User'}
+                        title={isSavingUser ? t('adding', 'Adding...') : t('save_user', 'Save User')}
                         variant="primary"
                         onPress={handleSaveUser}
                         disabled={isSavingUser}
@@ -1082,7 +1223,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
 
         {/* 4. Settings Toggles */}
         <View style={styles.section}>
-          <Text style={styles.sectionHeading}>Theme & Appearance</Text>
+          <Text style={styles.sectionHeading}>{t('theme_and_appearance', 'Theme & Appearance')}</Text>
           <View style={[styles.settingsList, { marginBottom: 16 }]}>
             <TouchableOpacity
               activeOpacity={0.7}
@@ -1097,10 +1238,10 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
               <View style={styles.settingInfo}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
                   <Ionicons name={isDark ? 'moon' : 'sunny'} size={18} color={isDark ? '#FF5F00' : colors.text} />
-                  <Text style={styles.settingTitle}>Dark Mode Theme</Text>
+                  <Text style={styles.settingTitle}>{t('dark_mode_theme', 'Dark Mode Theme')}</Text>
                 </View>
                 <Text style={styles.settingSub}>
-                  {isDark ? 'Deep black, white & orange palette' : 'Clean light, dark & orange palette'}
+                  {isDark ? t('dark_theme_sub', 'Deep black, white & orange palette') : t('light_theme_sub', 'Clean light, dark & orange palette')}
                 </Text>
               </View>
               <View style={[styles.toggleTrack, isDark && styles.toggleTrackActive]}>
@@ -1109,7 +1250,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.sectionHeading}>Hardware & Billing Settings</Text>
+          <Text style={styles.sectionHeading}>{t('hardware_billing_settings', 'Hardware & Billing Settings')}</Text>
           <View style={styles.settingsList}>
 
             {/* --- THERMAL PRINTER TOGGLE & SCANNER --- */}
@@ -1119,11 +1260,15 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
               style={styles.settingRow}
             >
               <View style={styles.settingInfo}>
-                <Text style={styles.settingTitle}>Thermal Printer</Text>
+                <Text style={styles.settingTitle}>{t('thermal_printer', 'Thermal Printer')}</Text>
                 <Text style={styles.settingSub}>
                   {shop.printerEnabled
-                    ? `Connected • ${shop.printerName || 'TP-58 Thermal Bluetooth'}`
-                    : 'Not connected • Sharing on WhatsApp'}
+                    ? (shop.printerName && shop.printerName.trim().length > 0
+                        ? `Connected • ${shop.printerName}`
+                        : isScanningPrinters
+                        ? 'Scanning for printers...'
+                        : 'Enabled • No printer paired')
+                    : 'Disabled • Sharing on WhatsApp'}
                 </Text>
               </View>
               <View style={[styles.toggleTrack, shop.printerEnabled && styles.toggleTrackActive]}>
@@ -1136,43 +1281,61 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
               <View style={styles.expandedSubCard}>
                 <View style={styles.expandedHeader}>
                   <Text style={styles.expandedTitle}>Original Thermal Printer</Text>
-                  <Text style={styles.scannerBadge}>
-                    {shop.printerName ? '● Connected' : '● Ready to Pair'}
+                  <Text style={[styles.scannerBadge, Boolean(shop.printerName && shop.printerName.trim().length > 0) && styles.scannerBadgeConnected]}>
+                    {shop.printerName && shop.printerName.trim().length > 0
+                      ? '● Connected'
+                      : isScanningPrinters
+                      ? '● Scanning...'
+                      : '● Ready to Pair'}
                   </Text>
                 </View>
                 <Text style={styles.expandedSub}>
-                  Direct physical connection to your ESC/POS receipt printer:
+                  ESC/POS receipt printer connection (AirPrint, Bluetooth, USB, Network):
                 </Text>
 
-                {shop.printerName ? (
+                {shop.printerName && shop.printerName.trim().length > 0 ? (
+                  /* Verified Connected Printer Card */
                   <View style={styles.realPrinterCard}>
                     <View style={styles.realPrinterHeader}>
                       <View style={styles.printerIconWrap}>
-                        <Ionicons name="print-outline" size={20} color={colors.accent} />
+                        <Ionicons name="print-outline" size={18} color={colors.accent} />
                       </View>
                       <View style={styles.printerInfo}>
                         <Text style={styles.printerName}>{shop.printerName}</Text>
-                        <Text style={styles.printerMeta}>Active Hardware Thermal Printer</Text>
+                        <Text style={styles.printerMeta}>
+                          {shop.printerConnectionType ? `${shop.printerConnectionType.toUpperCase()} · Verified Active` : 'ESC/POS Thermal Printer'}
+                        </Text>
                       </View>
                       <View style={styles.connectedBadge}>
                         <Ionicons name="checkmark-circle" size={12} color="#059669" />
-                        <Text style={styles.connectedBadgeText}>Paired</Text>
+                        <Text style={styles.connectedBadgeText}>Connected</Text>
                       </View>
                     </View>
 
                     <View style={styles.printerActionButtonsRow}>
                       <TouchableOpacity
-                        style={styles.printerTestBtn}
+                        style={[styles.printerTestBtn, isPrintingTest && styles.btnDisabled]}
                         onPress={handleTestPrint}
+                        disabled={isPrintingTest}
+                        activeOpacity={0.8}
+                        accessibilityLabel="Print Test Slip"
                       >
-                        <Ionicons name="print-outline" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
-                        <Text style={styles.printerTestBtnText}>Print Test Slip</Text>
+                        {isPrintingTest ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" />
+                        ) : (
+                          <>
+                            <Ionicons name="print-outline" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+                            <Text style={styles.printerTestBtnText}>Print Test Slip</Text>
+                          </>
+                        )}
                       </TouchableOpacity>
 
                       <TouchableOpacity
                         style={styles.printerChangeBtn}
                         onPress={handleScanRealPrinter}
-                        disabled={isScanningPrinters}
+                        disabled={isScanningPrinters || isPrintingTest}
+                        activeOpacity={0.7}
+                        accessibilityLabel="Change Printer"
                       >
                         <Text style={styles.printerChangeBtnText}>
                           {isScanningPrinters ? 'Scanning...' : 'Change'}
@@ -1182,79 +1345,155 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                       <TouchableOpacity
                         style={styles.printerDisconnectBtn}
                         onPress={handleDisconnectPrinter}
+                        disabled={isPrintingTest}
+                        activeOpacity={0.7}
+                        accessibilityLabel="Disconnect Printer"
                       >
                         <Text style={styles.printerDisconnectBtnText}>Disconnect</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
-                ) : (
-                  <View style={styles.noPrinterCard}>
-                    <Text style={styles.noPrinterText}>
-                      Turn on your thermal printer. Tap below to discover and connect your real printer:
-                    </Text>
-                    <TouchableOpacity
-                      style={styles.scanPrinterBtn}
-                      onPress={handleScanRealPrinter}
-                      disabled={isScanningPrinters}
-                    >
-                      {isScanningPrinters ? (
-                        <ActivityIndicator size="small" color="#fff" />
-                      ) : (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                          <Ionicons name="search-outline" size={15} color="#FFFFFF" />
-                          <Text style={styles.scanPrinterBtnText}>
-                            Scan & Connect Thermal Printer
-                          </Text>
+                ) : isScanningPrinters ? (
+                  /* Scanning in progress */
+                  <View style={styles.printerLoadingCard}>
+                    <ActivityIndicator size="small" color={colors.accent} />
+                    <Text style={styles.printerLoadingText}>Scanning for compatible thermal printers...</Text>
+                    <Text style={styles.printerLoadingSub}>Checking AirPrint, Network, and System Print Services</Text>
+                  </View>
+                ) : scanCompleted && discoveredPrinters.length > 0 ? (
+                  /* Discovered Printers List */
+                  <View style={styles.discoveredContainer}>
+                    <Text style={styles.discoveredTitle}>Discovered Compatible Printers ({discoveredPrinters.length}):</Text>
+                    {discoveredPrinters.map(p => (
+                      <View key={p.id} style={styles.discoveredRow}>
+                        <View style={styles.printerIconWrap}>
+                          <Ionicons name="print-outline" size={18} color={colors.accent} />
                         </View>
-                      )}
+                        <View style={styles.printerInfo}>
+                          <Text style={styles.printerName}>{p.name}</Text>
+                          <Text style={styles.printerMeta}>{p.connectionType.toUpperCase()} Thermal Device</Text>
+                        </View>
+                        <TouchableOpacity
+                          style={styles.connectPrinterBtn}
+                          onPress={() => handleConnectDiscoveredPrinter(p)}
+                          disabled={connectingPrinterId === p.id}
+                          activeOpacity={0.8}
+                        >
+                          {connectingPrinterId === p.id ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          ) : (
+                            <Text style={styles.connectPrinterBtnText}>Connect</Text>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                    <TouchableOpacity
+                      style={styles.scanAgainBtn}
+                      onPress={handleScanRealPrinter}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="refresh-outline" size={14} color={colors.accent} />
+                      <Text style={styles.scanAgainBtnText}>Scan Again</Text>
                     </TouchableOpacity>
+                  </View>
+                ) : scanCompleted && discoveredPrinters.length === 0 ? (
+                  /* Compact No Printers Found Card with Retry Scan */
+                  <View style={styles.compactNoPrinterCard}>
+                    <View style={styles.compactNoPrinterHeader}>
+                      <View style={styles.compactPrinterIconCircle}>
+                        <Ionicons name="print-outline" size={16} color="#EA580C" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.compactNoPrinterTitle}>No printers found</Text>
+                        <Text style={styles.compactNoPrinterSub}>Turn on printer and retry scan</Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.compactRetryBtn}
+                        onPress={handleScanRealPrinter}
+                        activeOpacity={0.8}
+                        accessibilityLabel="Retry Scan"
+                      >
+                        <Ionicons name="refresh-outline" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+                        <Text style={styles.compactRetryBtnText}>Retry Scan</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                  /* Initial Scan Prompt */
+                  <View style={styles.compactNoPrinterCard}>
+                    <View style={styles.compactNoPrinterHeader}>
+                      <View style={styles.compactPrinterIconCircle}>
+                        <Ionicons name="print-outline" size={16} color={colors.accent} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.compactNoPrinterTitle}>Print Ready</Text>
+                        <Text style={styles.compactNoPrinterSub}>Turn on printer to discover device</Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.compactRetryBtn}
+                        onPress={handleScanRealPrinter}
+                        activeOpacity={0.85}
+                        accessibilityLabel="Scan for Printers"
+                      >
+                        <Ionicons name="search-outline" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+                        <Text style={styles.compactRetryBtnText}>Scan</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 )}
               </View>
             )}
 
             {/* --- GST ON BILLS TOGGLE & RATE SELECTOR --- */}
-            {currentRole === 'Owner' ? (
+            {currentRole === 'Owner' && (
               <TouchableOpacity
                 activeOpacity={0.7}
                 onPress={handleToggleGst}
                 style={styles.settingRow}
               >
                 <View style={styles.settingInfo}>
-                  <Text style={styles.settingTitle}>GST on Bills</Text>
+                  <Text style={styles.settingTitle}>{t('gst_on_bills', 'GST on Bills')}</Text>
                   <Text style={styles.settingSub}>
                     {shop.gstEnabled
-                      ? `${shop.gstRate || 5}% GST added to bill totals`
-                      : 'Off • Plain net totals without tax'}
+                      ? `${shop.gstRate || 5}% ${t('gst_added_sub', 'GST added to all bill totals')}`
+                      : t('gst_off_sub', 'Off • Plain net totals without tax')}
                   </Text>
                 </View>
-                <View style={[styles.toggleTrack, shop.gstEnabled && styles.toggleTrackActive]}>
-                  <View style={[styles.toggleKnob, shop.gstEnabled && styles.toggleKnobActive]} />
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  {shop.gstEnabled && (
+                    <TouchableOpacity
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        setIsGstEditorOpen(prev => !prev);
+                      }}
+                      style={styles.editGstPill}
+                      accessibilityLabel="Change GST Rate"
+                    >
+                      <Text style={styles.editGstPillText}>{shop.gstRate || 5}%</Text>
+                      <Ionicons name="create-outline" size={12} color={colors.accent} />
+                    </TouchableOpacity>
+                  )}
+                  <View style={[styles.toggleTrack, shop.gstEnabled && styles.toggleTrackActive]}>
+                    <View style={[styles.toggleKnob, shop.gstEnabled && styles.toggleKnobActive]} />
+                  </View>
                 </View>
               </TouchableOpacity>
-            ) : (
-              <View style={[styles.settingRow, styles.disabledRow]}>
-                <View style={styles.settingInfo}>
-                  <Text style={styles.settingTitle}>GST on Bills</Text>
-                  <Text style={styles.settingSub}>
-                    {shop.gstEnabled
-                      ? `${shop.gstRate || 5}% GST configured by owner`
-                      : 'Off • Plain net totals without tax'}
-                  </Text>
-                </View>
-                <View style={styles.lockBadgeSmall}>
-                  <Ionicons name="lock-closed" size={11} color={colors.textSecondary} />
-                  <Text style={styles.lockIconSmall}>Owner only</Text>
-                </View>
-              </View>
             )}
 
             {/* Expanded GST Rate Customizer (Owner only) */}
-            {currentRole === 'Owner' && shop.gstEnabled && (
+            {currentRole === 'Owner' && shop.gstEnabled && isGstEditorOpen && (
               <View style={styles.expandedSubCard}>
-                <Text style={styles.expandedTitle}>Set GST Percentage</Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={styles.expandedTitle}>{t('set_gst_percentage', 'Set GST Percentage')}</Text>
+                  <TouchableOpacity
+                    onPress={() => setIsGstEditorOpen(false)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+                  </TouchableOpacity>
+                </View>
                 <Text style={styles.expandedSub}>
-                  Choose standard tax bracket or enter custom percentage:
+                  {t('choose_tax_bracket', 'Choose standard tax bracket or enter custom percentage:')}
                 </Text>
 
                 {/* Quick Presets */}
@@ -1282,7 +1521,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
 
                 {/* Custom Percentage Input */}
                 <View style={styles.customGstRow}>
-                  <Text style={styles.customGstLabel}>Custom %:</Text>
+                  <Text style={styles.customGstLabel}>{t('custom_percent', 'Custom %:')}</Text>
                   <TextInput
                     style={styles.customGstInput}
                     keyboardType="numeric"
@@ -1297,7 +1536,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                     disabled={isSavingGst}
                   >
                     <Text style={styles.saveGstText}>
-                      {isSavingGst ? 'Saving...' : 'Save Rate'}
+                      {isSavingGst ? t('saving', 'Saving...') : t('save_and_close', 'Save & Close')}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -1305,77 +1544,75 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
             )}
 
             {/* --- ROUND OFF TOTALS --- */}
-            {currentRole === 'Owner' ? (
+            {currentRole === 'Owner' && (
               <TouchableOpacity
                 activeOpacity={0.7}
                 onPress={() => {
                   const next = !shop.roundOffEnabled;
                   updateShop({ roundOffEnabled: next });
-                  flash(next ? 'Round off enabled' : 'Round off disabled');
+                  flash(next ? t('round_off_enabled_msg', 'Round off enabled') : t('round_off_disabled_msg', 'Round off disabled'));
                 }}
                 style={styles.settingRow}
               >
                 <View style={styles.settingInfo}>
-                  <Text style={styles.settingTitle}>Round off totals</Text>
-                  <Text style={styles.settingSub}>Nearest rupee</Text>
+                  <Text style={styles.settingTitle}>{t('round_off_totals', 'Round off totals')}</Text>
+                  <Text style={styles.settingSub}>{t('nearest_rupee', 'Nearest rupee')}</Text>
                 </View>
                 <View style={[styles.toggleTrack, shop.roundOffEnabled && styles.toggleTrackActive]}>
                   <View style={[styles.toggleKnob, shop.roundOffEnabled && styles.toggleKnobActive]} />
                 </View>
               </TouchableOpacity>
-            ) : (
-              <View style={[styles.settingRow, styles.disabledRow]}>
-                <View style={styles.settingInfo}>
-                  <Text style={styles.settingTitle}>Round off totals</Text>
-                  <Text style={styles.settingSub}>Nearest rupee ({shop.roundOffEnabled ? 'On' : 'Off'})</Text>
-                </View>
-                <View style={styles.lockBadgeSmall}>
-                  <Ionicons name="lock-closed" size={11} color={colors.textSecondary} />
-                  <Text style={styles.lockIconSmall}>Owner only</Text>
-                </View>
-              </View>
             )}
 
-            {/* --- TABLE MANAGEMENT TOGGLE & CONFIGURATION --- */}
-            {currentRole === 'Owner' ? (
+            {/* Table Settings (Dining) */}
+            {currentRole === 'Owner' && (
               <TouchableOpacity
                 activeOpacity={0.7}
                 onPress={handleToggleTableSettings}
                 style={styles.settingRow}
               >
                 <View style={styles.settingInfo}>
-                  <Text style={styles.settingTitle}>Table Settings (Dining)</Text>
+                  <Text style={styles.settingTitle}>{t('table_settings_dining', 'Table Settings (Dining)')}</Text>
                   <Text style={styles.settingSub}>
                     {shop.tableManagementEnabled
-                      ? `Enabled • ${shop.tableCount || 4} dining tables configured`
-                      : 'Off • Disabled for fast counter billing'}
+                      ? `Enabled • ${shop.tableCount || 6} ${t('tables_configured', 'dining tables configured')}`
+                      : t('table_management_disabled_sub', 'Off • Disabled for fast counter billing')}
                   </Text>
                 </View>
-                <View style={[styles.toggleTrack, shop.tableManagementEnabled && styles.toggleTrackActive]}>
-                  <View style={[styles.toggleKnob, shop.tableManagementEnabled && styles.toggleKnobActive]} />
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  {shop.tableManagementEnabled && (
+                    <TouchableOpacity
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        setIsTableEditorOpen(prev => !prev);
+                      }}
+                      style={styles.editGstPill}
+                      accessibilityLabel="Change Table Count"
+                    >
+                      <Text style={styles.editGstPillText}>{shop.tableCount || 6}</Text>
+                      <Ionicons name="create-outline" size={12} color={colors.accent} />
+                    </TouchableOpacity>
+                  )}
+                  <View style={[styles.toggleTrack, shop.tableManagementEnabled && styles.toggleTrackActive]}>
+                    <View style={[styles.toggleKnob, shop.tableManagementEnabled && styles.toggleKnobActive]} />
+                  </View>
                 </View>
               </TouchableOpacity>
-            ) : (
-              <View style={[styles.settingRow, styles.disabledRow]}>
-                <View style={styles.settingInfo}>
-                  <Text style={styles.settingTitle}>Table Settings (Dining)</Text>
-                  <Text style={styles.settingSub}>
-                    {shop.tableManagementEnabled
-                      ? `Enabled • ${shop.tableCount || 4} dining tables`
-                      : 'Off • Fast counter billing'}
-                  </Text>
-                </View>
-                <View style={styles.lockBadgeSmall}>
-                  <Ionicons name="lock-closed" size={11} color={colors.textSecondary} />
-                  <Text style={styles.lockIconSmall}>Owner only</Text>
-                </View>
-              </View>
             )}
 
-            {/* Expanded Table Count UI (Owner only - Same UI layout as GST) */}
-            {currentRole === 'Owner' && shop.tableManagementEnabled && (
+            {/* Expanded Table Count UI (Owner only) */}
+            {currentRole === 'Owner' && shop.tableManagementEnabled && isTableEditorOpen && (
               <View style={styles.expandedSubCard}>
-                <Text style={styles.expandedTitle}>Number of Tables</Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={styles.expandedTitle}>{t('number_of_tables', 'Number of Tables')}</Text>
+                  <TouchableOpacity
+                    onPress={() => setIsTableEditorOpen(false)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityLabel="Close Table Editor"
+                  >
+                    <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+                  </TouchableOpacity>
+                </View>
                 <Text style={styles.expandedSub}>
                   Enter the total number of dining tables in your shop:
                 </Text>
@@ -1404,87 +1641,14 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
               </View>
             )}
 
-            {/* --- DAILY CLOUD BACKUP AT 11:00 PM --- */}
-            {currentRole === 'Owner' ? (
-              <TouchableOpacity
-                activeOpacity={0.7}
-                onPress={handleToggleBackup}
-                style={styles.settingRow}
-              >
-                <View style={styles.settingInfo}>
-                  <Text style={styles.settingTitle}>Daily Cloud Backup</Text>
-                  <Text style={styles.settingSub}>
-                    {shop.dailyBackupEnabled
-                      ? 'Daily cloud backup at 11:00 PM'
-                      : 'Off • Stored only locally on device'}
-                  </Text>
-                </View>
-                <View style={[styles.toggleTrack, shop.dailyBackupEnabled && styles.toggleTrackActive]}>
-                  <View style={[styles.toggleKnob, shop.dailyBackupEnabled && styles.toggleKnobActive]} />
-                </View>
-              </TouchableOpacity>
-            ) : (
-              <View style={[styles.settingRow, styles.disabledRow]}>
-                <View style={styles.settingInfo}>
-                  <Text style={styles.settingTitle}>Daily Cloud Backup</Text>
-                  <Text style={styles.settingSub}>
-                    {shop.dailyBackupEnabled
-                      ? 'Daily cloud backup at 11:00 PM'
-                      : 'Off • Stored only locally on device'}
-                  </Text>
-                </View>
-                <View style={styles.lockBadgeSmall}>
-                  <Ionicons name="lock-closed" size={11} color={colors.textSecondary} />
-                  <Text style={styles.lockIconSmall}>Owner only</Text>
-                </View>
-              </View>
-            )}
-
-            {/* Backup Now Action Row (Owner only) */}
-            {currentRole === 'Owner' && shop.dailyBackupEnabled && (
-              <View style={styles.backupCard}>
-                <View style={styles.backupInfo}>
-                  <Text style={styles.backupStatusDot}>● Active</Text>
-                  <Text style={styles.backupMetaText}>{lastBackupText}</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.backupNowBtn}
-                  onPress={handleTriggerManualBackup}
-                  disabled={isSyncingBackup}
-                >
-                  {isSyncingBackup ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={styles.backupNowText}>Backup Now</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* Change Registered Mobile Number (Owner only) */}
-            {currentRole === 'Owner' && (
-              <TouchableOpacity
-                activeOpacity={0.7}
-                onPress={handleOpenChangePhone}
-                style={styles.settingRow}
-              >
-                <View style={styles.settingInfo}>
-                  <Text style={styles.settingTitle}>Change Mobile Number</Text>
-                  <Text style={styles.settingSub}>
-                    +91 {shop.phone || profile?.phone} • 2-Step OTP Protected
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
-              </TouchableOpacity>
-            )}
-
           </View>
         </View>
 
         {/* 5. Help & Legal Links */}
         <View style={styles.section}>
-          <Text style={styles.sectionHeading}>Help & Legal</Text>
+          <Text style={styles.sectionHeading}>{t('help_and_legal', 'Help & Legal')}</Text>
           <View style={styles.legalList}>
+            {/* 1. Support (Top item, direct navigation to support page, no arrow) */}
             <TouchableOpacity
               onPress={() => {
                 if (onNavigateToSupport) {
@@ -1494,64 +1658,140 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                 }
               }}
               style={styles.legalRow}
-            >
-              <Text style={styles.legalTitle}>Support (Call or WhatsApp)</Text>
-              <Text style={styles.legalMeta}>{APP_CONFIG.supportPhone}</Text>
-              <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setIsSubscriptionModalOpen(true)}
-              style={styles.legalRow}
-            >
-              <Text style={styles.legalTitle}>Subscription status</Text>
-              <Text style={styles.legalMeta}>
-                {subscriptionStatus.isPaidActive
-                  ? 'Pro Active'
-                  : subscriptionStatus.billLimitReached
-                  ? 'Limit Reached'
-                  : `Free Plan (${subscriptionStatus.billsRemaining} bills left)`}
-              </Text>
-              <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
-            </TouchableOpacity>
-
-            {/* Rate & Review on Google Play */}
-            <TouchableOpacity
-              onPress={handleOpenPlayStoreReview}
-              style={styles.legalRow}
-            >
-              <Text style={styles.legalTitle}>App Review</Text>
-              <Text style={styles.legalMeta}>Rate us on Google Play</Text>
-              <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setIsPrivacyModalOpen(true)}
-              style={styles.legalRow}
-            >
-              <Text style={styles.legalTitle}>Privacy Policy</Text>
-              <Text style={styles.legalMeta}>Data protection</Text>
-              <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setIsTermsModalOpen(true)}
-              style={styles.legalRow}
-            >
-              <Text style={styles.legalTitle}>Terms & Conditions</Text>
-              <Text style={styles.legalMeta}>Usage agreement</Text>
-              <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setIsAccountActionsModalOpen(true)}
-              style={[styles.legalRow, { borderBottomWidth: 0 }]}
               activeOpacity={0.7}
+              accessibilityLabel="Support"
             >
-              <Text style={styles.legalTitle} numberOfLines={1}>Account Actions</Text>
-              <Text style={styles.legalMeta} numberOfLines={1}>Log out · Delete account</Text>
-              <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+              <Text style={styles.legalTitle}>{t('support', 'Support')}</Text>
             </TouchableOpacity>
+
+            {/* 2. Account Management (Below Support, Expandable Accordion) */}
+            <TouchableOpacity
+              onPress={() => {
+                try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+                setIsAccountManagementExpanded(prev => !prev);
+              }}
+              style={[
+                styles.legalRow,
+                { borderBottomWidth: 0 },
+              ]}
+              activeOpacity={0.7}
+              accessibilityLabel="Account Management"
+            >
+              <Text style={styles.legalTitle}>{t('account_management', 'Account Management')}</Text>
+              <Ionicons
+                name={isAccountManagementExpanded ? 'chevron-up' : 'chevron-down'}
+                size={16}
+                color={colors.textSecondary}
+                style={{ marginLeft: 'auto' }}
+              />
+            </TouchableOpacity>
+
+            {/* Expanded Account Management Items (Strict Order: 1. Change number, 2. App review, 3. Privacy, 4. Terms, 5. Log out, 6. Delete account) */}
+            {isAccountManagementExpanded && (
+              <View style={styles.accountManagementExpandedBox}>
+                {/* 1. Change Mobile Number (Owner only) */}
+                {currentRole === 'Owner' && (
+                  <TouchableOpacity
+                    onPress={handleOpenChangePhone}
+                    style={styles.accountMgmtSubRow}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.accountMgmtIconWrap}>
+                      <Ionicons name="call-outline" size={16} color={colors.text} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.accountMgmtSubTitle}>{t('change_mobile', 'Change Mobile Number')}</Text>
+                      <Text style={styles.accountMgmtSubMeta}>
+                        +91 {shop.phone || profile?.phone} • 2-Step OTP Protected
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={15} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                )}
+
+                {/* 2. App Review */}
+                <TouchableOpacity
+                  onPress={handleOpenPlayStoreReview}
+                  style={styles.accountMgmtSubRow}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.accountMgmtIconWrap}>
+                    <Ionicons name="star-outline" size={16} color="#F59E0B" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.accountMgmtSubTitle}>{t('app_review', 'App Review')}</Text>
+                    <Text style={styles.accountMgmtSubMeta}>Rate us on Google Play</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={15} color={colors.textSecondary} />
+                </TouchableOpacity>
+
+                {/* 3. Privacy Policy */}
+                <TouchableOpacity
+                  onPress={() => setIsPrivacyModalOpen(true)}
+                  style={styles.accountMgmtSubRow}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.accountMgmtIconWrap}>
+                    <Ionicons name="shield-checkmark-outline" size={16} color={colors.text} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.accountMgmtSubTitle}>{t('privacy_policy', 'Privacy Policy')}</Text>
+                    <Text style={styles.accountMgmtSubMeta}>DPDPA 2023 compliant</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={15} color={colors.textSecondary} />
+                </TouchableOpacity>
+
+                {/* 4. Terms of Service */}
+                <TouchableOpacity
+                  onPress={() => setIsTermsModalOpen(true)}
+                  style={styles.accountMgmtSubRow}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.accountMgmtIconWrap}>
+                    <Ionicons name="document-text-outline" size={16} color={colors.text} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.accountMgmtSubTitle}>{t('terms_of_service', 'Terms of Service')}</Text>
+                    <Text style={styles.accountMgmtSubMeta}>Merchant agreement</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={15} color={colors.textSecondary} />
+                </TouchableOpacity>
+
+                {/* 5. Log Out */}
+                <TouchableOpacity
+                  onPress={handleConfirmLogout}
+                  style={styles.accountMgmtSubRow}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.accountMgmtIconWrap, { backgroundColor: 'rgba(220, 38, 38, 0.1)' }]}>
+                    <Ionicons name="log-out-outline" size={16} color="#DC2626" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.accountMgmtSubTitle, { color: '#DC2626' }]}>{t('log_out', 'Log Out')}</Text>
+                    <Text style={styles.accountMgmtSubMeta}>Sign out on this device</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={15} color={colors.textSecondary} />
+                </TouchableOpacity>
+
+                {/* 6. Permanently Delete Account (Owner only) */}
+                {currentRole === 'Owner' && (
+                  <TouchableOpacity
+                    onPress={handleConfirmPermanentlyDelete}
+                    style={[styles.accountMgmtSubRow, { borderBottomWidth: 0 }]}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.accountMgmtIconWrap, { backgroundColor: 'rgba(220, 38, 38, 0.1)' }]}>
+                      <Ionicons name="trash-outline" size={16} color="#DC2626" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.accountMgmtSubTitle, { color: '#DC2626' }]}>{t('delete_account', 'Permanently Delete Account')}</Text>
+                      <Text style={styles.accountMgmtSubMeta}>Delete shop, all bills, menus & data permanently</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={15} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
           </View>
         </View>
 
@@ -1569,121 +1809,28 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
       </ScrollView>
 
       {/* ========================================================================= */}
-      {/* PRIVACY POLICY MODAL */}
+      {/* PRIVACY POLICY MODAL (DPDPA 2023) */}
       {/* ========================================================================= */}
-      <Modal
+      <LegalDocumentModal
         visible={isPrivacyModalOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setIsPrivacyModalOpen(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.legalModalContent}>
-            <View style={styles.modalHeader}>
-              <View>
-                <Text style={styles.modalTitle}>Privacy Policy</Text>
-                <Text style={styles.modalSub}>Last updated: September 2026</Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setIsPrivacyModalOpen(false)}
-                style={styles.modalCloseBtn}
-              >
-                <Ionicons name="close" size={20} color={colors.textMuted} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={styles.legalScroll}>
-              <Text style={styles.policySectionTitle}>1. Business Data Ownership</Text>
-              <Text style={styles.policyBody}>
-                All financial data, billings, sales figures, customer names, vendor ledgers, and inventory items entered into Counter365 remain exclusively your property. Counter365 does not sell, rent, or monetize your business or financial records to third parties.
-              </Text>
-
-              <Text style={styles.policySectionTitle}>2. Secure Cloud Storage & Encryption</Text>
-              <Text style={styles.policyBody}>
-                When cloud backup is enabled, your data is securely transmitted and persisted in encrypted database instances protected by TLS 1.3 encryption in transit and AES-256 encryption at rest.
-              </Text>
-
-              <Text style={styles.policySectionTitle}>3. Local-First Offline Operation</Text>
-              <Text style={styles.policyBody}>
-                Counter365 is designed with a local-first durable cache. Even during network disconnects, your billing counter continues to operate seamlessly, queuing sync operations until cloud connectivity is restored.
-              </Text>
-
-              <Text style={styles.policySectionTitle}>4. Contact Access Permission</Text>
-              <Text style={styles.policyBody}>
-                Device contacts accessed through the "Import from Contacts" feature are used strictly to populate your customer and vendor directory within Counter365. No background contact scraping is performed.
-              </Text>
-
-              <Text style={styles.policySectionTitle}>5. Account & Data Deletion</Text>
-              <Text style={styles.policyBody}>
-                You have the absolute right to delete your shop and data. Tapping "Permanently Delete Account" in the Account screen cascades an immediate hard delete across all your database records and clears local storage.
-              </Text>
-            </ScrollView>
-
-            <AppButton
-              title="Close"
-              variant="primary"
-              onPress={() => setIsPrivacyModalOpen(false)}
-              style={styles.modalCloseActionButton}
-            />
-          </View>
-        </View>
-      </Modal>
+        onClose={() => setIsPrivacyModalOpen(false)}
+        title="Privacy Policy"
+        subtitle={`Digital Personal Data Protection Act, 2023 • Updated ${DPDPA_COMPLIANCE_DATE}`}
+        badge="DPDPA 2023"
+        sections={PRIVACY_POLICY_SECTIONS}
+      />
 
       {/* ========================================================================= */}
-      {/* TERMS & CONDITIONS MODAL */}
+      {/* TERMS OF SERVICE MODAL (DPDPA 2023) */}
       {/* ========================================================================= */}
-      <Modal
+      <LegalDocumentModal
         visible={isTermsModalOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setIsTermsModalOpen(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.legalModalContent}>
-            <View style={styles.modalHeader}>
-              <View>
-                <Text style={styles.modalTitle}>Terms & Conditions</Text>
-                <Text style={styles.modalSub}>Counter365 Service Agreement</Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setIsTermsModalOpen(false)}
-                style={styles.modalCloseBtn}
-              >
-                <Ionicons name="close" size={20} color={colors.textMuted} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={styles.legalScroll}>
-              <Text style={styles.policySectionTitle}>1. Merchant Responsibilities</Text>
-              <Text style={styles.policyBody}>
-                As a shop owner or authorized biller, you are responsible for maintaining accurate prices, verifying bill items before finalizing payment, and complying with all applicable state and federal commercial laws.
-              </Text>
-
-              <Text style={styles.policySectionTitle}>2. GST & Tax Compliance</Text>
-              <Text style={styles.policyBody}>
-                Counter365 provides flexible GST calculation options (e.g. 5%, 12%, 18%). The merchant is solely responsible for selecting the legal tax rate applicable to their food, beverage, or retail sales and filing returns accordingly.
-              </Text>
-
-              <Text style={styles.policySectionTitle}>3. Hardware & Thermal Printers</Text>
-              <Text style={styles.policyBody}>
-                Counter365 interfaces with standard ESC/POS 58mm and 80mm Bluetooth thermal printers. The app is tested for reliable receipt generation and WhatsApp sharing fallback.
-              </Text>
-
-              <Text style={styles.policySectionTitle}>4. Subscription & License</Text>
-              <Text style={styles.policyBody}>
-                Counter365 provides the Free subscription plan. Continued updates, Supabase sync features, and multi-user permissions are included free of charge.
-              </Text>
-            </ScrollView>
-
-            <AppButton
-              title="I Understand"
-              variant="primary"
-              onPress={() => setIsTermsModalOpen(false)}
-              style={styles.modalCloseActionButton}
-            />
-          </View>
-        </View>
-      </Modal>
+        onClose={() => setIsTermsModalOpen(false)}
+        title="Terms of Service"
+        subtitle="CounterPro Merchant Service & Regulatory Agreement"
+        badge="DPDPA 2023"
+        sections={TERMS_OF_SERVICE_SECTIONS}
+      />
 
       {/* ========================================================================= */}
       {/* ACCOUNT ACTIONS MODAL (LOG OUT & DELETE ACCOUNT) */}
@@ -1710,6 +1857,30 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
             </View>
 
             <View style={{ paddingVertical: 14 }}>
+              {currentRole === 'Owner' && (
+                <>
+                  {/* Change Mobile Number Button */}
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    style={styles.logoutBtn}
+                    onPress={() => {
+                      setIsAccountActionsModalOpen(false);
+                      setTimeout(() => handleOpenChangePhone(), 250);
+                    }}
+                  >
+                    <Ionicons name="call-outline" size={22} color={colors.text} />
+                    <View style={styles.actionBtnTextWrap}>
+                      <Text style={[styles.logoutTitle, { color: colors.text }]}>Change Mobile Number</Text>
+                      <Text style={styles.logoutSub}>
+                        +91 {shop.phone || profile?.phone} • 2-Step OTP Protected
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <View style={styles.actionDivider} />
+                </>
+              )}
+
               {/* Log Out Button */}
               <TouchableOpacity
                 activeOpacity={0.8}
@@ -1796,7 +1967,13 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.editModalScroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+            <ScrollView
+              style={styles.editModalScroll}
+              contentContainerStyle={{ paddingBottom: 60, flexGrow: 1 }}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+            >
               {/* Logo Selection Preview */}
               <View style={styles.editLogoRow}>
                 {editLogoUrl ? (
@@ -2060,7 +2237,7 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
                       </View>
                       <Text style={styles.subHistoryDetail}>
                         {subscriptionStatus.isPaidActive
-                          ? `₹${subscriptionStatus.activePlanPrice} • ${subscriptionStatus.daysRemaining} days remaining • ${subscriptionStatus.totalBillsCreated} bills created`
+                          ? `₹${subscriptionStatus.activePlanPrice} • Pro Active • ${subscriptionStatus.totalBillsCreated} bills created`
                           : `Usage: ${subscriptionStatus.totalBillsCreated} / 100 bills generated (${subscriptionStatus.billsRemaining} remaining)`}
                       </Text>
                       {subscriptionStatus.isPaidActive && Boolean(subscriptionStatus.subscriptionEndDateFormatted) && (
@@ -2133,7 +2310,13 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
       <RoleManagementSheet
         member={selectedMemberForSheet}
         visible={selectedMemberForSheet !== null}
-        onClose={() => setSelectedMemberForSheet(null)}
+        onClose={async () => {
+          setSelectedMemberForSheet(null);
+          try {
+            if (refreshShop) await refreshShop();
+            if (refreshMemberSession) await refreshMemberSession();
+          } catch {}
+        }}
         onSelectRole={async role => {
           if (!selectedMemberForSheet) return;
           await updateMemberRole(selectedMemberForSheet.id, role);
@@ -2546,16 +2729,23 @@ export const AccountScreen: React.FC<AccountScreenProps> = ({
   );
 };
 
-const createStyles = (theme: Theme) => {
+const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left: number; right: number }) => {
   const colors = theme.colors;
+  const isDark = theme.isDark;
+  const bottomInset = insets?.bottom || 0;
+  const androidNavPadding = Platform.OS === 'android' ? Math.max(bottomInset, 48) : bottomInset;
+  const modalNavClearance = Math.max(androidNavPadding + 14, 28);
   return StyleSheet.create({
+  btnDisabled: {
+    opacity: 0.55,
+  },
   container: {
     flex: 1,
     backgroundColor: colors.bg,
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 40,
+    paddingBottom: Math.max(bottomInset, 16) + 84,
     gap: 16,
   },
   profileCard: {
@@ -3047,6 +3237,49 @@ const createStyles = (theme: Theme) => {
   },
 
   // Sub-cards for expanded settings
+  editGstPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: theme.isDark ? colors.surfaceElevated : '#FFF7ED',
+    borderWidth: 1,
+    borderColor: theme.isDark ? colors.border : '#FED7AA',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radii.sm,
+  },
+  alwaysActiveBadge: {
+    backgroundColor: theme.isDark ? 'rgba(34,197,94,0.15)' : '#DCFCE7',
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 6,
+  },
+  alwaysActiveText: {
+    fontFamily: typography.fonts.heading,
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: theme.isDark ? '#4ADE80' : '#15803D',
+  },
+  pastDateBadge: {
+    backgroundColor: theme.isDark ? 'rgba(34,197,94,0.15)' : '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: theme.isDark ? 'rgba(34,197,94,0.3)' : '#BBF7D0',
+  },
+  pastDateBadgeText: {
+    fontFamily: typography.fonts.heading,
+    fontSize: 11,
+    fontWeight: '700',
+    color: theme.isDark ? '#4ADE80' : '#15803D',
+  },
+  editGstPillText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.accent,
+    fontFamily: typography.fonts.heading,
+  },
   expandedSubCard: {
     backgroundColor: colors.neutral100,
     borderRadius: radii.md,
@@ -3076,6 +3309,9 @@ const createStyles = (theme: Theme) => {
     color: colors.textMuted,
     fontFamily: typography.fonts.body,
   },
+  scannerBadgeConnected: {
+    color: '#059669',
+  },
   realPrinterCard: {
     backgroundColor: colors.bg,
     borderRadius: radii.md,
@@ -3093,11 +3329,11 @@ const createStyles = (theme: Theme) => {
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: '#FFF4ED',
+    backgroundColor: isDark ? 'rgba(255,95,0,0.15)' : '#FFF4ED',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(253, 94, 3, 0.2)',
+    borderColor: isDark ? 'rgba(255,95,0,0.3)' : 'rgba(253, 94, 3, 0.2)',
   },
   printerIcon: {
     fontSize: 18,
@@ -3109,6 +3345,7 @@ const createStyles = (theme: Theme) => {
     fontFamily: typography.fonts.heading,
     fontSize: typography.sizes.sm,
     color: colors.text,
+    fontWeight: '700',
   },
   printerMeta: {
     fontSize: 11,
@@ -3117,15 +3354,19 @@ const createStyles = (theme: Theme) => {
     marginTop: 1,
   },
   connectedBadge: {
-    backgroundColor: '#E6F4EA',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: isDark ? 'rgba(5,150,105,0.18)' : '#E6F4EA',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: radii.sm,
   },
   connectedBadgeText: {
     fontSize: 11,
-    color: '#137333',
+    color: isDark ? '#34D399' : '#137333',
     fontFamily: typography.fonts.heading,
+    fontWeight: '700',
   },
   printerActionButtonsRow: {
     flexDirection: 'row',
@@ -3136,8 +3377,9 @@ const createStyles = (theme: Theme) => {
   },
   printerTestBtn: {
     flex: 1.4,
-    backgroundColor: '#111111',
-    paddingVertical: 8,
+    backgroundColor: '#FF5F00',
+    flexDirection: 'row',
+    paddingVertical: 9,
     paddingHorizontal: 10,
     borderRadius: radii.sm,
     alignItems: 'center',
@@ -3147,13 +3389,14 @@ const createStyles = (theme: Theme) => {
     color: '#fff',
     fontSize: typography.sizes.xs,
     fontFamily: typography.fonts.heading,
+    fontWeight: '700',
   },
   printerChangeBtn: {
     flex: 1,
-    backgroundColor: colors.neutral100,
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: colors.divider,
-    paddingVertical: 8,
+    borderColor: colors.border,
+    paddingVertical: 9,
     paddingHorizontal: 8,
     borderRadius: radii.sm,
     alignItems: 'center',
@@ -3163,14 +3406,15 @@ const createStyles = (theme: Theme) => {
     color: colors.text,
     fontSize: typography.sizes.xs,
     fontFamily: typography.fonts.heading,
+    fontWeight: '600',
   },
   printerDisconnectBtn: {
-    paddingVertical: 8,
+    paddingVertical: 9,
     paddingHorizontal: 10,
     borderRadius: radii.sm,
     borderWidth: 1,
-    borderColor: '#FECACA',
-    backgroundColor: '#FEF2F2',
+    borderColor: isDark ? 'rgba(239,68,68,0.3)' : '#FECACA',
+    backgroundColor: isDark ? 'rgba(239,68,68,0.1)' : '#FEF2F2',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -3178,34 +3422,269 @@ const createStyles = (theme: Theme) => {
     color: '#DC2626',
     fontSize: typography.sizes.xs,
     fontFamily: typography.fonts.heading,
+    fontWeight: '600',
+  },
+  printerLoadingCard: {
+    backgroundColor: colors.bg,
+    borderRadius: radii.md,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: colors.divider,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  printerLoadingText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.text,
+    fontFamily: typography.fonts.heading,
+    textAlign: 'center',
+  },
+  printerLoadingSub: {
+    fontSize: 11,
+    color: colors.textMuted,
+    fontFamily: typography.fonts.body,
+    textAlign: 'center',
+  },
+  discoveredContainer: {
+    backgroundColor: colors.bg,
+    borderRadius: radii.md,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.divider,
+    gap: 10,
+  },
+  discoveredTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.text,
+    fontFamily: typography.fonts.heading,
+    marginBottom: 2,
+  },
+  discoveredRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    padding: 10,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 10,
+  },
+  connectPrinterBtn: {
+    backgroundColor: '#FF5F00',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: radii.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 70,
+  },
+  connectPrinterBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11.5,
+    fontWeight: '700',
+    fontFamily: typography.fonts.heading,
+  },
+  scanAgainBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    marginTop: 4,
+  },
+  scanAgainBtnText: {
+    color: colors.accent,
+    fontSize: 12,
+    fontWeight: '600',
+    fontFamily: typography.fonts.heading,
+  },
+  compactNoPrinterCard: {
+    backgroundColor: colors.bg,
+    borderRadius: radii.md,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: colors.divider,
+  },
+  compactNoPrinterHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  compactPrinterIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: isDark ? 'rgba(234,88,12,0.15)' : '#FFF7ED',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  compactNoPrinterTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.text,
+    fontFamily: typography.fonts.heading,
+  },
+  compactNoPrinterSub: {
+    fontSize: 11,
+    color: colors.textMuted,
+    fontFamily: typography.fonts.body,
+    marginTop: 1,
+  },
+  compactRetryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FF5F00',
+    paddingVertical: 7,
+    paddingHorizontal: 11,
+    borderRadius: radii.sm,
+  },
+  compactRetryBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+    fontFamily: typography.fonts.heading,
   },
   noPrinterCard: {
     backgroundColor: colors.bg,
     borderRadius: radii.md,
-    padding: 14,
+    padding: 16,
     borderWidth: 1,
     borderColor: colors.divider,
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
+  },
+  noPrinterIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: isDark ? 'rgba(234,88,12,0.15)' : '#FFF7ED',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 2,
+  },
+  noPrinterTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.text,
+    fontFamily: typography.fonts.heading,
   },
   noPrinterText: {
-    fontSize: typography.sizes.xs,
+    fontSize: 11.5,
     color: colors.textMuted,
     fontFamily: typography.fonts.body,
     textAlign: 'center',
-    lineHeight: 16,
+    lineHeight: 17,
+    paddingHorizontal: 6,
   },
-  scanPrinterBtn: {
-    backgroundColor: '#111111',
+  printerRetryActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 6,
+    width: '100%',
+  },
+  retryScanBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: '#FF5F00',
     paddingVertical: 10,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     borderRadius: radii.md,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  retryScanBtnText: {
+    color: '#fff',
+    fontSize: 12.5,
+    fontWeight: '700',
+    fontFamily: typography.fonts.heading,
+  },
+  addIpBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: radii.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addIpBtnText: {
+    color: colors.text,
+    fontSize: 12.5,
+    fontWeight: '600',
+    fontFamily: typography.fonts.heading,
+  },
+  ipInputCard: {
+    width: '100%',
+    backgroundColor: colors.surface,
+    borderRadius: radii.sm,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginTop: 6,
+    gap: 8,
+  },
+  ipInputTitle: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: colors.text,
+    fontFamily: typography.fonts.heading,
+  },
+  ipInputRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  ipTextInput: {
+    flex: 1,
+    height: 38,
+    backgroundColor: colors.inputBg,
+    borderWidth: 1,
+    borderColor: colors.inputBorder,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    fontSize: 13,
+    color: colors.text,
+    fontFamily: typography.fonts.body,
+  },
+  ipConnectBtn: {
+    backgroundColor: '#FF5F00',
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ipConnectBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+    fontFamily: typography.fonts.heading,
+  },
+  cancelText: {
+    fontSize: 11.5,
+    color: colors.textMuted,
+    fontFamily: typography.fonts.body,
+    textDecorationLine: 'underline',
+  },
+  scanPrinterBtn: {
+    flexDirection: 'row',
+    backgroundColor: '#FF5F00',
+    paddingVertical: 11,
+    paddingHorizontal: 18,
+    borderRadius: radii.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+  },
   scanPrinterBtnText: {
     color: '#fff',
-    fontSize: typography.sizes.sm,
+    fontSize: 13,
+    fontWeight: '700',
     fontFamily: typography.fonts.heading,
   },
 
@@ -3344,6 +3823,44 @@ const createStyles = (theme: Theme) => {
     fontFamily: typography.fonts.body,
     flexShrink: 1,
   },
+  accountManagementExpandedBox: {
+    backgroundColor: isDark ? '#1C1917' : '#F9F8F6',
+    borderRadius: 14,
+    marginVertical: 6,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: colors.dividerLight,
+    overflow: 'hidden',
+  },
+  accountMgmtSubRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.dividerLight,
+    gap: 10,
+  },
+  accountMgmtIconWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.04)',
+  },
+  accountMgmtSubTitle: {
+    fontSize: 13,
+    color: colors.text,
+    fontFamily: typography.fonts.heading,
+    fontWeight: '700',
+  },
+  accountMgmtSubMeta: {
+    fontSize: 11,
+    color: colors.textMuted,
+    fontFamily: typography.fonts.body,
+    marginTop: 2,
+  },
   legalArrow: {
     fontSize: 18,
     color: 'rgba(29, 31, 32, 0.5)',
@@ -3437,7 +3954,9 @@ const createStyles = (theme: Theme) => {
     backgroundColor: colors.surface,
     borderTopLeftRadius: radii.xl,
     borderTopRightRadius: radii.xl,
-    padding: 18,
+    paddingTop: 18,
+    paddingHorizontal: 18,
+    paddingBottom: modalNavClearance,
     maxHeight: '85%',
     ...shadows.lg,
   },
@@ -3495,6 +4014,12 @@ const createStyles = (theme: Theme) => {
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: colors.dividerLight,
+    borderRadius: radii.pill,
+  },
+  modalCloseActionText: {
+    color: '#111111',
+    fontWeight: '600',
+    fontSize: 14,
   },
   accountActionsCloseBtn: {
     minHeight: 46,
@@ -3596,7 +4121,9 @@ const createStyles = (theme: Theme) => {
     backgroundColor: colors.surface,
     borderTopLeftRadius: radii.xl,
     borderTopRightRadius: radii.xl,
-    padding: 18,
+    paddingTop: 18,
+    paddingHorizontal: 18,
+    paddingBottom: modalNavClearance,
     maxHeight: '88%',
     ...shadows.lg,
   },
@@ -3790,6 +4317,61 @@ const createStyles = (theme: Theme) => {
     color: colors.textSecondary,
     fontFamily: typography.fonts.body,
     lineHeight: 18,
+  },
+  staffPermBreakdown: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 95, 0, 0.15)',
+    gap: 8,
+  },
+  staffPermHeading: {
+    fontFamily: typography.fonts.heading,
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.accent900,
+    letterSpacing: 0.2,
+    marginBottom: 2,
+  },
+  staffPermRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 3,
+  },
+  staffPermName: {
+    fontFamily: typography.fonts.body,
+    fontSize: 12.5,
+    color: colors.text,
+    fontWeight: '500',
+  },
+  staffPermNameDisabled: {
+    color: colors.textMuted,
+  },
+  overridePill: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    borderRadius: radii.sm,
+    borderWidth: 0.5,
+    borderColor: '#F59E0B',
+  },
+  overridePillText: {
+    fontSize: 9,
+    fontFamily: typography.fonts.heading,
+    fontWeight: '700',
+    color: '#B45309',
+  },
+  staffPermStatus: {
+    fontFamily: typography.fonts.bodySemiBold,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  staffPermAllowed: {
+    color: '#16A34A',
+  },
+  staffPermDenied: {
+    color: '#DC2626',
   },
 
   // Delete Account Modal Styles

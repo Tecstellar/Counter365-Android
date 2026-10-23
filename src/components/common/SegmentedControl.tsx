@@ -9,6 +9,7 @@ interface SegmentedControlProps<T extends string> {
   onSelect: (option: T) => void;
   style?: ViewStyle;
   theme?: 'light' | 'dark';
+  renderLabel?: (option: T) => string;
 }
 
 export function SegmentedControl<T extends string>({
@@ -17,6 +18,7 @@ export function SegmentedControl<T extends string>({
   onSelect,
   style,
   theme: propTheme,
+  renderLabel,
 }: SegmentedControlProps<T>) {
   const { theme, isDark: ctxIsDark } = useTheme();
   const isDark = propTheme ? propTheme === 'dark' : ctxIsDark;
@@ -54,7 +56,7 @@ export function SegmentedControl<T extends string>({
                 isSelected && styles.selectedOptionText,
               ]}
             >
-              {opt}
+              {renderLabel ? renderLabel(opt) : opt}
             </Text>
           </TouchableOpacity>
         );

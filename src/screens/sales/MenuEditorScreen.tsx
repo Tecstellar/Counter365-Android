@@ -91,6 +91,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
   const [halfPriceInput, setHalfPriceInput] = useState('');
   const fullPriceInputRef = useRef<TextInput>(null);
   const [selectedCatId, setSelectedCatId] = useState('');
+  const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState(false);
   const [isFav, setIsFav] = useState(false);
   const [isAvailable, setIsAvailable] = useState(true);
   const [itemPhotoUrl, setItemPhotoUrl] = useState<string | null>(null);
@@ -325,7 +326,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
     }
   };
 
-  const handleSaveItem = async () => {
+  const handleSaveItem = async (addMore: boolean = false) => {
     Keyboard.dismiss();
     if (!can('menu')) {
       flash(t('no_access', "You don't have access for that"));
@@ -393,13 +394,36 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
 
       const updated = await menuService.saveMenuItem(itemRecord);
       setItems(updated);
-      setEditingItem(null);
-      setItemNameInput('');
-      setFullPriceInput('');
-      setHalfPriceInput('');
-      setItemPhotoUrl(null);
-      setSelectedIconKey(null);
-      flash(`${itemRecord.name} saved`);
+
+      if (addMore) {
+        // Reset inputs and keep form open for immediate entry of more items
+        setEditingItem({
+          id: generateUUID(),
+          shopId: shop.id,
+          categoryId: catId,
+          name: '',
+          price: 0,
+          halfPrice: 0,
+          hasHalf: false,
+          isFavorite: false,
+          isAvailable: true,
+          sortOrder: updated.length,
+        });
+        setItemNameInput('');
+        setFullPriceInput('');
+        setHalfPriceInput('');
+        setItemPhotoUrl(null);
+        setSelectedIconKey(null);
+        flash(`✓ ${itemRecord.name} added! Ready for next item.`);
+      } else {
+        setEditingItem(null);
+        setItemNameInput('');
+        setFullPriceInput('');
+        setHalfPriceInput('');
+        setItemPhotoUrl(null);
+        setSelectedIconKey(null);
+        flash(`${itemRecord.name} saved`);
+      }
     } catch (err: any) {
       console.error('handleSaveItem error:', err);
       flash('Failed to save item: ' + (err?.message || 'Please check fields'));
@@ -898,30 +922,13 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
           <Text style={styles.title}>Menu Management</Text>
           <View style={styles.headerRightGroup}>
             {isBulkEditMode ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <TouchableOpacity
-                  onPress={handleCancelBulkEdit}
-                  style={styles.headerCancelEditBtn}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.headerCancelEditText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={handleSaveBulkEdits}
-                  disabled={isSavingBulk}
-                  style={styles.headerSaveEditBtn}
-                  activeOpacity={0.7}
-                >
-                  {isSavingBulk ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                  ) : (
-                    <>
-                      <Ionicons name="checkmark-sharp" size={15} color="#FFFFFF" />
-                      <Text style={styles.headerSaveEditText}>Save</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              </View>
+              <TouchableOpacity
+                onPress={handleCancelBulkEdit}
+                style={styles.headerCancelEditBtn}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.headerCancelEditText}>Cancel</Text>
+              </TouchableOpacity>
             ) : isSelectMode ? (
               <TouchableOpacity
                 onPress={handleToggleSelectMode}
@@ -1007,30 +1014,49 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
         {editingItem && (
           <View style={styles.editBlueprintCard}>
             <View style={styles.editTopRow}>
-              {/* Photo Box with upload capability */}
-              <TouchableOpacity
-                onPress={handlePickItemPhoto}
-                style={styles.photoBox}
-                activeOpacity={0.8}
-              >
-                {itemPhotoUrl ? (
-                  <Image
-                    source={{ uri: itemPhotoUrl }}
-                    style={styles.photoBoxImage}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <View style={styles.photoBoxEmpty}>
-                    <DishVectorIcon
-                      dishName={itemNameInput || editingItem.name}
-                      categoryName={categories.find(c => c.id === selectedCatId)?.name}
-                      overrideIconKey={selectedIconKey}
-                      size={36}
+              <View style={styles.photoAndFavCol}>
+                {/* Photo Box with upload capability */}
+                <TouchableOpacity
+                  onPress={handlePickItemPhoto}
+                  style={styles.photoBox}
+                  activeOpacity={0.8}
+                >
+                  {itemPhotoUrl ? (
+                    <Image
+                      source={{ uri: itemPhotoUrl }}
+                      style={styles.photoBoxImage}
+                      resizeMode="cover"
                     />
-                    <Text style={styles.photoBoxLabel}>Add Photo</Text>
-                  </View>
-                )}
-              </TouchableOpacity>
+                  ) : (
+                    <View style={styles.photoBoxEmpty}>
+                      <DishVectorIcon
+                        dishName={itemNameInput || editingItem.name}
+                        categoryName={categories.find(c => c.id === selectedCatId)?.name}
+                        overrideIconKey={selectedIconKey}
+                        size={36}
+                      />
+                      <Text style={styles.photoBoxLabel}>Add Photo</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+
+                {/* Heart Button below photo for Favorite */}
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={() => setIsFav(!isFav)}
+                  style={[styles.photoHeartBtn, isFav && styles.photoHeartBtnActive]}
+                  accessibilityLabel="Toggle Favorite"
+                >
+                  <Ionicons
+                    name={isFav ? "heart" : "heart-outline"}
+                    size={16}
+                    color={isFav ? "#EF4444" : colors.textSecondary}
+                  />
+                  <Text style={[styles.photoHeartBtnText, isFav && styles.photoHeartBtnTextActive]}>
+                    Fav
+                  </Text>
+                </TouchableOpacity>
+              </View>
 
               <View style={styles.editFields}>
                 <Text style={styles.cardKicker}>
@@ -1065,33 +1091,51 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
               </View>
             </View>
 
-            {/* Category Select Chips (Horizontal Swipeable) */}
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.catChipsScroll}
-            >
-              {categories.map(c => {
-                const isSelected = c.id === selectedCatId;
-                return (
-                  <TouchableOpacity
-                    key={c.id}
-                    onPress={() => setSelectedCatId(c.id)}
-                    style={[styles.catChip, isSelected && styles.catChipSelected]}
-                    activeOpacity={0.75}
-                  >
-                    <Text
-                      style={[
-                        styles.catChipText,
-                        isSelected && styles.catChipTextSelected,
-                      ]}
-                    >
-                      {c.name}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+            {/* Category Dropdown Selector */}
+            <View style={styles.catDropdownWrap}>
+              <Text style={styles.catDropdownLabel}>Category</Text>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => setIsCategoryDropdownOpen(prev => !prev)}
+                style={styles.catDropdownTrigger}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                  <Ionicons name="folder" size={17} color="#FF5F00" />
+                  <Text style={styles.catDropdownSelectedText}>
+                    {categories.find(c => c.id === selectedCatId)?.name || 'Select Category'}
+                  </Text>
+                </View>
+                <Ionicons
+                  name={isCategoryDropdownOpen ? 'chevron-up' : 'chevron-down'}
+                  size={18}
+                  color={colors.textSecondary}
+                />
+              </TouchableOpacity>
+
+              {isCategoryDropdownOpen && (
+                <View style={styles.catDropdownMenu}>
+                  {categories.map(c => {
+                    const isSelected = c.id === selectedCatId;
+                    return (
+                      <TouchableOpacity
+                        key={c.id}
+                        onPress={() => {
+                          setSelectedCatId(c.id);
+                          setIsCategoryDropdownOpen(false);
+                        }}
+                        style={[styles.catDropdownItem, isSelected && styles.catDropdownItemSelected]}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[styles.catDropdownItemText, isSelected && styles.catDropdownItemTextSelected]}>
+                          {c.name}
+                        </Text>
+                        {isSelected && <Ionicons name="checkmark" size={16} color="#FF5F00" />}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
 
             {/* Phosphor Icon Picker */}
             <View style={styles.iconPickerSection}>
@@ -1146,27 +1190,8 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
               </ScrollView>
             </View>
 
-            {/* Toggles */}
+            {/* Toggles (Available today) */}
             <View style={styles.togglesContainer}>
-              <TouchableOpacity
-                activeOpacity={0.7}
-                onPress={() => setIsFav(!isFav)}
-                style={styles.toggleRow}
-              >
-                <View style={styles.toggleInfo}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <Ionicons name={isFav ? "heart" : "heart-outline"} size={16} color={isFav ? "#EF4444" : colors.textSecondary} />
-                    <Text style={styles.toggleTitle}>Favourite</Text>
-                  </View>
-                  <Text style={styles.toggleSub}>shows in the first tiles</Text>
-                </View>
-                <View style={[styles.toggleTrack, isFav && styles.toggleTrackActive]}>
-                  <View
-                    style={[styles.toggleKnob, isFav && styles.toggleKnobActive]}
-                  />
-                </View>
-              </TouchableOpacity>
-
               <TouchableOpacity
                 activeOpacity={0.7}
                 onPress={() => setIsAvailable(!isAvailable)}
@@ -1194,21 +1219,19 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
               </TouchableOpacity>
             </View>
 
-            {/* Action Buttons */}
+            {/* Action Buttons: Delete Icon, Close Icon, + Add More, Save */}
             <View style={styles.formActionsRow}>
               {editingItem && !editingItem.id.startsWith('new_') && !editingItem.id.startsWith('item_') && (
                 <TouchableOpacity
                   onPress={() => handleDeleteItem(editingItem.id, itemNameInput || editingItem.name)}
-                  style={styles.deleteFormBtn}
+                  style={styles.deleteIconOnlyBtn}
                   activeOpacity={0.8}
+                  accessibilityLabel="Delete item"
                 >
-                  <Ionicons name="trash-outline" size={16} color="#DC2626" />
-                  <Text numberOfLines={1} style={styles.deleteFormBtnText}>Delete</Text>
+                  <Ionicons name="trash-outline" size={19} color="#DC2626" />
                 </TouchableOpacity>
               )}
-              <AppButton
-                title="Cancel"
-                variant="secondary"
+              <TouchableOpacity
                 onPress={() => {
                   Keyboard.dismiss();
                   setEditingItem(null);
@@ -1217,14 +1240,26 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                   setHalfPriceInput('');
                   setItemPhotoUrl(null);
                 }}
-                style={styles.cancelBtn}
+                style={styles.cancelIconOnlyBtn}
+                activeOpacity={0.8}
+                accessibilityLabel="Cancel editing"
+              >
+                <Ionicons name="close" size={21} color={colors.textSecondary} />
+              </TouchableOpacity>
+
+              <AppButton
+                title="+ Add More"
+                variant="secondary"
+                disabled={isSavingItem}
+                onPress={() => handleSaveItem(true)}
+                style={styles.saveAndAddMoreBtn}
               />
               <AppButton
-                title="Save Item"
+                title="Save"
                 variant="primary"
                 loading={isSavingItem}
                 disabled={isSavingItem}
-                onPress={handleSaveItem}
+                onPress={() => handleSaveItem(false)}
                 style={styles.saveItemBtn}
               />
             </View>
@@ -1523,7 +1558,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                               <View style={styles.bulkRowControls}>
                                 <View style={styles.priceStepperWrap}>
                                   <TouchableOpacity
-                                    onPress={() => handleStepPrice(item.id, 'price', -1)}
+                                    onPress={() => handleStepPrice(item.id, 'price', -5)}
                                     style={styles.stepperBtn}
                                     activeOpacity={0.6}
                                   >
@@ -1542,7 +1577,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                                   </View>
 
                                   <TouchableOpacity
-                                    onPress={() => handleStepPrice(item.id, 'price', 1)}
+                                    onPress={() => handleStepPrice(item.id, 'price', 5)}
                                     style={styles.stepperBtn}
                                     activeOpacity={0.6}
                                   >
@@ -1554,7 +1589,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                                   <View style={styles.halfStepperWrap}>
                                     <Text style={styles.halfStepperLabel}>Half:</Text>
                                     <TouchableOpacity
-                                      onPress={() => handleStepPrice(item.id, 'halfPrice', -1)}
+                                      onPress={() => handleStepPrice(item.id, 'halfPrice', -5)}
                                       style={styles.stepperBtnSmall}
                                       activeOpacity={0.6}
                                     >
@@ -1571,7 +1606,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                                       />
                                     </View>
                                     <TouchableOpacity
-                                      onPress={() => handleStepPrice(item.id, 'halfPrice', 1)}
+                                      onPress={() => handleStepPrice(item.id, 'halfPrice', 5)}
                                       style={styles.stepperBtnSmall}
                                       activeOpacity={0.6}
                                     >
@@ -2095,6 +2130,29 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
           </TouchableWithoutFeedback>
         </TouchableOpacity>
       </Modal>
+
+      {/* Floating Save Button for Bulk Price Editing */}
+      {isBulkEditMode && (
+        <View style={styles.floatingBulkSaveContainer} pointerEvents="box-none">
+          <TouchableOpacity
+            activeOpacity={0.88}
+            onPress={handleSaveBulkEdits}
+            disabled={isSavingBulk}
+            style={styles.floatingBulkSaveBtn}
+          >
+            {isSavingBulk ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <View style={styles.floatingBulkSaveContent}>
+                <View style={styles.floatingSaveIconCircle}>
+                  <Ionicons name="checkmark-sharp" size={17} color="#FF5F00" />
+                </View>
+                <Text style={styles.floatingBulkSaveText}>Save</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
     </KeyboardAvoidingView>
   );
 };
@@ -2299,25 +2357,48 @@ const createStyles = (theme: Theme) => {
     marginTop: 16,
     width: '100%',
   },
+  deleteIconOnlyBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    backgroundColor: '#FEF2F2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelIconOnlyBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: theme.isDark ? '#27272A' : '#F5F5F4',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   cancelBtn: {
     flex: 1,
     height: 44,
-    minWidth: 76,
     paddingHorizontal: 8,
     borderRadius: 12,
   },
   createCatBtn: {
     flex: 1.4,
     height: 44,
-    minWidth: 120,
     paddingHorizontal: 10,
     borderRadius: 12,
   },
   saveItemBtn: {
-    flex: 1.4,
+    flex: 1,
     height: 44,
-    minWidth: 96,
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+  },
+  saveAndAddMoreBtn: {
+    flex: 1,
+    height: 44,
+    paddingHorizontal: 8,
     borderRadius: 12,
   },
   editBlueprintCard: {
@@ -2332,6 +2413,35 @@ const createStyles = (theme: Theme) => {
   editTopRow: {
     flexDirection: 'row',
     gap: 10,
+  },
+  photoAndFavCol: {
+    alignItems: 'center',
+    gap: 6,
+  },
+  photoHeartBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    width: 62,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: theme.isDark ? '#27272A' : '#F5F5F4',
+  },
+  photoHeartBtnActive: {
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FEF2F2',
+  },
+  photoHeartBtnText: {
+    fontSize: 10,
+    fontFamily: typography.fonts.heading,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  photoHeartBtnTextActive: {
+    color: '#EF4444',
   },
   photoBox: {
     width: 62,
@@ -2382,6 +2492,106 @@ const createStyles = (theme: Theme) => {
     flexDirection: 'row',
     gap: 6,
     paddingVertical: 2,
+  },
+  catDropdownWrap: {
+    width: '100%',
+    marginVertical: 4,
+  },
+  catDropdownLabel: {
+    fontSize: 10,
+    fontFamily: typography.fonts.heading,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  catDropdownTrigger: {
+    height: 42,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.05)' : colors.surfaceSecondary,
+  },
+  catDropdownSelectedText: {
+    fontFamily: typography.fonts.heading,
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  catDropdownMenu: {
+    marginTop: 6,
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
+    ...shadows.card,
+  },
+  catDropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+  },
+  catDropdownItemSelected: {
+    backgroundColor: isDark ? 'rgba(255, 95, 0, 0.15)' : 'rgba(255, 95, 0, 0.08)',
+  },
+  catDropdownItemText: {
+    fontFamily: typography.fonts.body,
+    fontSize: 13,
+    color: colors.text,
+  },
+  catDropdownItemTextSelected: {
+    fontFamily: typography.fonts.heading,
+    fontWeight: '700',
+    color: '#FF5F00',
+  },
+  floatingBulkSaveContainer: {
+    position: 'absolute',
+    bottom: 24,
+    left: 20,
+    right: 20,
+    alignItems: 'center',
+    zIndex: 999,
+  },
+  floatingBulkSaveBtn: {
+    backgroundColor: '#FF5F00',
+    borderRadius: 28,
+    paddingVertical: 13,
+    paddingHorizontal: 24,
+    shadowColor: '#FF5F00',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.45,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  floatingBulkSaveContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  floatingSaveIconCircle: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  floatingBulkSaveText: {
+    fontFamily: typography.fonts.heading,
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.2,
   },
   catChip: {
     minHeight: 34,

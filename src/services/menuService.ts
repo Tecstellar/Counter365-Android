@@ -117,6 +117,36 @@ export const STARTER_CATALOGS: Record<ShopType, { categories: string[]; items: A
   }
 };
 
+/** Upsert one item to Supabase; returns an error message, or null on success. */
+async function pushMenuItem(item: MenuItem): Promise<string | null> {
+  try {
+    const { error } = await (supabase.from('menu_items') as any).upsert(
+      {
+        id: item.id,
+        shop_id: item.shopId,
+        category_id: item.categoryId,
+        name: item.name,
+        price: item.price,
+        half_price: item.halfPrice || 0,
+        has_half: item.hasHalf ?? false,
+        is_favorite: item.isFavorite ?? false,
+        is_available: item.isAvailable ?? true,
+        image_url: item.imageUrl || null,
+        image_prompt: item.imagePrompt || null,
+        image_status: item.imageStatus || 'completed',
+        sort_order: item.sortOrder ?? 0,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'id' }
+    );
+    if (error) console.error('saveMenuItem Supabase error:', error);
+    return error ? error.message || 'Unknown error' : null;
+  } catch (err: any) {
+    console.warn('saveMenuItem Supabase notice:', err);
+    return err?.message || 'Network error';
+  }
+}
+
 export const menuService = {
   /**
    * Fetch categories from local cache or Supabase
@@ -158,6 +188,8 @@ export const menuService = {
    */
   async getMenuItems(shopId: string, shopType: ShopType = 'Tea Shop'): Promise<MenuItem[]> {
     if (!shopId) return [];
+    let dbError = true;
+    let dbRows = 0;
 
     // 1. Fetch live menu items from Supabase to sync additions/changes across multi-device POS terminals (iOS, Android, Web)
     try {
@@ -166,6 +198,8 @@ export const menuService = {
         .eq('shop_id', shopId)
         .order('sort_order', { ascending: true });
 
+      dbError = !!error;
+      dbRows = dbItems?.length ?? 0;
       if (!error && dbItems && dbItems.length > 0) {
         const loaded: MenuItem[] = dbItems.map((it: any) => ({
           id: it.id,
@@ -192,6 +226,8 @@ export const menuService = {
     // 2. Offline fallback: return locally cached items if network query failed
     const saved = await storage.getObject<MenuItem[] | null>(LOCAL_MENU_KEY, null);
     if (saved && saved.length > 0 && saved[0].shopId === shopId) {
+      // Items saved while the upload failed exist only on this phone; push them so other members see them.
+      if (!dbError && dbRows === 0) saved.forEach(i => { void pushMenuItem(i); });
       return saved.map(i => ({
         ...i,
         imageUrl: i.imageUrl || null,
@@ -336,7 +372,7 @@ export const menuService = {
   /**
    * Save / update a menu item in Supabase and local cache
    */
-  async saveMenuItem(item: MenuItem): Promise<MenuItem[]> {
+  async saveMenuItem(item: MenuItem): Promise<{ items: MenuItem[]; syncError: string | null }> {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const validatedId = uuidRegex.test(item.id) ? item.id : generateUUID();
 
@@ -372,35 +408,9 @@ export const menuService = {
     }
     await storage.setObject(LOCAL_MENU_KEY, updated);
 
-    try {
-      const { error } = await (supabase.from('menu_items') as any).upsert(
-        {
-          id: itemToSave.id,
-          shop_id: itemToSave.shopId,
-          category_id: itemToSave.categoryId,
-          name: itemToSave.name,
-          price: itemToSave.price,
-          half_price: itemToSave.halfPrice || 0,
-          has_half: itemToSave.hasHalf ?? false,
-          is_favorite: itemToSave.isFavorite ?? false,
-          is_available: itemToSave.isAvailable ?? true,
-          image_url: itemToSave.imageUrl || null,
-          image_prompt: itemToSave.imagePrompt || null,
-          image_status: itemToSave.imageStatus || 'completed',
-          sort_order: itemToSave.sortOrder ?? 0,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'id' }
-      );
+    const syncError = await pushMenuItem(itemToSave);
 
-      if (error) {
-        console.error('saveMenuItem Supabase error:', error);
-      }
-    } catch (err) {
-      console.warn('saveMenuItem Supabase notice:', err);
-    }
-
-    return updated;
+    return { items: updated, syncError };
   },
 
   /**

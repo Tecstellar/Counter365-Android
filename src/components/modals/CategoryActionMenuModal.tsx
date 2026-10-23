@@ -18,6 +18,7 @@ interface CategoryActionMenuModalProps {
   itemCount?: number;
   onEdit: (category: MenuCategory) => void;
   onDelete: (category: MenuCategory) => void;
+  canDelete?: boolean;
 }
 
 export const CategoryActionMenuModal: React.FC<CategoryActionMenuModalProps> = ({
@@ -27,6 +28,7 @@ export const CategoryActionMenuModal: React.FC<CategoryActionMenuModalProps> = (
   itemCount = 0,
   onEdit,
   onDelete,
+  canDelete = true,
 }) => {
   const { theme, isDark } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -72,20 +74,21 @@ export const CategoryActionMenuModal: React.FC<CategoryActionMenuModalProps> = (
                 <Text style={styles.menuText}>Edit Category</Text>
               </TouchableOpacity>
 
-              {/* Action: Delete Category */}
-              <TouchableOpacity
-                style={styles.menuRow}
-                onPress={() => {
-                  onClose();
-                  onDelete(category);
-                }}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="trash-outline" size={16} color={colors.danger || '#DC2626'} />
-                <Text style={[styles.menuText, { color: colors.danger || '#DC2626' }]}>
-                  Delete Category
-                </Text>
-              </TouchableOpacity>
+              {canDelete && (
+                <TouchableOpacity
+                  style={styles.menuRow}
+                  onPress={() => {
+                    onClose();
+                    onDelete(category);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="trash-outline" size={16} color={colors.danger || '#DC2626'} />
+                  <Text style={[styles.menuText, { color: colors.danger || '#DC2626' }]}>
+                    Delete Category
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           </TouchableWithoutFeedback>
         </View>

@@ -55,6 +55,8 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
   const { shop } = useShop();
   const { flash } = useCart();
   const { can } = useAuth();
+  // Deleting needs its own permission; the owner grants it per person.
+  const canDelete = can('menu_delete');
   const { t } = useLanguage();
 
   // Immediate override protection: If owner revokes menu edit permission while menu editor is open
@@ -436,8 +438,13 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
         icon: selectedIconKey || null,
       };
 
-      const updated = await menuService.saveMenuItem(itemRecord);
+      const { items: updated, syncError } = await menuService.saveMenuItem(itemRecord);
       setItems(updated);
+      if (syncError) {
+        Alert.alert('Saved on this phone only', `${itemRecord.name} did not upload, so other staff and the owner will not see it yet.
+
+${syncError}`);
+      }
 
       if (addMore) {
         // Reset inputs and keep form open for immediate entry of more items
@@ -530,6 +537,10 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
   };
 
   const handleDeleteItem = (itemId: string, itemName: string) => {
+    if (!canDelete) {
+      flash(t('no_access', "You don't have access for that"));
+      return;
+    }
     if (!can('menu')) {
       flash(t('no_access', "You don't have access for that"));
       return;
@@ -590,6 +601,10 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
   };
 
   const handleDeleteCategory = (cat: MenuCategory) => {
+    if (!canDelete) {
+      flash(t('no_access', "You don't have access for that"));
+      return;
+    }
     if (!can('menu')) {
       flash(t('no_access', "You don't have access for that"));
       return;
@@ -911,6 +926,10 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
   };
 
   const handleDeleteSelectedItems = () => {
+    if (!canDelete) {
+      flash(t('no_access', "You don't have access for that"));
+      return;
+    }
     const count = selectedItemIds.size;
     if (count === 0) {
       flash('Please select items to delete');
@@ -1265,7 +1284,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
 
             {/* Action Buttons: Delete Icon, Close Icon, + Add More, Save */}
             <View style={styles.formActionsRow}>
-              {editingItem && !editingItem.id.startsWith('new_') && !editingItem.id.startsWith('item_') && (
+              {canDelete && editingItem && !editingItem.id.startsWith('new_') && !editingItem.id.startsWith('item_') && (
                 <TouchableOpacity
                   onPress={() => handleDeleteItem(editingItem.id, itemNameInput || editingItem.name)}
                   style={styles.deleteIconOnlyBtn}
@@ -1463,20 +1482,22 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                           <Text style={styles.bulkCountText}>
                             {selectedItemIds.size} of {displayedItems.length} selected
                           </Text>
-                          <TouchableOpacity
-                            onPress={handleDeleteSelectedItems}
-                            disabled={selectedItemIds.size === 0 || isDeletingBatch}
-                            style={[
-                              styles.bulkDeleteBtn,
-                              selectedItemIds.size === 0 && styles.bulkDeleteBtnDisabled,
-                            ]}
-                            activeOpacity={0.8}
-                          >
-                            <Ionicons name="trash-outline" size={15} color="#FFFFFF" />
-                            <Text style={styles.bulkDeleteBtnText}>
-                              {isDeletingBatch ? 'Deleting...' : `Delete (${selectedItemIds.size})`}
-                            </Text>
-                          </TouchableOpacity>
+                          {canDelete && (
+                            <TouchableOpacity
+                              onPress={handleDeleteSelectedItems}
+                              disabled={selectedItemIds.size === 0 || isDeletingBatch}
+                              style={[
+                                styles.bulkDeleteBtn,
+                                selectedItemIds.size === 0 && styles.bulkDeleteBtnDisabled,
+                              ]}
+                              activeOpacity={0.8}
+                            >
+                              <Ionicons name="trash-outline" size={15} color="#FFFFFF" />
+                              <Text style={styles.bulkDeleteBtnText}>
+                                {isDeletingBatch ? 'Deleting...' : `Delete (${selectedItemIds.size})`}
+                              </Text>
+                            </TouchableOpacity>
+                          )}
                         </View>
                       </View>
                     )}
@@ -1985,6 +2006,7 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
       <CategoryActionMenuModal
         visible={isCategoryMenuVisible}
         onClose={() => setIsCategoryMenuVisible(false)}
+        canDelete={canDelete}
         category={selectedCategoryForMenu}
         itemCount={selectedCategoryForMenu ? items.filter(i => i.categoryId === selectedCategoryForMenu.id).length : 0}
         onEdit={(cat) => {
@@ -2097,15 +2119,19 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                       </TouchableOpacity>
                     </View>
 
-                    {/* Separate, Safe Delete Action */}
-                    <TouchableOpacity
-                      onPress={() => editingCategory && handleDeleteCategory(editingCategory)}
-                      style={styles.catModalDeleteRow}
-                      activeOpacity={0.7}
-                    >
-                      <Ionicons name="trash-outline" size={15} color="#DC2626" />
-                      <Text style={styles.catModalDeleteRowText}>Delete this category</Text>
-                    </TouchableOpacity>
+                    {canDelete && (
+                      <>
+                        {/* Separate, Safe Delete Action */}
+                        <TouchableOpacity
+                          onPress={() => editingCategory && handleDeleteCategory(editingCategory)}
+                          style={styles.catModalDeleteRow}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="trash-outline" size={15} color="#DC2626" />
+                          <Text style={styles.catModalDeleteRowText}>Delete this category</Text>
+                        </TouchableOpacity>
+                      </>
+                    )}
                   </ScrollView>
                 </View>
               </TouchableWithoutFeedback>

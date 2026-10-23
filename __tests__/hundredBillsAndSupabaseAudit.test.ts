@@ -74,7 +74,7 @@ describe('100-Bills Limit, 30-Day Retention & Supabase Data Persistence Audit', 
       isFavorite: true,
       sortOrder: 1,
     };
-    const savedItems = await menuService.saveMenuItem(newItem);
+    const savedItems = (await menuService.saveMenuItem(newItem)).items;
     expect(savedItems.some(i => i.id === newItem.id && i.name === 'Ghee Podi Idly')).toBe(true);
 
     // 2. Update Item
@@ -82,7 +82,7 @@ describe('100-Bills Limit, 30-Day Retention & Supabase Data Persistence Audit', 
       ...newItem,
       price: 70,
     };
-    const itemsAfterEdit = await menuService.saveMenuItem(modifiedItem);
+    const itemsAfterEdit = (await menuService.saveMenuItem(modifiedItem)).items;
     const edited = itemsAfterEdit.find(i => i.id === newItem.id);
     expect(edited?.price).toBe(70);
 

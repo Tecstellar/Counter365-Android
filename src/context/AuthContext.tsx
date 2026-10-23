@@ -9,9 +9,9 @@ import { generateUUID } from '../lib/uuid';
 import { supabase } from '../lib/supabase';
 
 export const ROLE_DEFAULT_PERMISSIONS: Record<UserRole, Record<PermissionKey, boolean>> = {
-  Owner: { bill: true, total: true, exp: true, pend: true, report: true, menu: true, users: true, subscription: true },
-  Supervisor: { bill: true, total: true, exp: true, pend: true, report: true, menu: true, users: false, subscription: false },
-  Biller: { bill: true, total: true, exp: false, pend: false, report: false, menu: false, users: false, subscription: false },
+  Owner: { bill: true, total: true, exp: true, pend: true, report: true, menu: true, menu_delete: true, users: true, subscription: true },
+  Supervisor: { bill: true, total: true, exp: true, pend: true, report: true, menu: true, menu_delete: true, users: false, subscription: false },
+  Biller: { bill: true, total: true, exp: false, pend: false, report: false, menu: false, menu_delete: false, users: false, subscription: false },
 };
 
 interface AuthContextType {

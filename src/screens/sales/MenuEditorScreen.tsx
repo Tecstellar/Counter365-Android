@@ -53,7 +53,9 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
   const styles = React.useMemo(() => createStyles(theme), [theme]);
   const { shop } = useShop();
   const { flash } = useCart();
-  const { can } = useAuth();
+  const { can, currentRole } = useAuth();
+  // Supervisors can add and edit the menu but not delete from it.
+  const canDelete = currentRole === 'Owner';
   const { t } = useLanguage();
 
   // Immediate override protection: If owner revokes menu edit permission while menu editor is open
@@ -491,6 +493,10 @@ ${syncError}`);
   };
 
   const handleDeleteItem = (itemId: string, itemName: string) => {
+    if (!canDelete) {
+      flash(t('no_access', "You don't have access for that"));
+      return;
+    }
     if (!can('menu')) {
       flash(t('no_access', "You don't have access for that"));
       return;
@@ -551,6 +557,10 @@ ${syncError}`);
   };
 
   const handleDeleteCategory = (cat: MenuCategory) => {
+    if (!canDelete) {
+      flash(t('no_access', "You don't have access for that"));
+      return;
+    }
     if (!can('menu')) {
       flash(t('no_access', "You don't have access for that"));
       return;
@@ -872,6 +882,10 @@ ${syncError}`);
   };
 
   const handleDeleteSelectedItems = () => {
+    if (!canDelete) {
+      flash(t('no_access', "You don't have access for that"));
+      return;
+    }
     const count = selectedItemIds.size;
     if (count === 0) {
       flash('Please select items to delete');
@@ -1226,7 +1240,7 @@ ${syncError}`);
 
             {/* Action Buttons: Delete Icon, Close Icon, + Add More, Save */}
             <View style={styles.formActionsRow}>
-              {editingItem && !editingItem.id.startsWith('new_') && !editingItem.id.startsWith('item_') && (
+              {canDelete && editingItem && !editingItem.id.startsWith('new_') && !editingItem.id.startsWith('item_') && (
                 <TouchableOpacity
                   onPress={() => handleDeleteItem(editingItem.id, itemNameInput || editingItem.name)}
                   style={styles.deleteIconOnlyBtn}
@@ -1424,20 +1438,22 @@ ${syncError}`);
                           <Text style={styles.bulkCountText}>
                             {selectedItemIds.size} of {displayedItems.length} selected
                           </Text>
-                          <TouchableOpacity
-                            onPress={handleDeleteSelectedItems}
-                            disabled={selectedItemIds.size === 0 || isDeletingBatch}
-                            style={[
-                              styles.bulkDeleteBtn,
-                              selectedItemIds.size === 0 && styles.bulkDeleteBtnDisabled,
-                            ]}
-                            activeOpacity={0.8}
-                          >
-                            <Ionicons name="trash-outline" size={15} color="#FFFFFF" />
-                            <Text style={styles.bulkDeleteBtnText}>
-                              {isDeletingBatch ? 'Deleting...' : `Delete (${selectedItemIds.size})`}
-                            </Text>
-                          </TouchableOpacity>
+                          {canDelete && (
+                            <TouchableOpacity
+                              onPress={handleDeleteSelectedItems}
+                              disabled={selectedItemIds.size === 0 || isDeletingBatch}
+                              style={[
+                                styles.bulkDeleteBtn,
+                                selectedItemIds.size === 0 && styles.bulkDeleteBtnDisabled,
+                              ]}
+                              activeOpacity={0.8}
+                            >
+                              <Ionicons name="trash-outline" size={15} color="#FFFFFF" />
+                              <Text style={styles.bulkDeleteBtnText}>
+                                {isDeletingBatch ? 'Deleting...' : `Delete (${selectedItemIds.size})`}
+                              </Text>
+                            </TouchableOpacity>
+                          )}
                         </View>
                       </View>
                     )}
@@ -1936,6 +1952,7 @@ ${syncError}`);
       <CategoryActionMenuModal
         visible={isCategoryMenuVisible}
         onClose={() => setIsCategoryMenuVisible(false)}
+        canDelete={canDelete}
         category={selectedCategoryForMenu}
         itemCount={selectedCategoryForMenu ? items.filter(i => i.categoryId === selectedCategoryForMenu.id).length : 0}
         onEdit={(cat) => {
@@ -2048,15 +2065,19 @@ ${syncError}`);
                       </TouchableOpacity>
                     </View>
 
-                    {/* Separate, Safe Delete Action */}
-                    <TouchableOpacity
-                      onPress={() => editingCategory && handleDeleteCategory(editingCategory)}
-                      style={styles.catModalDeleteRow}
-                      activeOpacity={0.7}
-                    >
-                      <Ionicons name="trash-outline" size={15} color="#DC2626" />
-                      <Text style={styles.catModalDeleteRowText}>Delete this category</Text>
-                    </TouchableOpacity>
+                    {canDelete && (
+                      <>
+                        {/* Separate, Safe Delete Action */}
+                        <TouchableOpacity
+                          onPress={() => editingCategory && handleDeleteCategory(editingCategory)}
+                          style={styles.catModalDeleteRow}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="trash-outline" size={15} color="#DC2626" />
+                          <Text style={styles.catModalDeleteRowText}>Delete this category</Text>
+                        </TouchableOpacity>
+                      </>
+                    )}
                   </ScrollView>
                 </View>
               </TouchableWithoutFeedback>

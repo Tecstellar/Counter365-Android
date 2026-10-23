@@ -11,6 +11,7 @@ import { billingService } from '../src/services/billingService';
 import { contactService } from '../src/services/contactService';
 import { whatsappService } from '../src/services/whatsappService';
 import { storage } from '../src/lib/storage';
+import { supabase } from '../src/lib/supabase';
 import { Shop, CartItem, PendingPaymentRecord } from '../src/types/models';
 
 describe('Feature-Specific Production QA & Supabase Integrity Test Suite', () => {
@@ -138,6 +139,65 @@ describe('Feature-Specific Production QA & Supabase Integrity Test Suite', () =>
       expect(deleted.deletedByName).toBe('Super Sam');
       expect(deleted.deletedByRole).toBe('Supervisor');
       expect(deleted.cancellationReason).toBe('Mistake in order');
+    });
+
+    test('Owner device merges remote supervisor deletion without overwriting audit trail', async () => {
+      // 1. Simulate a local bill in storage that is not yet cancelled
+      const activeBillId = 'active-local-bill-999';
+      const mockActiveBill = {
+        id: activeBillId,
+        shopId: TEST_SHOP_ID,
+        billNumber: 999,
+        status: 'completed',
+        isDeleted: false,
+        totalAmount: 500,
+        paidAmount: 500,
+        pendingAmount: 0,
+        paymentMode: 'Cash',
+        createdAt: new Date().toISOString(),
+      };
+      await storage.setObject('@counterpro/bills', [mockActiveBill]);
+
+      // 2. Mock Supabase returning that bill as cancelled by Supervisor
+      const mockRemoteCancelled = {
+        id: activeBillId,
+        shop_id: TEST_SHOP_ID,
+        bill_number: 999,
+        status: 'cancelled',
+        is_deleted: true,
+        is_cancelled: true,
+        deleted_by_name: 'Supervisor Praveen',
+        deleted_by_role: 'Supervisor',
+        deleted_at: new Date().toISOString(),
+        cancellation_reason: 'Voided by supervisor',
+        total_amount: 500,
+        paid_amount: 500,
+        pending_amount: 0,
+        payment_mode: 'Cash',
+        created_at: new Date().toISOString(),
+      };
+
+      const selectSpy = jest.spyOn(supabase, 'from').mockReturnValueOnce({
+        select: jest.fn().mockReturnValueOnce({
+          eq: jest.fn().mockReturnValueOnce({
+            order: jest.fn().mockResolvedValueOnce({
+              data: [mockRemoteCancelled],
+              error: null,
+            }),
+          }),
+        }),
+      } as any);
+
+      const bills = await billingService.getBills(TEST_SHOP_ID);
+      const merged = bills.find(b => b.id === activeBillId);
+      expect(merged).toBeDefined();
+      expect(merged?.isDeleted).toBe(true);
+      expect(merged?.status).toBe('cancelled');
+      expect(merged?.deletedByName).toBe('Supervisor Praveen');
+      expect(merged?.deletedByRole).toBe('Supervisor');
+      expect(merged?.cancellationReason).toBe('Voided by supervisor');
+
+      selectSpy.mockRestore();
     });
 
     test('Owner can successfully cancel and delete bills', async () => {

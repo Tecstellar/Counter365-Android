@@ -728,7 +728,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
   const recentBills = React.useMemo(() => {
     return bills
-      .filter(b => !b.isDeleted && b.status !== 'deleted')
+      .filter(b => !b.isDeleted && b.status !== 'deleted' && b.status !== 'cancelled')
       .slice(0, 5);
   }, [bills]);
 
@@ -755,13 +755,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     }
     setIsDeletingBill(true);
     try {
+      const deleterName = currentRole === 'Owner'
+        ? (profile?.fullName || 'Owner')
+        : (currentMember?.fullName || profile?.fullName || 'Supervisor');
+
       await billingService.deleteBill(
         shop.id,
         billToDelete.id,
         {
-          name: profile?.fullName || currentMember?.fullName || currentRole,
+          name: deleterName,
           role: currentRole,
-          id: profile?.id || currentMember?.id,
+          id: (currentRole === 'Owner' ? profile?.id : currentMember?.id) || profile?.id,
         },
         'Cancelled from Home screen'
       );

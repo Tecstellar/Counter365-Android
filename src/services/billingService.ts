@@ -497,7 +497,8 @@ export const billingService = {
           customerName: b.customer_name,
           customerPhone: b.customer_phone,
           status: b.status,
-          isDeleted: b.is_deleted ?? (b.status === 'deleted'),
+          isDeleted: b.is_deleted ?? (b.status === 'deleted' || b.status === 'cancelled'),
+          isCancelled: b.is_cancelled ?? (b.status === 'cancelled'),
           isEdited: b.is_edited ?? (b.status === 'edited'),
           createdByName: b.created_by_name || b.created_by || 'Owner',
           createdByRole: b.created_by_role || 'Owner',
@@ -508,6 +509,8 @@ export const billingService = {
           deletedAt: b.deleted_at || null,
           deletedByName: b.deleted_by_name || null,
           deletedByRole: b.deleted_by_role || null,
+          deletedById: b.deleted_by_id || null,
+          cancellationReason: b.cancellation_reason || null,
           subtotal: Number(b.subtotal || 0),
           gstRate: Number(b.gst_rate || 0),
           gstAmount: Number(b.gst_amount || b.tax_amount || 0),
@@ -542,12 +545,30 @@ export const billingService = {
         }
         for (const lb of shopBills) {
           const remote = mergedMap.get(lb.id);
+          if (!remote) {
+            mergedMap.set(lb.id, lb);
+            continue;
+          }
+
+          const isDeleted = Boolean(lb.isDeleted || remote.isDeleted || lb.status === 'cancelled' || remote.status === 'cancelled' || lb.status === 'deleted' || remote.status === 'deleted');
+          const isCancelled = Boolean(lb.isCancelled || remote.isCancelled || isDeleted);
+          const isEdited = Boolean(lb.isEdited || remote.isEdited);
+
           mergedMap.set(lb.id, {
             ...remote,
             ...lb,
-            status: lb.status || remote?.status || 'completed',
-            isDeleted: lb.isDeleted || remote?.isDeleted || false,
-            isEdited: lb.isEdited || remote?.isEdited || false,
+            status: isDeleted ? 'cancelled' : (lb.status || remote.status || 'completed'),
+            isDeleted,
+            isCancelled,
+            isEdited,
+            deletedByName: remote.deletedByName || lb.deletedByName || null,
+            deletedByRole: remote.deletedByRole || lb.deletedByRole || null,
+            deletedAt: remote.deletedAt || lb.deletedAt || null,
+            deletedById: remote.deletedById || lb.deletedById || null,
+            cancellationReason: remote.cancellationReason || lb.cancellationReason || null,
+            editedByName: remote.editedByName || lb.editedByName || null,
+            editedByRole: remote.editedByRole || lb.editedByRole || null,
+            editedAt: remote.editedAt || lb.editedAt || null,
           });
         }
 
@@ -1147,7 +1168,7 @@ export const billingService = {
       isCancelled: true,
       deletedAt: nowIso,
       deletedByName: deleter.name,
-      deletedByRole: (deleter.role as any) || 'Owner',
+      deletedByRole: (deleter.role as any) || (deleter.name?.toLowerCase().includes('supervisor') ? 'Supervisor' : 'Owner'),
       deletedById: deleter.id || null,
       cancellationReason: cancellationReason || 'Cancelled by staff',
     };

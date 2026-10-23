@@ -187,13 +187,17 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
     setIsDeleting(true);
     try {
       try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning); } catch {}
+      const deleterName = currentRole === 'Owner'
+        ? (profile?.fullName || 'Owner')
+        : (currentMember?.fullName || profile?.fullName || 'Supervisor');
+
       await billingService.deleteBill(
         shop.id,
         billToDelete.id,
         {
-          name: profile?.fullName || currentMember?.fullName || currentRole,
+          name: deleterName,
           role: currentRole,
-          id: profile?.id || currentMember?.id,
+          id: (currentRole === 'Owner' ? profile?.id : currentMember?.id) || profile?.id,
         },
         'Cancelled from Bills register'
       );
@@ -415,16 +419,18 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
                           <View style={styles.deletedBadge}>
                             <Text style={styles.deletedBadgeText}>{t('cancelled', 'CANCELLED')}</Text>
                           </View>
-                          <TouchableOpacity
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                            activeOpacity={0.7}
-                            onPress={() => handleRestoreBill(bill)}
-                            style={styles.restoreHeaderChip}
-                            accessibilityLabel="Restore bill"
-                          >
-                            <Ionicons name="refresh" size={11} color="#15803D" />
-                            <Text style={styles.restoreHeaderChipText}>{t('restore', 'Restore')}</Text>
-                          </TouchableOpacity>
+                          {currentRole === 'Owner' && (
+                            <TouchableOpacity
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                              activeOpacity={0.7}
+                              onPress={() => handleRestoreBill(bill)}
+                              style={styles.restoreHeaderChip}
+                              accessibilityLabel="Restore bill"
+                            >
+                              <Ionicons name="refresh" size={11} color="#15803D" />
+                              <Text style={styles.restoreHeaderChipText}>{t('restore', 'Restore')}</Text>
+                            </TouchableOpacity>
+                          )}
                         </>
                       ) : isEdited ? (
                         <View style={styles.editedBadge}>
@@ -491,12 +497,18 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
 
 
                   {/* Audit Trail Section */}
-                  {(bill.createdByName || isEdited || isDeleted) && (
+                  {((isDeleted && currentRole === 'Owner') || (!isDeleted && (bill.createdByName || isEdited))) && (
                     <View style={styles.auditBox}>
-                      {isDeleted && bill.deletedByName ? (
+                      {isDeleted ? (
                         <Text style={[styles.auditLine, { color: colors.danger || '#DC2626' }]}>
-                          Cancelled by <Text style={styles.auditHighlight}>{bill.deletedByName}</Text> ({bill.deletedByRole || 'Staff'}) {bill.deletedAt ? `on ${formatTimestamp(bill.deletedAt)}` : ''}
-                          {bill.cancellationReason ? ` • ${bill.cancellationReason}` : ''}
+                          Cancelled by <Text style={styles.auditHighlight}>
+                            {bill.deletedByRole === 'Supervisor' || (bill.deletedByName && bill.deletedByName.toLowerCase().includes('supervisor'))
+                              ? `Supervisor${bill.deletedByName && bill.deletedByName !== 'Supervisor' ? ` ${bill.deletedByName}` : ''}`
+                              : (bill.deletedByName || 'Owner')}
+                          </Text>
+                          {bill.deletedByRole && bill.deletedByRole !== 'Supervisor' ? ` (${bill.deletedByRole})` : ''}
+                          {bill.deletedAt ? ` on ${formatTimestamp(bill.deletedAt)}` : ''}
+                          {bill.cancellationReason && bill.cancellationReason !== 'Cancelled' && bill.cancellationReason !== 'Cancelled by staff' ? ` • ${bill.cancellationReason}` : ''}
                         </Text>
                       ) : isEdited && bill.editedByName ? (
                         <Text style={[styles.auditLine, { color: '#B45309' }]}>
@@ -629,30 +641,38 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
               </View>
             </View>
 
-            {(previewBill?.isDeleted || previewBill?.status === 'cancelled') && previewBill?.deletedByName && (
+            {(previewBill?.isDeleted || previewBill?.status === 'cancelled') && currentRole === 'Owner' && (
               <View style={[styles.auditBox, { marginTop: 12 }]}>
                 <Text style={[styles.auditLine, { color: colors.danger || '#DC2626' }]}>
-                  Cancelled by <Text style={styles.auditHighlight}>{previewBill.deletedByName}</Text> ({previewBill.deletedByRole || 'Supervisor'}) {previewBill.deletedAt ? `on ${formatTimestamp(previewBill.deletedAt)}` : ''}
-                  {previewBill.cancellationReason ? ` • ${previewBill.cancellationReason}` : ''}
+                  Cancelled by <Text style={styles.auditHighlight}>
+                    {previewBill.deletedByRole === 'Supervisor' || (previewBill.deletedByName && previewBill.deletedByName.toLowerCase().includes('supervisor'))
+                      ? `Supervisor${previewBill.deletedByName && previewBill.deletedByName !== 'Supervisor' ? ` ${previewBill.deletedByName}` : ''}`
+                      : (previewBill.deletedByName || 'Owner')}
+                  </Text>
+                  {previewBill.deletedByRole && previewBill.deletedByRole !== 'Supervisor' ? ` (${previewBill.deletedByRole})` : ''}
+                  {previewBill.deletedAt ? ` on ${formatTimestamp(previewBill.deletedAt)}` : ''}
+                  {previewBill.cancellationReason && previewBill.cancellationReason !== 'Cancelled' && previewBill.cancellationReason !== 'Cancelled by staff' ? ` • ${previewBill.cancellationReason}` : ''}
                 </Text>
               </View>
             )}
 
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
               {(previewBill?.isDeleted || previewBill?.status === 'cancelled') ? (
-                <AppButton
-                  title="Restore Bill"
-                  variant="primary"
-                  icon={<Ionicons name="refresh-outline" size={17} color="#FFFFFF" />}
-                  onPress={() => {
-                    if (previewBill) {
-                      const b = previewBill;
-                      setPreviewBill(null);
-                      handleRestoreBill(b);
-                    }
-                  }}
-                  style={{ flex: 1.3, backgroundColor: '#16A34A' }}
-                />
+                currentRole === 'Owner' ? (
+                  <AppButton
+                    title="Restore Bill"
+                    variant="primary"
+                    icon={<Ionicons name="refresh-outline" size={17} color="#FFFFFF" />}
+                    onPress={() => {
+                      if (previewBill) {
+                        const b = previewBill;
+                        setPreviewBill(null);
+                        handleRestoreBill(b);
+                      }
+                    }}
+                    style={{ flex: 1.3, backgroundColor: '#16A34A' }}
+                  />
+                ) : null
               ) : (
                 <AppButton
                   title="Download PDF"

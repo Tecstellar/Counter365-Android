@@ -33,7 +33,7 @@ export const ROLES_INFO: Array<{ role: UserRole; sub: string }> = [
 
 export const DEFAULT_ROLE_PERMS: Record<UserRole, Record<PermissionKey, boolean>> = {
   Owner: { bill: true, total: true, exp: true, pend: true, report: true, menu: true, menu_delete: true, users: true, subscription: true },
-  Supervisor: { bill: true, total: true, exp: true, pend: true, report: true, menu: true, menu_delete: false, users: false, subscription: false },
+  Supervisor: { bill: true, total: true, exp: true, pend: true, report: true, menu: true, menu_delete: true, users: false, subscription: false },
   Biller: { bill: true, total: true, exp: false, pend: false, report: false, menu: false, menu_delete: false, users: false, subscription: false },
 };
 

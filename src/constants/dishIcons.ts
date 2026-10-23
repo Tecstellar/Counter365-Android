@@ -98,165 +98,173 @@ export const DISH_ICON_MAP: Record<string, string> = {
   'cookies': '🍪',
   'rusk': '🍞',
   'croissant': '🥐',
-  'brownie': '🍫',
-  'cake': '🍰',
-  'pastry': '🍰',
-  'donut': '🍩',
-  'doughnut': '🍩',
-  'muffin': '🧁',
-  'french fries': '🍟',
-  'fries': '🍟',
-  'potato wedges': '🍟',
-  'bread omelette': '🍳',
-  'omelette': '🍳',
-  'egg': '🥚',
-  'maggi': '🍜',
+
+  // South Indian Tiffin
+  'idli': '⚪',
+  'sambar idli': '⚪',
+  'mini idli': '⚪',
+  'button idli': '⚪',
+  'podii idli': '⚪',
+  'dosa': '🥞',
+  'plain dosa': '🥞',
+  'ghee roast': '🥞',
+  'masala dosa': '🥞',
+  'onion dosa': '🥞',
+  'rava dosa': '🥞',
+  'podii dosa': '🥞',
+  'set dosa': '🥞',
+  'uttapam': '🥞',
+  'onion uttapam': '🥞',
+  'tomato uttapam': '🥞',
+  'poori': '🫓',
+  'puri': '🫓',
+  'poori masala': '🫓',
+  'chola poori': '🫓',
+  'bhatura': '🫓',
+  'chole bhature': '🫓',
+  'pongal': '🍚',
+  'ven pongal': '🍚',
+  'upma': '🥣',
+  'rava upma': '🥣',
+  'kichadi': '🥣',
+  'parotta': '🫓',
+  'kothu parotta': '🫓',
+  'egg kothu parotta': '🫓',
+  'chicken kothu parotta': '🫓',
+  'chapathi': '🫓',
+  'roti': '🫓',
+  'naan': '🫓',
+  'butter naan': '🫓',
+  'kulcha': '🫓',
+
+  // Meals & Rice
+  'meals': '🍽️',
+  'veg meals': '🍽️',
+  'non veg meals': '🍽️',
+  'south indian meals': '🍽️',
+  'mini meals': '🍽️',
+  'biryani': '🍛',
+  'chicken biryani': '🍗',
+  'mutton biryani': '🍛',
+  'egg biryani': '🥚',
+  'veg biryani': '🥦',
+  'pulao': '🍛',
+  'veg pulao': '🥦',
+  'fried rice': '🍚',
+  'egg fried rice': '🥚',
+  'chicken fried rice': '🍗',
+  'veg fried rice': '🥦',
+  'schezwan fried rice': '🌶️',
+  'curd rice': '🍚',
+  'lemon rice': '🍋',
+  'sambar rice': '🍛',
+  'rasam rice': '🍛',
+  'tomato rice': '🍅',
+
+  // Noodles & Fast Food
   'noodles': '🍜',
+  'veg noodles': '🍜',
+  'egg noodles': '🍜',
+  'chicken noodles': '🍜',
+  'schezwan noodles': '🍜',
+  'maggi': '🍜',
   'pasta': '🍝',
-  'sandwich': '🥪',
-  'grilled sandwich': '🥪',
-  'veg sandwich': '🥪',
-  'cheese sandwich': '🥪',
+  'white sauce pasta': '🍝',
+  'red sauce pasta': '🍝',
   'burger': '🍔',
   'veg burger': '🍔',
   'chicken burger': '🍔',
+  'sandwich': '🥪',
+  'veg sandwich': '🥪',
+  'cheese sandwich': '🥪',
+  'grilled sandwich': '🥪',
+  'french fries': '🍟',
+  'fries': '🍟',
+  'peri peri fries': '🍟',
+  'pizza': '🍕',
+  'veg pizza': '🍕',
+  'margherita pizza': '🍕',
   'roll': '🌯',
-  'chicken roll': '🌯',
   'veg roll': '🌯',
-  'paneer roll': '🌯',
+  'chicken roll': '🌯',
+  'egg roll': '🌯',
   'frankie': '🌯',
-  'shawarma': '🌯',
   'momos': '🥟',
+  'veg momos': '🥟',
+  'chicken momos': '🥟',
   'fried momos': '🥟',
-  'steamed momos': '🥟',
-
-  // South Indian Tiffins & Breads
-  'idly': '⚪',
-  'idli': '⚪',
-  'sambar idli': '⚪',
-  'podi idli': '⚪',
-  'dosa': '🥞',
-  'masala dosa': '🥞',
-  'plain dosa': '🥞',
-  'ghee roast': '🥞',
-  'onion dosa': '🥞',
-  'rava dosa': '🥞',
-  'egg dosa': '🥞',
-  'poori': '🫓',
-  'puri': '🫓',
-  'chola poori': '🫓',
-  'chole bhature': '🫓',
-  'pongal': '🥣',
-  'upma': '🥣',
-  'parotta': '🫓',
-  'kothu parotta': '🫓',
-  'malabar parotta': '🫓',
-  'chapathi': '🫓',
-  'chapati': '🫓',
-  'roti': '🫓',
-  'naan': '🫓',
-  'paratha': '🫓',
-
-  // Meals & Main Courses
-  'biryani': '🍛',
-  'chicken biryani': '🍛',
-  'mutton biryani': '🍛',
-  'veg biryani': '🍛',
-  'dum biryani': '🍛',
-  'fried rice': '🍛',
-  'veg fried rice': '🍛',
-  'chicken fried rice': '🍛',
-  'egg fried rice': '🍛',
-  'meals': '🍱',
-  'rice meals': '🍱',
-  'south indian meals': '🍱',
-  'thali': '🍱',
-  'rice': '🍚',
-  'curd rice': '🍚',
-  'lemon rice': '🍚',
-  'sambar rice': '🍚',
-
-  // Non-Veg & Starters
-  'chicken 65': '🍗',
-  'chilli chicken': '🍗',
-  'chicken lollipop': '🍗',
-  'chicken curry': '🍗',
-  'chicken': '🍗',
-  'mutton': '🍖',
-  'fish fry': '🐟',
-  'fish': '🐟',
-  'prawn': '🍤',
-  'paneer': '🧀',
-  'paneer tikka': '🧀',
 
   // Sweets & Desserts
-  'gulab jamun': '🍯',
-  'laddu': '🍯',
-  'halwa': '🍯',
-  'sweet': '🍯',
   'ice cream': '🍨',
-  'kulfi': '🍨',
+  'vanilla': '🍨',
+  'chocolate': '🍨',
+  'strawberry': '🍨',
+  'kulfi': '🍦',
+  'falooda': '🍧',
+  'gulab jamun': '🍩',
+  'rasgulla': '⚪',
+  'halwa': '🍮',
+  'kesari': '🍮',
+  'payasam': '🥣',
+  'kheer': '🥣',
+  'cake': '🍰',
+  'pastry': '🍰',
+  'brownie': '🍫',
+  'pudding': '🍮',
 };
 
 export const CATEGORY_ICON_MAP: Record<string, string> = {
   'Tea & Coffee': '☕',
+  'Tea & Snacks': '☕',
+  'Chai & Snacks': '☕',
   'Coffee': '☕',
   'Tea': '☕',
-  'Snacks': '🥟',
-  'Cold': '🥤',
+  'Hot Drinks': '☕',
   'Beverages': '🥤',
-  'Juice': '🧃',
+  'Drinks': '🥤',
+  'Cold Drinks': '🥤',
+  'Cool Drinks': '🥤',
   'Juices': '🧃',
-  'Tiffin': '🫓',
-  'Breakfast': '🫓',
-  'Morning': '⚪',
-  'Evening': '🥟',
-  'Fast Food': '🍔',
-  'Meals': '🍛',
-  'Main': '🍛',
-  'Lunch': '🍱',
-  'Dinner': '🍱',
-  'Starters': '🍗',
-  'Bakes': '🥐',
+  'Juice': '🧃',
+  'Shakes': '🥤',
+  'Snacks': '🥟',
+  'Hot Savouries': '🥟',
   'Bakery': '🥐',
-  'Desserts': '🍰',
-  'Sweets': '🍯',
+  'Breads': '🍞',
+  'Tiffin': '🥞',
+  'Breakfast': '🥞',
+  'South Indian': '🥞',
+  'Meals': '🍽️',
+  'Rice Varieties': '🍛',
+  'Biryani': '🍛',
+  'Curries': '🍲',
+  'Chinese': '🍜',
+  'Noodles': '🍜',
+  'Fast Food': '🍔',
+  'Sandwiches': '🥪',
+  'Pizzas': '🍕',
+  'Starters': '🍗',
+  'Non-Veg': '🍗',
+  'Veg': '🥦',
+  'Desserts': '🍨',
+  'Sweets': '🍮',
+  'Ice Cream': '🍦',
+  'General': '🍽️',
 };
 
-/**
- * Returns a high-contrast, authentic food emoji/icon for the given dish or category.
- */
-export function getDishFoodIcon(dishName?: string, categoryName?: string): string {
-  const clean = (dishName || '')
-    .toLowerCase()
-    .replace(/[()[\]{}]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+export function getDishFoodIcon(dishName: string, categoryName?: string): string {
+  const clean = dishName.toLowerCase().replace(/[()[\]{}]/g, ' ').replace(/\s+/g, ' ').trim();
 
-  if (clean && DISH_ICON_MAP[clean]) {
+  if (DISH_ICON_MAP[clean]) {
     return DISH_ICON_MAP[clean];
   }
 
-  if (clean) {
-    // Check multi-word phrase matching (longer phrase first)
-    const sortedKeys = Object.keys(DISH_ICON_MAP).sort((a, b) => b.length - a.length);
-    for (const key of sortedKeys) {
-      const regex = new RegExp(`\\b${key}\\b`, 'i');
-      if (regex.test(clean)) {
-        return DISH_ICON_MAP[key];
-      }
-    }
-
-    // Token-level match
-    const tokens = clean.split(' ').filter(t => t.length > 2);
-    for (const token of tokens) {
-      if (DISH_ICON_MAP[token]) {
-        return DISH_ICON_MAP[token];
-      }
+  for (const [key, icon] of Object.entries(DISH_ICON_MAP)) {
+    if (clean.includes(key)) {
+      return icon;
     }
   }
 
-  // Category fallback
   if (categoryName) {
     const cleanCat = categoryName.trim();
     if (CATEGORY_ICON_MAP[cleanCat]) {
@@ -273,47 +281,240 @@ export function getDishFoodIcon(dishName?: string, categoryName?: string): strin
   return '🍽️';
 }
 
-export type VectorIconFamily = 'MaterialCommunityIcons' | 'Ionicons';
+export type VectorIconFamily = 'MaterialCommunityIcons' | 'Ionicons' | 'Feather';
 
 export interface DishVectorConfig {
   family: VectorIconFamily;
   name: string;
   color: string;
+  bgColor: string;
+  borderColor: string;
+  darkBg: string;
+  darkBorder: string;
 }
 
 export const DEFAULT_DISH_VECTOR: DishVectorConfig = {
   family: 'MaterialCommunityIcons',
   name: 'silverware-fork-knife',
   color: '#FD5E03',
+  bgColor: '#FFF7ED',
+  borderColor: '#FFEDD5',
+  darkBg: 'rgba(253, 94, 3, 0.14)',
+  darkBorder: 'rgba(253, 94, 3, 0.3)',
 };
 
 export const CATEGORY_VECTOR_MAP: Record<string, DishVectorConfig> = {
-  'Tea & Coffee': { family: 'MaterialCommunityIcons', name: 'coffee', color: '#78350F' },
-  'Coffee': { family: 'MaterialCommunityIcons', name: 'coffee', color: '#78350F' },
-  'Tea': { family: 'MaterialCommunityIcons', name: 'tea', color: '#B45309' },
-  'Snacks': { family: 'MaterialCommunityIcons', name: 'food-croissant', color: '#EA580C' },
-  'Cold': { family: 'MaterialCommunityIcons', name: 'glass-cocktail', color: '#0284C7' },
-  'Beverages': { family: 'MaterialCommunityIcons', name: 'glass-cocktail', color: '#0284C7' },
-  'Juice': { family: 'MaterialCommunityIcons', name: 'fruit-citrus', color: '#F59E0B' },
-  'Juices': { family: 'MaterialCommunityIcons', name: 'fruit-citrus', color: '#F59E0B' },
-  'Tiffin': { family: 'MaterialCommunityIcons', name: 'pot-mix-outline', color: '#F59E0B' },
-  'Breakfast': { family: 'MaterialCommunityIcons', name: 'pot-mix-outline', color: '#F59E0B' },
-  'Morning': { family: 'MaterialCommunityIcons', name: 'pot-mix-outline', color: '#F59E0B' },
-  'Evening': { family: 'MaterialCommunityIcons', name: 'food-croissant', color: '#EA580C' },
-  'Fast Food': { family: 'MaterialCommunityIcons', name: 'hamburger', color: '#DC2626' },
-  'Meals': { family: 'MaterialCommunityIcons', name: 'rice', color: '#C2410C' },
-  'Main': { family: 'MaterialCommunityIcons', name: 'rice', color: '#C2410C' },
-  'Lunch': { family: 'MaterialCommunityIcons', name: 'rice', color: '#C2410C' },
-  'Dinner': { family: 'MaterialCommunityIcons', name: 'rice', color: '#C2410C' },
-  'Starters': { family: 'MaterialCommunityIcons', name: 'food-drumstick', color: '#DC2626' },
-  'Bakes': { family: 'MaterialCommunityIcons', name: 'bread-slice', color: '#D97706' },
-  'Bakery': { family: 'MaterialCommunityIcons', name: 'bread-slice', color: '#D97706' },
-  'Desserts': { family: 'MaterialCommunityIcons', name: 'cupcake', color: '#EC4899' },
-  'Sweets': { family: 'MaterialCommunityIcons', name: 'cupcake', color: '#EC4899' },
+  'Tea & Coffee': {
+    family: 'MaterialCommunityIcons',
+    name: 'coffee',
+    color: '#B45309',
+    bgColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+    darkBg: 'rgba(217, 119, 6, 0.16)',
+    darkBorder: 'rgba(251, 191, 36, 0.35)',
+  },
+  'Tea & Snacks': {
+    family: 'MaterialCommunityIcons',
+    name: 'tea',
+    color: '#B45309',
+    bgColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+    darkBg: 'rgba(217, 119, 6, 0.16)',
+    darkBorder: 'rgba(251, 191, 36, 0.35)',
+  },
+  'Chai & Snacks': {
+    family: 'MaterialCommunityIcons',
+    name: 'tea',
+    color: '#B45309',
+    bgColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+    darkBg: 'rgba(217, 119, 6, 0.16)',
+    darkBorder: 'rgba(251, 191, 36, 0.35)',
+  },
+  'Coffee': {
+    family: 'MaterialCommunityIcons',
+    name: 'coffee',
+    color: '#78350F',
+    bgColor: '#F5EBE6',
+    borderColor: '#E6D5CC',
+    darkBg: 'rgba(120, 53, 15, 0.2)',
+    darkBorder: 'rgba(180, 83, 9, 0.35)',
+  },
+  'Tea': {
+    family: 'MaterialCommunityIcons',
+    name: 'tea',
+    color: '#B45309',
+    bgColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+    darkBg: 'rgba(217, 119, 6, 0.16)',
+    darkBorder: 'rgba(251, 191, 36, 0.35)',
+  },
+  'Beverages': {
+    family: 'MaterialCommunityIcons',
+    name: 'glass-cocktail',
+    color: '#0284C7',
+    bgColor: '#E0F2FE',
+    borderColor: '#BAE6FD',
+    darkBg: 'rgba(2, 132, 199, 0.16)',
+    darkBorder: 'rgba(56, 189, 248, 0.35)',
+  },
+  'Drinks': {
+    family: 'MaterialCommunityIcons',
+    name: 'glass-cocktail',
+    color: '#0284C7',
+    bgColor: '#E0F2FE',
+    borderColor: '#BAE6FD',
+    darkBg: 'rgba(2, 132, 199, 0.16)',
+    darkBorder: 'rgba(56, 189, 248, 0.35)',
+  },
+  'Cold Drinks': {
+    family: 'MaterialCommunityIcons',
+    name: 'bottle-soda-classic',
+    color: '#0284C7',
+    bgColor: '#E0F2FE',
+    borderColor: '#BAE6FD',
+    darkBg: 'rgba(2, 132, 199, 0.16)',
+    darkBorder: 'rgba(56, 189, 248, 0.35)',
+  },
+  'Cool Drinks': {
+    family: 'MaterialCommunityIcons',
+    name: 'bottle-soda-classic',
+    color: '#0284C7',
+    bgColor: '#E0F2FE',
+    borderColor: '#BAE6FD',
+    darkBg: 'rgba(2, 132, 199, 0.16)',
+    darkBorder: 'rgba(56, 189, 248, 0.35)',
+  },
+  'Cold': {
+    family: 'MaterialCommunityIcons',
+    name: 'glass-cocktail',
+    color: '#0284C7',
+    bgColor: '#E0F2FE',
+    borderColor: '#BAE6FD',
+    darkBg: 'rgba(2, 132, 199, 0.16)',
+    darkBorder: 'rgba(56, 189, 248, 0.35)',
+  },
+  'Juices': {
+    family: 'MaterialCommunityIcons',
+    name: 'fruit-citrus',
+    color: '#F59E0B',
+    bgColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+    darkBg: 'rgba(245, 158, 11, 0.16)',
+    darkBorder: 'rgba(251, 191, 36, 0.35)',
+  },
+  'Juice': {
+    family: 'MaterialCommunityIcons',
+    name: 'fruit-citrus',
+    color: '#F59E0B',
+    bgColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+    darkBg: 'rgba(245, 158, 11, 0.16)',
+    darkBorder: 'rgba(251, 191, 36, 0.35)',
+  },
+  'Snacks': {
+    family: 'MaterialCommunityIcons',
+    name: 'food-croissant',
+    color: '#EA580C',
+    bgColor: '#FFF7ED',
+    borderColor: '#FFEDD5',
+    darkBg: 'rgba(234, 88, 12, 0.16)',
+    darkBorder: 'rgba(251, 146, 60, 0.35)',
+  },
+  'Tiffin': {
+    family: 'MaterialCommunityIcons',
+    name: 'pot-mix-outline',
+    color: '#D97706',
+    bgColor: '#FEF9C3',
+    borderColor: '#FEF08A',
+    darkBg: 'rgba(217, 119, 6, 0.16)',
+    darkBorder: 'rgba(250, 204, 21, 0.35)',
+  },
+  'Breakfast': {
+    family: 'MaterialCommunityIcons',
+    name: 'pot-mix-outline',
+    color: '#D97706',
+    bgColor: '#FEF9C3',
+    borderColor: '#FEF08A',
+    darkBg: 'rgba(217, 119, 6, 0.16)',
+    darkBorder: 'rgba(250, 204, 21, 0.35)',
+  },
+  'Meals': {
+    family: 'MaterialCommunityIcons',
+    name: 'rice',
+    color: '#C2410C',
+    bgColor: '#FFF1F2',
+    borderColor: '#FFE4E6',
+    darkBg: 'rgba(194, 65, 12, 0.16)',
+    darkBorder: 'rgba(251, 113, 133, 0.35)',
+  },
+  'Biryani': {
+    family: 'MaterialCommunityIcons',
+    name: 'pot-steam',
+    color: '#BE123C',
+    bgColor: '#FFF1F2',
+    borderColor: '#FFE4E6',
+    darkBg: 'rgba(190, 18, 60, 0.16)',
+    darkBorder: 'rgba(251, 113, 133, 0.35)',
+  },
+  'Fast Food': {
+    family: 'MaterialCommunityIcons',
+    name: 'hamburger',
+    color: '#DC2626',
+    bgColor: '#FEF2F2',
+    borderColor: '#FEE2E2',
+    darkBg: 'rgba(220, 38, 38, 0.16)',
+    darkBorder: 'rgba(248, 113, 113, 0.35)',
+  },
+  'Chinese': {
+    family: 'MaterialCommunityIcons',
+    name: 'noodles',
+    color: '#16A34A',
+    bgColor: '#F0FDF4',
+    borderColor: '#DCFCE7',
+    darkBg: 'rgba(22, 163, 74, 0.16)',
+    darkBorder: 'rgba(74, 222, 128, 0.35)',
+  },
+  'Starters': {
+    family: 'MaterialCommunityIcons',
+    name: 'food-drumstick',
+    color: '#DC2626',
+    bgColor: '#FEF2F2',
+    borderColor: '#FEE2E2',
+    darkBg: 'rgba(220, 38, 38, 0.16)',
+    darkBorder: 'rgba(248, 113, 113, 0.35)',
+  },
+  'Bakery': {
+    family: 'MaterialCommunityIcons',
+    name: 'bread-slice',
+    color: '#B45309',
+    bgColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+    darkBg: 'rgba(180, 83, 9, 0.16)',
+    darkBorder: 'rgba(251, 191, 36, 0.35)',
+  },
+  'Desserts': {
+    family: 'MaterialCommunityIcons',
+    name: 'cupcake',
+    color: '#DB2777',
+    bgColor: '#FDF2F8',
+    borderColor: '#FCE7F3',
+    darkBg: 'rgba(219, 39, 119, 0.16)',
+    darkBorder: 'rgba(244, 114, 182, 0.35)',
+  },
+  'Sweets': {
+    family: 'MaterialCommunityIcons',
+    name: 'cupcake',
+    color: '#DB2777',
+    bgColor: '#FDF2F8',
+    borderColor: '#FCE7F3',
+    darkBg: 'rgba(219, 39, 119, 0.16)',
+    darkBorder: 'rgba(244, 114, 182, 0.35)',
+  },
 };
 
 /**
- * Returns a high-contrast, authentic vector food icon config for the given dish or category.
+ * Returns a high-contrast, premium vector food icon config for the given dish or category.
  */
 export function getDishVectorIconConfig(dishName?: string, categoryName?: string): DishVectorConfig {
   const clean = (dishName || '')
@@ -325,9 +526,25 @@ export function getDishVectorIconConfig(dishName?: string, categoryName?: string
   // 1. Hot Teas & Chais
   if (clean.includes('tea') || clean.includes('chai') || clean.includes('sulaimani')) {
     if (clean.includes('green') || clean.includes('lemon')) {
-      return { family: 'MaterialCommunityIcons', name: 'tea', color: '#15803D' };
+      return {
+        family: 'MaterialCommunityIcons',
+        name: 'tea',
+        color: '#15803D',
+        bgColor: '#F0FDF4',
+        borderColor: '#DCFCE7',
+        darkBg: 'rgba(22, 163, 74, 0.16)',
+        darkBorder: 'rgba(74, 222, 128, 0.35)',
+      };
     }
-    return { family: 'MaterialCommunityIcons', name: 'coffee', color: '#B45309' };
+    return {
+      family: 'MaterialCommunityIcons',
+      name: 'coffee',
+      color: '#B45309',
+      bgColor: '#FEF3C7',
+      borderColor: '#FDE68A',
+      darkBg: 'rgba(217, 119, 6, 0.16)',
+      darkBorder: 'rgba(251, 191, 36, 0.35)',
+    };
   }
 
   // 2. Coffees
@@ -337,22 +554,50 @@ export function getDishVectorIconConfig(dishName?: string, categoryName?: string
     clean.includes('cappuccino') ||
     clean.includes('latte')
   ) {
-    return { family: 'MaterialCommunityIcons', name: 'coffee', color: '#78350F' };
+    return {
+      family: 'MaterialCommunityIcons',
+      name: 'coffee',
+      color: '#78350F',
+      bgColor: '#F5EBE6',
+      borderColor: '#E6D5CC',
+      darkBg: 'rgba(120, 53, 15, 0.2)',
+      darkBorder: 'rgba(180, 83, 9, 0.35)',
+    };
   }
 
   // 3. Water
   if (clean.includes('water')) {
-    return { family: 'Ionicons', name: 'water-outline', color: '#0284C7' };
+    return {
+      family: 'Ionicons',
+      name: 'water-outline',
+      color: '#0284C7',
+      bgColor: '#F0F9FF',
+      borderColor: '#E0F2FE',
+      darkBg: 'rgba(2, 132, 199, 0.16)',
+      darkBorder: 'rgba(56, 189, 248, 0.35)',
+    };
   }
 
-  // 4. Juices, Shakes, Lassi, Soda, Cold Drinks
+  // 4. Cold Drinks, Soda, Cola
+  if (clean.includes('cold drink') || clean.includes('cool drink') || clean.includes('soda') || clean.includes('cola')) {
+    return {
+      family: 'MaterialCommunityIcons',
+      name: 'bottle-soda-classic',
+      color: '#0284C7',
+      bgColor: '#E0F2FE',
+      borderColor: '#BAE6FD',
+      darkBg: 'rgba(2, 132, 199, 0.16)',
+      darkBorder: 'rgba(56, 189, 248, 0.35)',
+    };
+  }
+
+  // 5. Juices, Shakes, Lassi, Mojitos & General Drinks
   if (
     clean.includes('juice') ||
     clean.includes('shake') ||
     clean.includes('lassi') ||
-    clean.includes('soda') ||
-    clean.includes('cola') ||
     clean.includes('drink') ||
+    clean.includes('beverage') ||
     clean.includes('mojito') ||
     clean.includes('badam milk') ||
     clean.includes('rose milk') ||
@@ -361,22 +606,62 @@ export function getDishVectorIconConfig(dishName?: string, categoryName?: string
     clean.includes('milk')
   ) {
     if (clean.includes('lemon') || clean.includes('lime') || clean.includes('orange') || clean.includes('citrus')) {
-      return { family: 'MaterialCommunityIcons', name: 'fruit-citrus', color: '#F59E0B' };
+      return {
+        family: 'MaterialCommunityIcons',
+        name: 'fruit-citrus',
+        color: '#F59E0B',
+        bgColor: '#FEF3C7',
+        borderColor: '#FDE68A',
+        darkBg: 'rgba(245, 158, 11, 0.16)',
+        darkBorder: 'rgba(251, 191, 36, 0.35)',
+      };
     }
-    return { family: 'MaterialCommunityIcons', name: 'glass-cocktail', color: '#0284C7' };
+    return {
+      family: 'MaterialCommunityIcons',
+      name: 'glass-cocktail',
+      color: '#0284C7',
+      bgColor: '#E0F2FE',
+      borderColor: '#BAE6FD',
+      darkBg: 'rgba(2, 132, 199, 0.16)',
+      darkBorder: 'rgba(56, 189, 248, 0.35)',
+    };
   }
 
   // 5. Pizza & Burger & Fast Food
   if (clean.includes('pizza')) {
-    return { family: 'MaterialCommunityIcons', name: 'pizza', color: '#EA580C' };
+    return {
+      family: 'MaterialCommunityIcons',
+      name: 'pizza',
+      color: '#EA580C',
+      bgColor: '#FFF7ED',
+      borderColor: '#FFEDD5',
+      darkBg: 'rgba(234, 88, 12, 0.16)',
+      darkBorder: 'rgba(251, 146, 60, 0.35)',
+    };
   }
   if (clean.includes('burger') || clean.includes('sandwich') || clean.includes('roll') || clean.includes('frankie')) {
-    return { family: 'MaterialCommunityIcons', name: 'hamburger', color: '#DC2626' };
+    return {
+      family: 'MaterialCommunityIcons',
+      name: 'hamburger',
+      color: '#DC2626',
+      bgColor: '#FEF2F2',
+      borderColor: '#FEE2E2',
+      darkBg: 'rgba(220, 38, 38, 0.16)',
+      darkBorder: 'rgba(248, 113, 113, 0.35)',
+    };
   }
 
   // 6. Noodles & Pasta & Maggi
   if (clean.includes('noodle') || clean.includes('pasta') || clean.includes('maggi') || clean.includes('chowmein')) {
-    return { family: 'MaterialCommunityIcons', name: 'noodles', color: '#D97706' };
+    return {
+      family: 'MaterialCommunityIcons',
+      name: 'noodles',
+      color: '#16A34A',
+      bgColor: '#F0FDF4',
+      borderColor: '#DCFCE7',
+      darkBg: 'rgba(22, 163, 74, 0.16)',
+      darkBorder: 'rgba(74, 222, 128, 0.35)',
+    };
   }
 
   // 7. Snacks, Savouries, Vada, Samosa, Puffs, Buns, Bakery
@@ -390,7 +675,15 @@ export function getDishVectorIconConfig(dishName?: string, categoryName?: string
     clean.includes('fries') ||
     clean.includes('puff')
   ) {
-    return { family: 'MaterialCommunityIcons', name: 'food-croissant', color: '#EA580C' };
+    return {
+      family: 'MaterialCommunityIcons',
+      name: 'food-croissant',
+      color: '#EA580C',
+      bgColor: '#FFF7ED',
+      borderColor: '#FFEDD5',
+      darkBg: 'rgba(234, 88, 12, 0.16)',
+      darkBorder: 'rgba(251, 146, 60, 0.35)',
+    };
   }
 
   if (
@@ -401,7 +694,15 @@ export function getDishVectorIconConfig(dishName?: string, categoryName?: string
     clean.includes('rusk') ||
     clean.includes('toast')
   ) {
-    return { family: 'MaterialCommunityIcons', name: 'bread-slice', color: '#D97706' };
+    return {
+      family: 'MaterialCommunityIcons',
+      name: 'bread-slice',
+      color: '#B45309',
+      bgColor: '#FFFBEB',
+      borderColor: '#FDE68A',
+      darkBg: 'rgba(180, 83, 9, 0.16)',
+      darkBorder: 'rgba(251, 191, 36, 0.35)',
+    };
   }
 
   // 8. Rice, Biryani, Meals, Curries, Dals
@@ -414,7 +715,26 @@ export function getDishVectorIconConfig(dishName?: string, categoryName?: string
     clean.includes('sambar') ||
     clean.includes('dal')
   ) {
-    return { family: 'MaterialCommunityIcons', name: 'rice', color: '#C2410C' };
+    if (clean.includes('biryani')) {
+      return {
+        family: 'MaterialCommunityIcons',
+        name: 'pot-steam',
+        color: '#BE123C',
+        bgColor: '#FFF1F2',
+        borderColor: '#FFE4E6',
+        darkBg: 'rgba(190, 18, 60, 0.16)',
+        darkBorder: 'rgba(251, 113, 133, 0.35)',
+      };
+    }
+    return {
+      family: 'MaterialCommunityIcons',
+      name: 'rice',
+      color: '#C2410C',
+      bgColor: '#FFF1F2',
+      borderColor: '#FFE4E6',
+      darkBg: 'rgba(194, 65, 12, 0.16)',
+      darkBorder: 'rgba(251, 113, 133, 0.35)',
+    };
   }
 
   // 9. Chicken, Meat, Starters, Fish, Egg
@@ -428,7 +748,15 @@ export function getDishVectorIconConfig(dishName?: string, categoryName?: string
     clean.includes('tikka') ||
     clean.includes('kabab')
   ) {
-    return { family: 'MaterialCommunityIcons', name: 'food-drumstick', color: '#DC2626' };
+    return {
+      family: 'MaterialCommunityIcons',
+      name: 'food-drumstick',
+      color: '#DC2626',
+      bgColor: '#FEF2F2',
+      borderColor: '#FEE2E2',
+      darkBg: 'rgba(220, 38, 38, 0.16)',
+      darkBorder: 'rgba(248, 113, 113, 0.35)',
+    };
   }
 
   // 10. Tiffin, Breakfast, Dosa, Idli, Parotta, Poori, Chapathi
@@ -446,7 +774,15 @@ export function getDishVectorIconConfig(dishName?: string, categoryName?: string
     clean.includes('pongal') ||
     clean.includes('tiffin')
   ) {
-    return { family: 'MaterialCommunityIcons', name: 'pot-mix-outline', color: '#F59E0B' };
+    return {
+      family: 'MaterialCommunityIcons',
+      name: 'pot-mix-outline',
+      color: '#D97706',
+      bgColor: '#FEF9C3',
+      borderColor: '#FEF08A',
+      darkBg: 'rgba(217, 119, 6, 0.16)',
+      darkBorder: 'rgba(250, 204, 21, 0.35)',
+    };
   }
 
   // 11. Desserts, Sweets, Ice Cream, Cakes
@@ -460,9 +796,25 @@ export function getDishVectorIconConfig(dishName?: string, categoryName?: string
     clean.includes('dessert')
   ) {
     if (clean.includes('ice cream')) {
-      return { family: 'MaterialCommunityIcons', name: 'ice-cream', color: '#EC4899' };
+      return {
+        family: 'MaterialCommunityIcons',
+        name: 'ice-cream',
+        color: '#DB2777',
+        bgColor: '#FDF2F8',
+        borderColor: '#FCE7F3',
+        darkBg: 'rgba(219, 39, 119, 0.16)',
+        darkBorder: 'rgba(244, 114, 182, 0.35)',
+      };
     }
-    return { family: 'MaterialCommunityIcons', name: 'cupcake', color: '#EC4899' };
+    return {
+      family: 'MaterialCommunityIcons',
+      name: 'cupcake',
+      color: '#DB2777',
+      bgColor: '#FDF2F8',
+      borderColor: '#FCE7F3',
+      darkBg: 'rgba(219, 39, 119, 0.16)',
+      darkBorder: 'rgba(244, 114, 182, 0.35)',
+    };
   }
 
   // 12. Category fallback

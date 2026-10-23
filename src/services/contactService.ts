@@ -2,7 +2,8 @@ import * as Contacts from 'expo-contacts/legacy';
 import { storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { CustomerRecord, VendorRecord } from '../types/models';
-import { generateUUID } from '../lib/uuid';
+import { generateUUID, isValidUUID } from '../lib/uuid';
+import { shopService } from './shopService';
 
 const LOCAL_CUSTOMERS_KEY = '@counterpro/customers';
 const LOCAL_VENDORS_KEY = '@counterpro/vendors';
@@ -11,6 +12,16 @@ export interface DeviceContactItem {
   id: string;
   name: string;
   phone?: string;
+  email?: string;
+}
+
+export type ContactPermissionStatus = 'granted' | 'denied' | 'blocked' | 'undetermined';
+
+export interface DeviceContactsResponse {
+  status: ContactPermissionStatus;
+  contacts: DeviceContactItem[];
+  canAskAgain: boolean;
+  errorMessage?: string;
 }
 
 export const contactService = {
@@ -19,6 +30,10 @@ export const contactService = {
    */
   async getCustomers(shopId: string): Promise<CustomerRecord[]> {
     if (!shopId) return [];
+
+    const saved = await storage.getObject<CustomerRecord[]>(LOCAL_CUSTOMERS_KEY, []);
+    const localFiltered = saved.filter(c => c.shopId === shopId);
+    let allCandidates = [...localFiltered];
 
     try {
       const { data: dbCustomers } = await (supabase.from('customers') as any)
@@ -33,7 +48,9 @@ export const contactService = {
             const parts = c.notes.split('|');
             location = parts[0].replace('Location:', '').trim();
           }
-          const isVip = c.is_vip ?? (c.notes?.includes('[VIP]') || Number(c.total_bills || 0) >= 15);
+          const isVip = typeof c.is_vip === 'boolean'
+            ? c.is_vip
+            : (c.notes?.includes('[VIP]') || Number(c.total_bills || 0) >= 15);
           const isActive = c.is_active !== false;
           return {
             id: c.id,
@@ -49,47 +66,49 @@ export const contactService = {
             isVip,
           };
         });
-
-        // Strict deduplication by 10-digit phone number (preserve active pending balance and max bills)
-        const phoneMap = new Map<string, CustomerRecord>();
-        const uniqueLoaded: CustomerRecord[] = [];
-        for (const c of loaded) {
-          const clean = c.phone ? c.phone.replace(/[^0-9]/g, '').slice(-10) : '';
-          if (clean && clean.length === 10) {
-            if (phoneMap.has(clean)) {
-              const existing = phoneMap.get(clean)!;
-              if (c.pendingBalance > existing.pendingBalance) {
-                existing.pendingBalance = c.pendingBalance;
-              }
-              existing.totalBills = Math.max(existing.totalBills, c.totalBills);
-              continue;
-            }
-            phoneMap.set(clean, c);
-          }
-          uniqueLoaded.push(c);
-        }
-
-        await storage.setObject(LOCAL_CUSTOMERS_KEY, uniqueLoaded);
-        return uniqueLoaded;
+        // Merge loaded DB customers with local cache records
+        const loadedMap = new Map<string, CustomerRecord>(loaded.map(c => [c.id, c]));
+        const mergedLocal = localFiltered.map(local => {
+          const dbCust = loadedMap.get(local.id);
+          if (!dbCust) return local;
+          return {
+            ...local,
+            ...dbCust,
+            pendingBalance: local.pendingBalance ?? dbCust.pendingBalance,
+            isVip: typeof dbCust.isVip === 'boolean' ? dbCust.isVip : local.isVip,
+            statusTag: dbCust.statusTag || local.statusTag,
+          };
+        });
+        allCandidates = [...mergedLocal, ...loaded];
       }
     } catch (err) {
       console.warn('getCustomers Supabase notice:', err);
     }
 
-    const saved = await storage.getObject<CustomerRecord[]>(LOCAL_CUSTOMERS_KEY, []);
-    const filtered = saved.filter(c => c.shopId === shopId);
-    // Deduplicate cached records
-    const cachedMap = new Map<string, CustomerRecord>();
-    const uniqueCached: CustomerRecord[] = [];
-    for (const c of filtered) {
+    // Strict deduplication by 10-digit phone number and name
+    const phoneMap = new Map<string, CustomerRecord>();
+    const nameMap = new Map<string, CustomerRecord>();
+    const uniqueLoaded: CustomerRecord[] = [];
+
+    for (const c of allCandidates) {
       const clean = c.phone ? c.phone.replace(/[^0-9]/g, '').slice(-10) : '';
       if (clean && clean.length === 10) {
-        if (cachedMap.has(clean)) continue;
-        cachedMap.set(clean, c);
+        if (phoneMap.has(clean)) {
+          continue;
+        }
+        phoneMap.set(clean, c);
+      } else {
+        const lowerName = c.name.trim().toLowerCase();
+        if (nameMap.has(lowerName)) {
+          continue;
+        }
+        nameMap.set(lowerName, c);
       }
-      uniqueCached.push(c);
+      uniqueLoaded.push(c);
     }
-    return uniqueCached;
+
+    await storage.setObject(LOCAL_CUSTOMERS_KEY, uniqueLoaded);
+    return uniqueLoaded;
   },
 
   /**
@@ -100,20 +119,31 @@ export const contactService = {
     name: string,
     phone?: string,
     location?: string,
-    notes?: string
+    notes?: string,
+    isVip: boolean = false
   ): Promise<CustomerRecord> {
     const list = await this.getCustomers(shopId);
     const cleanPhone = phone ? phone.replace(/[^0-9]/g, '').slice(-10) : '';
 
-    // If customer with same phone already exists, reuse and never duplicate
+    // If customer with same phone already exists, reuse and update details/VIP instead of duplicate creation
     if (cleanPhone && cleanPhone.length === 10) {
       const existing = list.find(c => c.phone && c.phone.replace(/[^0-9]/g, '').slice(-10) === cleanPhone);
       if (existing) {
-        return existing;
+        const updated = await this.updateCustomer(shopId, existing.id, {
+          name: name.trim() || existing.name,
+          location: location?.trim() || existing.location,
+          notes: notes?.trim() || existing.notes,
+          isVip: isVip || existing.isVip,
+          statusTag: (isVip || existing.isVip) ? 'MVP' : existing.statusTag,
+        });
+        return updated || existing;
       }
     }
 
-    const notesContent = location ? `Location: ${location}${notes ? ` | ${notes}` : ''}` : (notes || null);
+    const vipTag = isVip ? '[VIP]' : '';
+    const notesContent = location
+      ? `Location: ${location}${notes ? ` | ${notes}` : ''} ${vipTag}`.trim()
+      : (notes ? `${notes} ${vipTag}`.trim() : (vipTag || null));
 
     const newCust: CustomerRecord = {
       id: generateUUID(),
@@ -124,13 +154,16 @@ export const contactService = {
       notes: notesContent,
       totalBills: 0,
       pendingBalance: 0,
-      statusTag: 'Regular',
+      statusTag: isVip ? 'MVP' : 'Regular',
+      isActive: true,
+      isVip,
     };
 
     const updated = [newCust, ...list.filter(c => c.id !== newCust.id)];
     await storage.setObject(LOCAL_CUSTOMERS_KEY, updated);
 
     try {
+      await shopService.ensureShopExists(newCust.shopId);
       await (supabase.from('customers') as any).insert({
         id: newCust.id,
         shop_id: newCust.shopId,
@@ -142,7 +175,7 @@ export const contactService = {
         pending_balance: 0,
         status_tag: newCust.statusTag || 'Regular',
         is_active: true,
-        is_vip: false,
+        is_vip: isVip,
       });
     } catch (err) {
       console.warn('addCustomer Supabase notice:', err);
@@ -152,72 +185,173 @@ export const contactService = {
   },
 
   /**
+   * Ensures that a customer exists in Supabase so foreign key constraints (bills_customer_id_fkey) are satisfied.
+   * If customer row does not exist in Supabase, attempts to upsert it.
+   * Returns true if customer exists / was verified in Supabase, or false if missing.
+   */
+  async ensureCustomerExists(
+    customerId: string,
+    shopId: string,
+    name?: string | null,
+    phone?: string | null
+  ): Promise<boolean> {
+    if (!customerId || !isValidUUID(customerId) || !shopId || !isValidUUID(shopId)) {
+      return false;
+    }
+
+    try {
+      // 1. Check if customer already exists in Supabase
+      const { data: existing, error: checkError } = await (supabase.from('customers') as any)
+        .select('id')
+        .eq('id', customerId)
+        .maybeSingle();
+
+      if (!checkError && existing?.id) {
+        return true;
+      }
+
+      // Check local cache for customer details
+      const localList = await storage.getObject<CustomerRecord[]>(LOCAL_CUSTOMERS_KEY, []);
+      const localCustomer = localList.find(c => c.id === customerId);
+      const isVip = Boolean(localCustomer?.isVip);
+      const statusTag = localCustomer?.statusTag || (isVip ? 'MVP' : 'Regular');
+
+      // 2. Ensure parent shop exists first so customers_shop_id_fkey is satisfied
+      await shopService.ensureShopExists(shopId);
+
+      // 3. Upsert customer into Supabase preserving VIP status
+      const { error: upsertErr } = await (supabase.from('customers') as any)
+        .upsert(
+          {
+            id: customerId,
+            shop_id: shopId,
+            name: name ? name.trim() : (localCustomer?.name || 'Customer'),
+            phone: phone ? phone.replace(/[^0-9]/g, '').slice(-10) : (localCustomer?.phone || ''),
+            location: localCustomer?.location || null,
+            notes: localCustomer?.notes || null,
+            status_tag: statusTag,
+            is_active: localCustomer?.isActive !== false,
+            is_vip: isVip,
+            total_bills: localCustomer?.totalBills || 0,
+            pending_balance: localCustomer?.pendingBalance || 0,
+          },
+          { onConflict: 'id' }
+        );
+
+      if (!upsertErr) {
+        return true;
+      }
+
+      console.warn('ensureCustomerExists upsert notice:', upsertErr.message);
+      return false;
+    } catch (err) {
+      console.warn('ensureCustomerExists check notice:', err);
+      return false;
+    }
+  },
+
+  /**
+   * Batch add multiple customers with detailed result metrics
+   */
+  async importCustomersWithResult(
+    shopId: string,
+    items: Array<{ name: string; phone?: string; location?: string }>
+  ): Promise<{ added: CustomerRecord[]; alreadyExistingCount: number; invalidCount: number }> {
+    if (!items || items.length === 0) {
+      return { added: [], alreadyExistingCount: 0, invalidCount: 0 };
+    }
+    const list = await this.getCustomers(shopId);
+    const vendorList = await this.getVendors(shopId);
+
+    const existingPhones = new Set([
+      ...list.map(c => c.phone ? c.phone.replace(/[^0-9]/g, '').slice(-10) : '').filter(Boolean),
+      ...vendorList.map(v => v.phone ? v.phone.replace(/[^0-9]/g, '').slice(-10) : '').filter(Boolean),
+    ]);
+
+    const newRecords: CustomerRecord[] = [];
+    let alreadyExistingCount = 0;
+    let invalidCount = 0;
+
+    for (const item of items) {
+      const trimmedName = item.name ? item.name.trim() : '';
+      if (!trimmedName) {
+        invalidCount++;
+        continue;
+      }
+
+      let finalPhone: string | null = null;
+      if (item.phone && item.phone.trim()) {
+        const clean = item.phone.replace(/[^0-9]/g, '').slice(-10);
+        if (clean.length !== 10) {
+          invalidCount++;
+          continue;
+        }
+        if (existingPhones.has(clean)) {
+          alreadyExistingCount++;
+          continue; // Duplicate phone — skip
+        }
+        existingPhones.add(clean);
+        finalPhone = clean;
+      }
+
+      newRecords.push({
+        id: generateUUID(),
+        shopId,
+        name: trimmedName,
+        phone: finalPhone,
+        location: item.location?.trim() || null,
+        notes: item.location ? `Location: ${item.location}` : null,
+        totalBills: 0,
+        pendingBalance: 0,
+        statusTag: 'Regular',
+        isActive: true,
+      });
+    }
+
+    if (newRecords.length > 0) {
+      const updated = [...newRecords, ...list];
+      await storage.setObject(LOCAL_CUSTOMERS_KEY, updated);
+
+      try {
+        const inserts = newRecords.map(r => ({
+          id: r.id,
+          shop_id: r.shopId,
+          name: r.name,
+          phone: r.phone,
+          location: r.location || null,
+          notes: r.notes,
+          total_bills: 0,
+          pending_balance: 0,
+          status_tag: r.statusTag || 'Regular',
+          is_active: true,
+          is_vip: false,
+        }));
+
+        for (let i = 0; i < inserts.length; i += 50) {
+          const chunk = inserts.slice(i, i + 50);
+          await (supabase.from('customers') as any).insert(chunk);
+        }
+      } catch (err) {
+        console.warn('importCustomersWithResult Supabase notice:', err);
+      }
+    }
+
+    return {
+      added: newRecords,
+      alreadyExistingCount,
+      invalidCount,
+    };
+  },
+
+  /**
    * Batch add multiple customers
    */
   async addMultipleCustomers(
     shopId: string,
     items: Array<{ name: string; phone?: string; location?: string }>
   ): Promise<CustomerRecord[]> {
-    if (!items || items.length === 0) return [];
-    const list = await this.getCustomers(shopId);
-
-    const existingPhones = new Set(
-      list.map(c => c.phone ? c.phone.replace(/[^0-9]/g, '').slice(-10) : '').filter(Boolean)
-    );
-
-    const newRecords: CustomerRecord[] = [];
-    for (const item of items) {
-      const clean = item.phone ? item.phone.replace(/[^0-9]/g, '').slice(-10) : '';
-      if (clean && clean.length === 10) {
-        if (existingPhones.has(clean)) {
-          continue; // Duplicate phone — skip
-        }
-        existingPhones.add(clean);
-      }
-
-      newRecords.push({
-        id: generateUUID(),
-        shopId,
-        name: item.name.trim(),
-        phone: clean ? clean : (item.phone?.trim() || null),
-        location: item.location?.trim() || null,
-        notes: item.location ? `Location: ${item.location}` : null,
-        totalBills: 0,
-        pendingBalance: 0,
-        statusTag: 'Regular',
-      });
-    }
-
-    if (newRecords.length === 0) return [];
-
-    const updated = [...newRecords, ...list];
-    await storage.setObject(LOCAL_CUSTOMERS_KEY, updated);
-
-    try {
-      const inserts = newRecords.map(r => ({
-        id: r.id,
-        shop_id: r.shopId,
-        name: r.name,
-        phone: r.phone,
-        location: r.location || null,
-        notes: r.notes,
-        total_bills: 0,
-        pending_balance: 0,
-        status_tag: r.statusTag || 'Regular',
-        is_active: true,
-        is_vip: false,
-      }));
-
-      // Insert in chunks of 50 to prevent network payload or database timeouts
-      for (let i = 0; i < inserts.length; i += 50) {
-        const chunk = inserts.slice(i, i + 50);
-        await (supabase.from('customers') as any).insert(chunk);
-      }
-    } catch (err) {
-      console.warn('addMultipleCustomers Supabase notice:', err);
-    }
-
-    return newRecords;
+    const res = await this.importCustomersWithResult(shopId, items);
+    return res.added;
   },
 
   /**
@@ -225,6 +359,11 @@ export const contactService = {
    */
   async getVendors(shopId: string): Promise<VendorRecord[]> {
     if (!shopId) return [];
+
+    const saved = await storage.getObject<VendorRecord[]>(LOCAL_VENDORS_KEY, []);
+    const localFiltered = saved.filter(v => v.shopId === shopId);
+
+    let allCandidates = [...localFiltered];
 
     try {
       const { data: dbVendors } = await (supabase.from('vendors') as any)
@@ -251,15 +390,48 @@ export const contactService = {
             isActive: v.is_active !== false,
           };
         });
-        await storage.setObject(LOCAL_VENDORS_KEY, loaded);
-        return loaded;
+        // Merge loaded DB vendors with local records
+        const loadedMap = new Map<string, VendorRecord>(loaded.map(v => [v.id, v]));
+        const mergedLocal = localFiltered.map(local => {
+          const dbVend = loadedMap.get(local.id);
+          if (!dbVend) return local;
+          return {
+            ...local,
+            ...dbVend,
+            isActive: typeof dbVend.isActive === 'boolean' ? dbVend.isActive : local.isActive,
+          };
+        });
+        allCandidates = [...mergedLocal, ...loaded.filter(v => !mergedLocal.some(m => m.id === v.id))];
       }
     } catch (err) {
       console.warn('getVendors Supabase notice:', err);
     }
 
-    const saved = await storage.getObject<VendorRecord[]>(LOCAL_VENDORS_KEY, []);
-    return saved.filter(v => v.shopId === shopId);
+    // Strict 1-to-1 deduplication by 10-digit phone number:
+    // Ensures: ONE number only contains ONE name and is saved as ONE contact only!
+    const phoneMap = new Map<string, VendorRecord>();
+    const nameMap = new Map<string, VendorRecord>();
+    const uniqueVendors: VendorRecord[] = [];
+
+    for (const v of allCandidates) {
+      const clean = v.phone ? v.phone.replace(/[^0-9]/g, '').slice(-10) : '';
+      if (clean && clean.length === 10) {
+        if (phoneMap.has(clean)) {
+          continue; // Only 1 contact per phone number
+        }
+        phoneMap.set(clean, v);
+      } else {
+        const lowerName = v.name.trim().toLowerCase();
+        if (nameMap.has(lowerName)) {
+          continue;
+        }
+        nameMap.set(lowerName, v);
+      }
+      uniqueVendors.push(v);
+    }
+
+    await storage.setObject(LOCAL_VENDORS_KEY, uniqueVendors);
+    return uniqueVendors;
   },
 
   /**
@@ -274,23 +446,57 @@ export const contactService = {
     notes?: string
   ): Promise<VendorRecord> {
     const list = await this.getVendors(shopId);
+    const cleanPhone = phone ? phone.replace(/[^0-9]/g, '').slice(-10) : '';
     const notesContent = location ? `Location: ${location}${notes ? ` | ${notes}` : ''}` : (notes || null);
+
+    // If vendor with same 10-digit phone already exists, reuse and update details instead of duplicate creation
+    if (cleanPhone && cleanPhone.length === 10) {
+      const existing = list.find(v => v.phone && v.phone.replace(/[^0-9]/g, '').slice(-10) === cleanPhone);
+      if (existing) {
+        const updated = await this.updateVendor(shopId, existing.id, {
+          name: name.trim() || existing.name,
+          supplyType: supplyType.trim() || existing.supplyType,
+          location: location?.trim() || existing.location,
+          notes: notesContent || existing.notes,
+        });
+        return updated || existing;
+      }
+    }
 
     const newVendor: VendorRecord = {
       id: generateUUID(),
       shopId,
       name: name.trim(),
       supplyType: supplyType.trim() || 'Supplies',
-      phone: phone?.trim() || null,
+      phone: cleanPhone ? cleanPhone : (phone?.trim() || null),
       location: location?.trim() || null,
       schedule: 'Regular',
       notes: notesContent,
+      isActive: true,
     };
 
-    const updated = [newVendor, ...list.filter(v => v.id !== newVendor.id)];
+    const updated = [
+      newVendor,
+      ...list.filter(v => {
+        if (v.id === newVendor.id) return false;
+        if (cleanPhone && cleanPhone.length === 10) {
+          const vClean = v.phone ? v.phone.replace(/[^0-9]/g, '').slice(-10) : '';
+          if (vClean === cleanPhone) return false;
+        }
+        return true;
+      }),
+    ];
     await storage.setObject(LOCAL_VENDORS_KEY, updated);
 
     try {
+      if (cleanPhone && cleanPhone.length === 10) {
+        await (supabase.from('vendors') as any)
+          .delete()
+          .eq('shop_id', newVendor.shopId)
+          .eq('phone', cleanPhone)
+          .neq('id', newVendor.id);
+      }
+
       await (supabase.from('vendors') as any).insert({
         id: newVendor.id,
         shop_id: newVendor.shopId,
@@ -312,7 +518,7 @@ export const contactService = {
   },
 
   /**
-   * Batch add multiple vendors with supplyType
+   * Batch add multiple vendors with supplyType and duplicate phone protection
    */
   async addMultipleVendors(
     shopId: string,
@@ -322,81 +528,241 @@ export const contactService = {
     if (!items || items.length === 0) return [];
     const list = await this.getVendors(shopId);
 
-    const newRecords: VendorRecord[] = items.map(item => ({
-      id: generateUUID(),
-      shopId,
-      name: item.name.trim(),
-      supplyType: supplyType.trim() || 'Supplies',
-      phone: item.phone?.trim() || null,
-      location: item.location?.trim() || null,
-      schedule: 'Regular',
-      notes: item.location ? `Location: ${item.location}` : null,
-    }));
-
-    const updated = [...newRecords, ...list];
-    await storage.setObject(LOCAL_VENDORS_KEY, updated);
-
-    try {
-      const inserts = newRecords.map(r => ({
-        id: r.id,
-        shop_id: r.shopId,
-        name: r.name,
-        phone: r.phone,
-        supply_type: r.supplyType,
-        notes: r.notes,
-        pending_balance: 0,
-        is_active: true,
-      }));
-
-      // Insert in chunks of 50 to prevent network payload or database timeouts
-      for (let i = 0; i < inserts.length; i += 50) {
-        const chunk = inserts.slice(i, i + 50);
-        await (supabase.from('vendors') as any).insert(chunk);
+    // Map existing vendors by 10-digit phone
+    const existingVendorPhoneMap = new Map<string, VendorRecord>();
+    for (const v of list) {
+      const clean = v.phone ? v.phone.replace(/[^0-9]/g, '').slice(-10) : '';
+      if (clean && clean.length === 10) {
+        existingVendorPhoneMap.set(clean, v);
       }
-    } catch (err) {
-      console.warn('addMultipleVendors Supabase notice:', err);
     }
 
-    return newRecords;
+    const processedPhones = new Set<string>();
+    const newRecords: VendorRecord[] = [];
+    const updatedRecords: VendorRecord[] = [];
+
+    for (const item of items) {
+      const trimmedName = item.name ? item.name.trim() : '';
+      if (!trimmedName) continue;
+
+      let finalPhone: string | null = null;
+      if (item.phone && item.phone.trim()) {
+        const clean = item.phone.replace(/[^0-9]/g, '').slice(-10);
+        if (clean.length === 10) {
+          finalPhone = clean;
+
+          if (processedPhones.has(clean)) {
+            // Already processed this number in this upload — keep only 1 contact
+            continue;
+          }
+          processedPhones.add(clean);
+
+          // Check if this phone already belongs to an existing vendor
+          const existingVendor = existingVendorPhoneMap.get(clean);
+          if (existingVendor) {
+            // "Name means it also changes the selector, and it will be if I upload one number,
+            // the one number will be saved as a contact."
+            existingVendor.name = trimmedName;
+            if (supplyType) existingVendor.supplyType = supplyType;
+            if (item.location) existingVendor.location = item.location.trim();
+            updatedRecords.push(existingVendor);
+            await this.updateVendor(shopId, existingVendor.id, {
+              name: trimmedName,
+              supplyType: supplyType || existingVendor.supplyType,
+              location: existingVendor.location || undefined,
+            });
+            continue;
+          }
+        }
+      }
+
+      const newVendor: VendorRecord = {
+        id: generateUUID(),
+        shopId,
+        name: trimmedName,
+        supplyType: supplyType.trim() || 'Supplies',
+        phone: finalPhone,
+        location: item.location?.trim() || null,
+        schedule: 'Regular',
+        notes: item.location ? `Location: ${item.location}` : null,
+        isActive: true,
+      };
+      newRecords.push(newVendor);
+      if (finalPhone) {
+        existingVendorPhoneMap.set(finalPhone, newVendor);
+      }
+    }
+
+    if (newRecords.length > 0) {
+      // Filter out any existing records with the same phones to guarantee uniqueness
+      const currentList = await storage.getObject<VendorRecord[]>(LOCAL_VENDORS_KEY, []);
+      const newPhones = new Set(newRecords.map(r => r.phone).filter(Boolean));
+      const cleanedCurrent = currentList.filter(v => {
+        const clean = v.phone ? v.phone.replace(/[^0-9]/g, '').slice(-10) : '';
+        return !clean || !newPhones.has(clean);
+      });
+      const updated = [...newRecords, ...cleanedCurrent];
+      await storage.setObject(LOCAL_VENDORS_KEY, updated);
+
+      try {
+        const inserts = newRecords.map(r => ({
+          id: r.id,
+          shop_id: r.shopId,
+          name: r.name,
+          phone: r.phone,
+          category: 'General',
+          supply_type: r.supplyType,
+          location: r.location || null,
+          schedule: r.schedule || 'Regular',
+          notes: r.notes,
+          pending_balance: 0,
+          is_active: true,
+        }));
+
+        for (let i = 0; i < inserts.length; i += 50) {
+          const chunk = inserts.slice(i, i + 50);
+          await (supabase.from('vendors') as any).insert(chunk);
+        }
+      } catch (err) {
+        console.warn('addMultipleVendors Supabase notice:', err);
+      }
+    }
+
+    return [...newRecords, ...updatedRecords];
   },
 
   /**
-   * Fetch real device contacts via expo-contacts/legacy
+   * Find existing vendor in shop by normalized phone number
    */
-  async getDeviceContacts(): Promise<DeviceContactItem[]> {
+  async findExistingVendorByPhone(shopId: string, phone: string): Promise<VendorRecord | null> {
+    if (!shopId || !phone) return null;
+    const cleanPhone = phone.replace(/[^0-9]/g, '').slice(-10);
+    if (!cleanPhone || cleanPhone.length !== 10) return null;
+    const vendors = await this.getVendors(shopId);
+    return vendors.find(v => v.phone && v.phone.replace(/[^0-9]/g, '').slice(-10) === cleanPhone) || null;
+  },
+
+  /**
+   * Find existing customer in shop by normalized phone number
+   */
+  async findExistingCustomerByPhone(shopId: string, phone: string): Promise<CustomerRecord | null> {
+    if (!shopId || !phone) return null;
+    const cleanPhone = phone.replace(/[^0-9]/g, '').slice(-10);
+    if (!cleanPhone || cleanPhone.length !== 10) return null;
+    const customers = await this.getCustomers(shopId);
+    return customers.find(c => c.phone && c.phone.replace(/[^0-9]/g, '').slice(-10) === cleanPhone) || null;
+  },
+
+  /**
+   * Find any existing contact (customer or vendor) in shop by normalized 10-digit phone number
+   */
+  async findAnyContactByPhone(shopId: string, phone: string): Promise<{
+    type: 'customer' | 'vendor';
+    customer?: CustomerRecord;
+    vendor?: VendorRecord;
+    name: string;
+    phone: string;
+  } | null> {
+    const cust = await this.findExistingCustomerByPhone(shopId, phone);
+    if (cust) {
+      return { type: 'customer', customer: cust, name: cust.name, phone: cust.phone || '' };
+    }
+    const vend = await this.findExistingVendorByPhone(shopId, phone);
+    if (vend) {
+      return { type: 'vendor', vendor: vend, name: vend.name, phone: vend.phone || '' };
+    }
+    return null;
+  },
+
+  /**
+   * Check contact permission and fetch real device contacts with full state tracking
+   */
+  async fetchDeviceContactsWithPermission(): Promise<DeviceContactsResponse> {
     try {
-      const { status } = await Contacts.requestPermissionsAsync();
-      if (status !== 'granted') {
-        console.warn('Contacts permission was not granted by the user.');
-        return [];
+      const perm = await Contacts.getPermissionsAsync();
+      let status = perm.status;
+      let canAskAgain = perm.canAskAgain !== false;
+
+      if (status !== 'granted' && canAskAgain) {
+        const req = await Contacts.requestPermissionsAsync();
+        status = req?.status || 'denied';
+        canAskAgain = req?.canAskAgain !== false;
       }
 
-      const { data } = await Contacts.getContactsAsync({
-        fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name],
-      });
+      if (status !== 'granted') {
+        return {
+          status: !canAskAgain ? 'blocked' : 'denied',
+          canAskAgain,
+          contacts: [],
+          errorMessage: !canAskAgain
+            ? 'Contact permission is blocked in device settings. Please enable contact access to import.'
+            : 'Contact permission was not granted by user.',
+        };
+      }
+
+      const fields = [
+        Contacts.Fields?.PhoneNumbers || 'phoneNumbers',
+        Contacts.Fields?.Name || 'name',
+        Contacts.Fields?.Emails || 'emails',
+      ];
+      const { data } = await Contacts.getContactsAsync({ fields });
 
       if (data && data.length > 0) {
         const list: DeviceContactItem[] = [];
         for (const c of data) {
-          const name = c.name?.trim();
+          const name = c.name?.trim() || `${c.firstName || ''} ${c.lastName || ''}`.trim();
           if (!name) continue;
           let phone = '';
-          if (c.phoneNumbers && c.phoneNumbers.length > 0 && c.phoneNumbers[0]?.number) {
-            phone = c.phoneNumbers[0].number.replace(/\D/g, '').slice(-10);
+          if (c.phoneNumbers && c.phoneNumbers.length > 0) {
+            const validMobile = c.phoneNumbers.find((p: any) => {
+              const digits = (p?.number || '').replace(/\D/g, '').slice(-10);
+              return digits.length === 10 && /^[6-9]/.test(digits);
+            });
+            const chosen = validMobile || c.phoneNumbers[0];
+            if (chosen?.number) {
+              phone = chosen.number.replace(/\D/g, '').slice(-10);
+            }
+          }
+          let email: string | undefined = undefined;
+          if (c.emails && c.emails.length > 0 && c.emails[0]?.email) {
+            email = c.emails[0].email.trim();
           }
           list.push({
             id: c.id || generateUUID(),
             name,
             phone: phone || undefined,
+            email: email || undefined,
           });
         }
-        return list.sort((a, b) => a.name.localeCompare(b.name));
+        return {
+          status: 'granted',
+          canAskAgain: true,
+          contacts: list.sort((a, b) => a.name.localeCompare(b.name)),
+        };
       }
-    } catch (err) {
-      console.warn('getDeviceContacts error:', err);
-    }
 
-    return [];
+      return {
+        status: 'granted',
+        canAskAgain: true,
+        contacts: [],
+      };
+    } catch (err: any) {
+      console.warn('fetchDeviceContactsWithPermission error:', err);
+      return {
+        status: 'denied',
+        canAskAgain: true,
+        contacts: [],
+        errorMessage: err?.message || 'Could not access device contacts',
+      };
+    }
+  },
+
+  /**
+   * Fetch real device contacts via expo-contacts/legacy (backward compatibility wrapper)
+   */
+  async getDeviceContacts(): Promise<DeviceContactItem[]> {
+    const res = await this.fetchDeviceContactsWithPermission();
+    return res.contacts;
   },
 
   /**
@@ -412,9 +778,30 @@ export const contactService = {
     if (index === -1) return null;
 
     const current = list[index];
+    const isVipNext = updates.isVip !== undefined ? updates.isVip : current.isVip;
+    const statusTagNext = updates.statusTag !== undefined
+      ? updates.statusTag
+      : (updates.isVip !== undefined
+          ? (updates.isVip ? 'MVP' : (current.pendingBalance > 0 ? 'Pending' : 'Regular'))
+          : current.statusTag);
+
+    let notesNext = current.notes;
+    if (updates.notes !== undefined || updates.location !== undefined || updates.isVip !== undefined) {
+      const loc = updates.location !== undefined ? updates.location : current.location;
+      const extraRaw = updates.notes !== undefined ? updates.notes : current.notes;
+      const cleanExtra = extraRaw ? extraRaw.replace(/\[VIP\]/g, '').trim() : '';
+      const vipTag = isVipNext ? '[VIP]' : '';
+      notesNext = loc
+        ? `Location: ${loc}${cleanExtra ? ` | ${cleanExtra}` : ''} ${vipTag}`.trim()
+        : (cleanExtra ? `${cleanExtra} ${vipTag}`.trim() : (vipTag || null));
+    }
+
     const updated: CustomerRecord = {
       ...current,
       ...updates,
+      notes: notesNext,
+      isVip: isVipNext,
+      statusTag: statusTagNext,
     };
 
     const nextList = [...list];
@@ -425,17 +812,48 @@ export const contactService = {
       const dbPayload: any = {};
       if (updates.name !== undefined) dbPayload.name = updates.name.trim();
       if (updates.phone !== undefined) dbPayload.phone = updates.phone;
+      if (updates.location !== undefined) dbPayload.location = updates.location ? updates.location.trim() : null;
       if (updates.notes !== undefined || updates.location !== undefined || updates.isVip !== undefined) {
-        const loc = updates.location !== undefined ? updates.location : current.location;
-        const extra = updates.notes !== undefined ? updates.notes : current.notes;
-        const vipTag = updates.isVip ? '[VIP]' : '';
-        dbPayload.notes = loc ? `Location: ${loc}${extra ? ` | ${extra}` : ''} ${vipTag}`.trim() : (extra ? `${extra} ${vipTag}`.trim() : (vipTag || null));
+        dbPayload.notes = notesNext;
       }
       if (updates.isActive !== undefined) dbPayload.is_active = updates.isActive;
+      if (updates.isVip !== undefined) {
+        dbPayload.is_vip = Boolean(updates.isVip);
+      }
+      if (statusTagNext !== undefined) {
+        dbPayload.status_tag = statusTagNext;
+      }
 
-      await (supabase.from('customers') as any)
-        .update(dbPayload)
-        .eq('id', customerId);
+      if (isValidUUID(shopId)) {
+        await shopService.ensureShopExists(shopId);
+      }
+
+      if (isValidUUID(customerId)) {
+        const { data: updatedRows, error: updateErr } = await (supabase.from('customers') as any)
+          .update(dbPayload)
+          .eq('id', customerId)
+          .select('id');
+
+        // If customer was created offline or missing from Supabase, upsert the full record
+        if (!updateErr && (!updatedRows || updatedRows.length === 0)) {
+          await (supabase.from('customers') as any).upsert(
+            {
+              id: customerId,
+              shop_id: shopId,
+              name: updated.name,
+              phone: updated.phone || null,
+              location: updated.location || null,
+              notes: updated.notes || null,
+              total_bills: updated.totalBills || 0,
+              pending_balance: updated.pendingBalance || 0,
+              status_tag: updated.statusTag || (updated.isVip ? 'MVP' : 'Regular'),
+              is_active: updated.isActive !== false,
+              is_vip: Boolean(updated.isVip),
+            },
+            { onConflict: 'id' }
+          );
+        }
+      }
     } catch (err) {
       console.warn('updateCustomer Supabase notice:', err);
     }
@@ -473,8 +891,17 @@ export const contactService = {
       ...updates,
     };
 
-    const nextList = [...list];
-    nextList[index] = updated;
+    const cleanPhone = updated.phone ? updated.phone.replace(/[^0-9]/g, '').slice(-10) : '';
+    // Enforce 1-to-1 phone uniqueness: filter out any other record with this same phone
+    const deduplicatedList = list.filter(v => {
+      if (v.id === vendorId) return false;
+      if (cleanPhone && cleanPhone.length === 10) {
+        const vClean = v.phone ? v.phone.replace(/[^0-9]/g, '').slice(-10) : '';
+        if (vClean === cleanPhone) return false;
+      }
+      return true;
+    });
+    const nextList = [updated, ...deduplicatedList];
     await storage.setObject(LOCAL_VENDORS_KEY, nextList);
 
     try {
@@ -482,16 +909,51 @@ export const contactService = {
       if (updates.name !== undefined) dbPayload.name = updates.name.trim();
       if (updates.phone !== undefined) dbPayload.phone = updates.phone;
       if (updates.supplyType !== undefined) dbPayload.supply_type = updates.supplyType;
-      if (updates.isActive !== undefined) dbPayload.is_active = updates.isActive;
+      if (updates.isActive !== undefined) dbPayload.is_active = Boolean(updates.isActive);
       if (updates.notes !== undefined || updates.location !== undefined) {
         const loc = updates.location !== undefined ? updates.location : current.location;
         const extra = updates.notes !== undefined ? updates.notes : current.notes;
         dbPayload.notes = loc ? `Location: ${loc}${extra ? ` | ${extra}` : ''}` : extra;
       }
 
-      await (supabase.from('vendors') as any)
-        .update(dbPayload)
-        .eq('id', vendorId);
+      if (isValidUUID(shopId)) {
+        await shopService.ensureShopExists(shopId);
+      }
+
+      if (cleanPhone && cleanPhone.length === 10) {
+        // Purge any other duplicate rows in Supabase for this shop and phone
+        await (supabase.from('vendors') as any)
+          .delete()
+          .eq('shop_id', shopId)
+          .eq('phone', cleanPhone)
+          .neq('id', vendorId);
+      }
+
+      if (isValidUUID(vendorId)) {
+        const { data: updatedRows, error: updateErr } = await (supabase.from('vendors') as any)
+          .update(dbPayload)
+          .eq('id', vendorId)
+          .select('id');
+
+        if (!updateErr && (!updatedRows || updatedRows.length === 0)) {
+          await (supabase.from('vendors') as any).upsert(
+            {
+              id: vendorId,
+              shop_id: shopId,
+              name: updated.name,
+              phone: updated.phone || null,
+              category: 'General',
+              supply_type: updated.supplyType || 'Supplies',
+              location: updated.location || null,
+              schedule: updated.schedule || 'Regular',
+              notes: updated.notes || null,
+              pending_balance: 0,
+              is_active: updated.isActive !== false,
+            },
+            { onConflict: 'id' }
+          );
+        }
+      }
     } catch (err) {
       console.warn('updateVendor Supabase notice:', err);
     }

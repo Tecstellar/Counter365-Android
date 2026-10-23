@@ -12,12 +12,16 @@ import {
 import { colors, typography, radii, spacing, shadows, useTheme, Theme } from '../../theme';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CollectDueModal } from '../../components/modals/CollectDueModal';
+import { CustomerHistoryModal } from '../../components/modals/CustomerHistoryModal';
 import { useShop } from '../../context/ShopContext';
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
+import { useLanguage } from '../../context/LanguageContext';
 import { billingService } from '../../services/billingService';
-import { PendingPaymentRecord, PaymentMethod } from '../../types/models';
+import { contactService } from '../../services/contactService';
+import { PendingPaymentRecord, PaymentMethod, CustomerRecord } from '../../types/models';
 import { formatRupee } from '../../lib/money';
 
 interface PendingPaymentsScreenProps {
@@ -32,10 +36,12 @@ export const PendingPaymentsScreen: React.FC<PendingPaymentsScreenProps> = ({
   onSendReminder,
 }) => {
   const { theme, isDark } = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
+  const insets = useSafeAreaInsets();
+  const styles = useMemo(() => createStyles(theme, insets), [theme, insets]);
   const { shop } = useShop();
-  const { can } = useAuth();
+  const { can, profile, currentMember, currentRole } = useAuth();
   const { flash } = useCart();
+  const { t } = useLanguage();
 
   const [pendingList, setPendingList] = useState<PendingPaymentRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -44,6 +50,73 @@ export const PendingPaymentsScreen: React.FC<PendingPaymentsScreenProps> = ({
   const [sortBy, setSortBy] = useState<'amount' | 'recent'>('amount');
   const [selectedPendingRecord, setSelectedPendingRecord] = useState<PendingPaymentRecord | null>(null);
   const [isCollectDueModalVisible, setIsCollectDueModalVisible] = useState(false);
+  const [expandedCustomerIds, setExpandedCustomerIds] = useState<Set<string>>(new Set());
+  const [selectedBillsByCustomer, setSelectedBillsByCustomer] = useState<Record<string, Set<string>>>({});
+  const [historyCustomer, setHistoryCustomer] = useState<CustomerRecord | null>(null);
+  const [customerHistoryData, setCustomerHistoryData] = useState<{
+    totalBills: number;
+    totalSpent: number;
+    bills: any[];
+    favoriteItems: Array<{ name: string; quantity: number; amount: number }>;
+  } | null>(null);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+  const handleToggleExpand = (id: string) => {
+    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+    setExpandedCustomerIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleToggleBillSelect = (customerId: string, billKey: string) => {
+    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+    setSelectedBillsByCustomer(prev => {
+      const currentSet = new Set(prev[customerId] || []);
+      if (currentSet.has(billKey)) {
+        currentSet.delete(billKey);
+      } else {
+        currentSet.add(billKey);
+      }
+      return { ...prev, [customerId]: currentSet };
+    });
+  };
+
+  const handleToggleSelectAllBills = (item: PendingPaymentRecord) => {
+    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+    const billKeys = (item.bills || []).map(b => b.billId || b.billNumber);
+    setSelectedBillsByCustomer(prev => {
+      const currentSet = prev[item.id] || new Set();
+      const allSelected = billKeys.length > 0 && billKeys.every(k => currentSet.has(k));
+      const nextSet = allSelected ? new Set<string>() : new Set(billKeys);
+      return { ...prev, [item.id]: nextSet };
+    });
+  };
+
+  const handleOpenCustomerProfile = async (item: PendingPaymentRecord) => {
+    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+    const dummyRecord: CustomerRecord = {
+      id: item.billId || item.id,
+      shopId: shop.id,
+      name: item.customerName,
+      phone: item.customerPhone ? item.customerPhone.replace(/[^0-9]/g, '') : null,
+      totalBills: item.bills?.length || 1,
+      pendingBalance: item.amountDue,
+      statusTag: 'Pending',
+    };
+    setHistoryCustomer(dummyRecord);
+    setIsLoadingHistory(true);
+    try {
+      const hist = await contactService.getCustomerHistory(shop.id, item.customerName, item.customerPhone);
+      setCustomerHistoryData(hist);
+    } catch (err) {
+      console.warn('Failed to load customer history:', err);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
 
   useEffect(() => {
     loadPending();
@@ -64,7 +137,7 @@ export const PendingPaymentsScreen: React.FC<PendingPaymentsScreenProps> = ({
   const handleOpenCollectDue = (item: PendingPaymentRecord) => {
     try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
     if (!can('pend')) {
-      flash('Clearing pending is locked — ask the owner');
+      flash(t('no_access', "You don't have access for that"));
       return;
     }
     setSelectedPendingRecord(item);
@@ -76,13 +149,46 @@ export const PendingPaymentsScreen: React.FC<PendingPaymentsScreenProps> = ({
     amountToCollect: number,
     paymentMode: PaymentMethod
   ) => {
-    const updated = await billingService.clearPendingPayment(
-      shop.id,
-      record.billId || record.id,
-      amountToCollect,
-      paymentMode
-    );
+    if (!can('pend')) {
+      flash(t('no_access', "You don't have access for that"));
+      return;
+    }
+    const userMeta = {
+      name: profile?.fullName || currentMember?.fullName || currentRole,
+      role: currentRole,
+      id: profile?.id || currentMember?.id,
+    };
+
+    const targetBillIds = (record.bills || [])
+      .map(b => b.billId)
+      .filter((id): id is string => !!id);
+
+    let updated: PendingPaymentRecord[];
+    if (targetBillIds.length > 1) {
+      updated = await billingService.clearMultiplePendingBills(
+        shop.id,
+        targetBillIds,
+        amountToCollect,
+        paymentMode,
+        userMeta
+      );
+    } else {
+      updated = await billingService.clearPendingPayment(
+        shop.id,
+        record.billId || record.id,
+        amountToCollect,
+        paymentMode,
+        userMeta
+      );
+    }
     setPendingList(updated);
+
+    // Clear any bill selection state for this customer
+    setSelectedBillsByCustomer(prev => {
+      const next = { ...prev };
+      delete next[record.id];
+      return next;
+    });
 
     const remaining = Math.max(0, (record.amountDue || 0) - amountToCollect);
     if (remaining === 0) {
@@ -205,27 +311,27 @@ export const PendingPaymentsScreen: React.FC<PendingPaymentsScreenProps> = ({
               <Text style={styles.heroBadgeText}>ACTIVE UDHAR LEDGER</Text>
             </View>
             <View style={styles.heroPillRight}>
-              <Text style={styles.heroPillRightText}>{pendingList.length} Customer{pendingList.length === 1 ? '' : 's'}</Text>
+              <Text style={styles.heroPillRightText}>{pendingList.length} {pendingList.length === 1 ? t('customer', 'Customer') : t('customers', 'Customers')}</Text>
             </View>
           </View>
 
           <Text style={styles.heroAmount}>{formatRupee(totalOutstanding)}</Text>
-          <Text style={styles.heroAmountSub}>Total Pending Across All Bills</Text>
+          <Text style={styles.heroAmountSub}>{t('total_pending', 'Total Pending Across All Bills')}</Text>
 
           {/* 3 Metric Pills */}
           <View style={styles.heroMetricsGrid}>
             <View style={styles.heroMetricItem}>
-              <Text style={styles.heroMetricLabel}>OPEN DUES</Text>
+              <Text style={styles.heroMetricLabel}>{t('open_dues', 'OPEN DUES')}</Text>
               <Text style={styles.heroMetricValue}>{pendingList.length}</Text>
             </View>
             <View style={styles.heroMetricDivider} />
             <View style={styles.heroMetricItem}>
-              <Text style={styles.heroMetricLabel}>UNPAID BILLS</Text>
+              <Text style={styles.heroMetricLabel}>{t('unpaid_bills', 'UNPAID BILLS')}</Text>
               <Text style={styles.heroMetricValue}>{totalBillsCount}</Text>
             </View>
             <View style={styles.heroMetricDivider} />
             <View style={styles.heroMetricItem}>
-              <Text style={styles.heroMetricLabel}>OLDEST DUE</Text>
+              <Text style={styles.heroMetricLabel}>{t('oldest_due', 'OLDEST DUE')}</Text>
               <Text style={styles.heroMetricValue}>{oldestTracked}</Text>
             </View>
           </View>
@@ -236,7 +342,7 @@ export const PendingPaymentsScreen: React.FC<PendingPaymentsScreenProps> = ({
           <Ionicons name="search" size={17} color={colors.textSecondary} style={{ marginRight: 6 }} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search by customer name, phone or bill #"
+            placeholder={t('search', 'Search by customer name, phone or bill #')}
             placeholderTextColor={colors.textSecondary}
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -264,7 +370,7 @@ export const PendingPaymentsScreen: React.FC<PendingPaymentsScreenProps> = ({
               activeOpacity={0.7}
             >
               <Text style={[styles.filterPillText, filter === 'All' && styles.filterPillTextActive]}>
-                All ({pendingList.length})
+                {t('all', 'All')} ({pendingList.length})
               </Text>
             </TouchableOpacity>
 
@@ -403,84 +509,220 @@ export const PendingPaymentsScreen: React.FC<PendingPaymentsScreenProps> = ({
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      onPress={() => {
-                        try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-                        if (hasNoNumber) {
-                          flash('No contact profile linked — skipped');
-                        } else {
-                          onNavigateToContacts(item.customerName);
-                          flash(`Opened ${item.customerName} profile`);
-                        }
-                      }}
-                      style={[styles.quickIconBtn, styles.profileQuickBtn, hasNoNumber && styles.disabledQuickBtn]}
+                      onPress={() => handleOpenCustomerProfile(item)}
+                      style={[styles.quickIconBtn, styles.profileQuickBtn]}
                       activeOpacity={0.7}
                       hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                       accessibilityLabel="View Customer History"
                     >
-                      <Ionicons name="person" size={14} color={hasNoNumber ? colors.textMuted : colors.accent} />
+                      <Ionicons name="person" size={14} color={colors.accent} />
                     </TouchableOpacity>
                   </View>
                 </View>
 
-                {/* Unpaid Bills Chips / Summary */}
-                {item.bills && item.bills.length > 0 && (
-                  <View style={styles.billsListSection}>
-                    <Text style={styles.billsListHeading}>ATTACHED BILLS ({item.bills.length}):</Text>
-                    <View style={styles.billChipsWrap}>
-                      {item.bills.map((b, idx) => (
-                        <View key={idx} style={styles.billChip}>
-                          <Ionicons name="receipt-outline" size={11} color={colors.textSecondary} />
-                          <Text style={styles.billChipNo}>{b.billNumber}</Text>
-                          <Text style={styles.billChipAmt}>{formatRupee(b.amount)}</Text>
+                {/* Expandable Bill Breakdown with Select All Dues */}
+                {item.bills && item.bills.length > 0 ? (() => {
+                  const isExpanded = expandedCustomerIds.has(item.id);
+                  const selectedSet = selectedBillsByCustomer[item.id] || new Set();
+                  const hasMultiple = item.bills.length > 1;
+                  const billKeys = item.bills.map(b => b.billId || b.billNumber);
+                  const isAllSelected = hasMultiple && billKeys.length > 0 && billKeys.every(k => selectedSet.has(k));
+
+                  const targetedBills = selectedSet.size > 0 && hasMultiple
+                    ? item.bills.filter(b => selectedSet.has(b.billId || b.billNumber))
+                    : item.bills;
+                  const targetedAmount = targetedBills.reduce((sum, b) => sum + b.amount, 0);
+
+                  return (
+                    <View style={styles.billsListSection}>
+                      {/* Expandable Header Toggle */}
+                      <TouchableOpacity
+                        style={styles.expandToggleRow}
+                        onPress={() => handleToggleExpand(item.id)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={styles.expandToggleLeft}>
+                          <Ionicons name="receipt-outline" size={14} color={colors.accent} />
+                          <Text style={styles.expandToggleText}>
+                            {hasMultiple
+                              ? `${item.bills.length} Bills Due (${formatRupee(item.amountDue)})`
+                              : `Bill #${item.bills[0]?.billNumber || item.billNumber}`}
+                          </Text>
                         </View>
-                      ))}
+                        <View style={styles.expandToggleRight}>
+                          <Text style={styles.expandToggleSub}>
+                            {isExpanded ? 'Hide' : hasMultiple ? 'View & Select' : 'Details'}
+                          </Text>
+                          <Ionicons
+                            name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                            size={14}
+                            color={colors.textSecondary}
+                          />
+                        </View>
+                      </TouchableOpacity>
+
+                      {/* Expanded Bills Breakdown */}
+                      {isExpanded && (
+                        <View style={styles.expandedSection}>
+                          {hasMultiple && (
+                            <View style={styles.expandedHeaderRow}>
+                              <Text style={styles.expandedHeading}>SELECT BILLS TO SETTLE:</Text>
+                              <TouchableOpacity
+                                onPress={() => handleToggleSelectAllBills(item)}
+                                style={styles.selectAllDuesBtn}
+                                activeOpacity={0.7}
+                              >
+                                <Ionicons
+                                  name={isAllSelected ? 'checkbox' : 'square-outline'}
+                                  size={15}
+                                  color={isAllSelected ? colors.accent : colors.textSecondary}
+                                />
+                                <Text style={[styles.selectAllDuesText, isAllSelected && styles.selectAllDuesTextActive]}>
+                                  {isAllSelected ? 'Deselect All' : 'Select All Dues'}
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+                          )}
+
+                          <View style={styles.expandedBillsList}>
+                            {item.bills.map((b, idx) => {
+                              const billKey = b.billId || b.billNumber;
+                              const isSelected = selectedSet.has(billKey);
+                              return (
+                                <TouchableOpacity
+                                  key={idx}
+                                  style={[styles.billItemRow, isSelected && styles.billItemRowSelected]}
+                                  onPress={() => handleToggleBillSelect(item.id, billKey)}
+                                  activeOpacity={0.7}
+                                >
+                                  <Ionicons
+                                    name={isSelected ? 'checkbox' : 'square-outline'}
+                                    size={16}
+                                    color={isSelected ? colors.accent : colors.textMuted}
+                                  />
+                                  <View style={styles.billItemInfo}>
+                                    <Text style={styles.billItemNo}>#{b.billNumber}</Text>
+                                    <Text style={styles.billItemDate}>
+                                      {new Date(b.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                                    </Text>
+                                  </View>
+                                  <Text style={styles.billItemAmt}>{formatRupee(b.amount)}</Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+                        </View>
+                      )}
+
+                      {/* Primary Action Buttons (Remind & Collect Due) */}
+                      <View style={styles.cardActionRow}>
+                        {/* WhatsApp Reminder Button */}
+                        <TouchableOpacity
+                          style={[
+                            styles.actionBtn,
+                            styles.remindActionBtn,
+                            hasNoNumber && styles.disabledActionBtn,
+                          ]}
+                          onPress={() => handleWhatsApp(item)}
+                          disabled={hasNoNumber}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons
+                            name="logo-whatsapp"
+                            size={16}
+                            color={hasNoNumber ? colors.textMuted : '#16A34A'}
+                          />
+                          <Text
+                            style={[
+                              styles.remindActionBtnText,
+                              hasNoNumber && styles.disabledActionBtnText,
+                            ]}
+                          >
+                            Remind
+                          </Text>
+                        </TouchableOpacity>
+
+                        {/* Collect Due Button */}
+                        <TouchableOpacity
+                          style={[
+                            styles.actionBtn,
+                            styles.collectActionBtn,
+                            !can('pend') && styles.disabledActionBtn,
+                          ]}
+                          onPress={() => {
+                            if (!can('pend')) {
+                              flash(t('no_access', "You don't have access for that"));
+                              return;
+                            }
+                            if (selectedSet.size > 0 && hasMultiple) {
+                              handleOpenCollectDue({
+                                ...item,
+                                amountDue: targetedAmount,
+                                bills: targetedBills,
+                              });
+                            } else {
+                              handleOpenCollectDue(item);
+                            }
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="checkmark-circle" size={17} color="#FFFFFF" />
+                          <Text style={styles.collectActionBtnText}>
+                            {selectedSet.size > 0 && hasMultiple
+                              ? `Collect ${formatRupee(targetedAmount)}`
+                              : `Collect Due (${formatRupee(item.amountDue)})`}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
+                  );
+                })() : (
+                  <View style={styles.cardActionRow}>
+                    <TouchableOpacity
+                      style={[
+                        styles.actionBtn,
+                        styles.remindActionBtn,
+                        hasNoNumber && styles.disabledActionBtn,
+                      ]}
+                      onPress={() => handleWhatsApp(item)}
+                      disabled={hasNoNumber}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name="logo-whatsapp"
+                        size={16}
+                        color={hasNoNumber ? colors.textMuted : '#16A34A'}
+                      />
+                      <Text
+                        style={[
+                          styles.remindActionBtnText,
+                          hasNoNumber && styles.disabledActionBtnText,
+                        ]}
+                      >
+                        Remind WhatsApp
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.actionBtn,
+                        styles.collectActionBtn,
+                        !can('pend') && styles.disabledActionBtn,
+                      ]}
+                      onPress={() => {
+                        if (!can('pend')) {
+                          flash(t('no_access', "You don't have access for that"));
+                          return;
+                        }
+                        handleOpenCollectDue(item);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="checkmark-circle" size={17} color="#FFFFFF" />
+                      <Text style={styles.collectActionBtnText}>Collect Due</Text>
+                    </TouchableOpacity>
                   </View>
                 )}
-
-                {/* Primary Action Buttons (Remind & Collect Due) */}
-                <View style={styles.cardActionRow}>
-                  {/* WhatsApp Reminder Button */}
-                  <TouchableOpacity
-                    style={[
-                      styles.actionBtn,
-                      styles.remindActionBtn,
-                      hasNoNumber && styles.disabledActionBtn,
-                    ]}
-                    onPress={() => handleWhatsApp(item)}
-                    disabled={hasNoNumber}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons
-                      name="logo-whatsapp"
-                      size={16}
-                      color={hasNoNumber ? colors.textMuted : '#16A34A'}
-                    />
-                    <Text
-                      style={[
-                        styles.remindActionBtnText,
-                        hasNoNumber && styles.disabledActionBtnText,
-                      ]}
-                    >
-                      Remind WhatsApp
-                    </Text>
-                  </TouchableOpacity>
-
-                  {/* Collect Due Button */}
-                  <TouchableOpacity
-                    style={[
-                      styles.actionBtn,
-                      styles.collectActionBtn,
-                      !can('pend') && styles.disabledActionBtn,
-                    ]}
-                    onPress={() => handleOpenCollectDue(item)}
-                    disabled={!can('pend')}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="checkmark-circle" size={17} color="#FFFFFF" />
-                    <Text style={styles.collectActionBtnText}>Collect Due</Text>
-                  </TouchableOpacity>
-                </View>
               </View>
             );
           })}
@@ -523,12 +765,26 @@ export const PendingPaymentsScreen: React.FC<PendingPaymentsScreenProps> = ({
         record={selectedPendingRecord}
         onConfirm={handleConfirmCollectDue}
       />
+
+      {/* Customer History In-Place Modal */}
+      <CustomerHistoryModal
+        visible={!!historyCustomer}
+        customer={historyCustomer}
+        historyData={customerHistoryData}
+        isLoading={isLoadingHistory}
+        onClose={() => {
+          setHistoryCustomer(null);
+          setCustomerHistoryData(null);
+        }}
+        shopName={shop.name}
+      />
     </View>
   );
 };
 
-const createStyles = (theme: Theme) => {
+const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left: number; right: number }) => {
   const colors = theme.colors;
+  const bottomInset = insets?.bottom || 0;
   return StyleSheet.create({
   container: {
     flex: 1,
@@ -605,7 +861,7 @@ const createStyles = (theme: Theme) => {
 
   scrollContent: {
     padding: 16,
-    paddingBottom: 40,
+    paddingBottom: Math.max(bottomInset, 20) + 120,
     gap: 14,
   },
 
@@ -973,6 +1229,124 @@ const createStyles = (theme: Theme) => {
   // Attached Bills
   billsListSection: {
     gap: 6,
+  },
+  expandToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.surfaceSecondary,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginTop: 2,
+  },
+  expandToggleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1,
+  },
+  expandToggleText: {
+    fontSize: 12,
+    fontFamily: typography.fonts.heading,
+    color: colors.text,
+    fontWeight: '700',
+  },
+  expandToggleRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  expandToggleSub: {
+    fontSize: 11,
+    fontFamily: typography.fonts.body,
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
+  expandedSection: {
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: 14,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 8,
+    marginTop: 2,
+  },
+  expandedHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+  },
+  expandedHeading: {
+    fontSize: 10,
+    fontFamily: typography.fonts.heading,
+    color: colors.textMuted,
+    letterSpacing: 0.6,
+    fontWeight: '700',
+  },
+  selectAllDuesBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+  },
+  selectAllDuesText: {
+    fontSize: 11,
+    fontFamily: typography.fonts.bodySemiBold,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  selectAllDuesTextActive: {
+    color: colors.accent,
+  },
+  expandedBillsList: {
+    gap: 6,
+  },
+  billItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    gap: 8,
+  },
+  billItemRowSelected: {
+    borderColor: colors.accent,
+    backgroundColor: colors.surface,
+  },
+  billItemInfo: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  billItemNo: {
+    fontSize: 12,
+    fontFamily: typography.fonts.numbers,
+    color: colors.text,
+    fontWeight: '700',
+  },
+  billItemDate: {
+    fontSize: 11,
+    fontFamily: typography.fonts.body,
+    color: colors.textSecondary,
+  },
+  billItemAmt: {
+    fontSize: 12.5,
+    fontFamily: typography.fonts.numbers,
+    color: '#DC2626',
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
   },
   billsListHeading: {
     fontSize: 9.5,

@@ -1,280 +1,391 @@
 import React, { useMemo } from 'react';
-import { View, Text, StyleSheet, Modal, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, Modal, TouchableOpacity, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, typography, radii, spacing, shadows, useTheme, Theme } from '../../theme';
-import { AppButton } from '../common/AppButton';
-import { PaymentModeIcon } from '../common/PaymentModeIcon';
+import { typography, shadows, useTheme } from '../../theme';
 import { Bill } from '../../types/models';
-import { formatRupee } from '../../lib/money';
+import { useLanguage } from '../../context/LanguageContext';
 
 interface BillSavedModalProps {
   bill: Bill | null;
-  onSendWhatsApp: () => void;
-  onPrint: () => void;
+  onSendWhatsApp?: () => void;
+  onPrint?: () => void;
   onNewBill: () => void;
   onEdit?: () => void;
+  isPrinterConfigured?: boolean;
 }
+
+const ticketStyles = StyleSheet.create({
+  wrapper: {
+    width: '100%',
+    position: 'relative',
+    marginTop: 14,
+  },
+  sproutAnchor: {
+    position: 'absolute',
+    top: -15,
+    left: 14,
+    zIndex: 20,
+    alignItems: 'center',
+  },
+  sproutLeaves: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: -2,
+  },
+  soilMound: {
+    width: 18,
+    height: 7,
+    borderTopLeftRadius: 9,
+    borderTopRightRadius: 9,
+    backgroundColor: '#8D6E63',
+  },
+  paperBody: {
+    backgroundColor: '#F3FAF5',
+    borderTopLeftRadius: 14,
+    borderTopRightRadius: 14,
+    padding: 14,
+    paddingBottom: 8,
+  },
+  topRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  metaLabel: {
+    fontFamily: typography.fonts.heading,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  stampCircle: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    borderWidth: 2,
+    borderColor: '#16A34A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transform: [{ rotate: '12deg' }],
+    backgroundColor: '#EBF8F0',
+    position: 'relative',
+  },
+  stampInnerCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#16A34A',
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stampTextTop: {
+    position: 'absolute',
+    top: 2,
+    fontSize: 6,
+    fontWeight: '900',
+    color: '#16A34A',
+    letterSpacing: 0.5,
+  },
+  stampTextBottom: {
+    position: 'absolute',
+    bottom: 2,
+    fontSize: 6,
+    fontWeight: '900',
+    color: '#16A34A',
+    letterSpacing: 0.5,
+  },
+  headlineBlock: {
+    marginTop: 10,
+    marginBottom: 8,
+  },
+  headlineText: {
+    fontFamily: typography.fonts.heading,
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#14532D',
+    lineHeight: 22,
+  },
+  headlineHighlightRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  paperPill: {
+    backgroundColor: '#BBF7D0',
+    borderRadius: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    marginHorizontal: 1,
+  },
+  dashedLine: {
+    borderTopWidth: 1.5,
+    borderColor: '#86EFAC',
+    borderStyle: 'dashed',
+    marginVertical: 8,
+    width: '100%',
+  },
+  bottomRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingBottom: 2,
+  },
+  savedTodayGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  savedTodayLabel: {
+    fontFamily: typography.fonts.heading,
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#166534',
+  },
+  segmentsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  segmentBlock: {
+    width: 6,
+    height: 12,
+    borderRadius: 2,
+  },
+  countText: {
+    fontFamily: typography.fonts.numbers,
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#15803D',
+  },
+  sawtoothContainer: {
+    flexDirection: 'row',
+    width: '100%',
+    height: 10,
+    overflow: 'hidden',
+  },
+  sawtoothTooth: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 10,
+    borderRightWidth: 10,
+    borderTopWidth: 10,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderTopColor: '#F3FAF5',
+  },
+});
+
+const SavedBillTicketCard: React.FC<{ billNumber: string | number; isDark?: boolean }> = ({ billNumber, isDark = true }) => {
+  // Extract trailing numeric sequence from billNumber (e.g. "#0010" -> 10, "BILL-OCT-0010" -> 10, 10 -> 10)
+  const numStr = String(billNumber ?? '');
+  const matches = numStr.match(/(\d+)(?!.*\d)/);
+  const parsedCount = matches ? parseInt(matches[1], 10) : (Number(billNumber) || 1);
+  const countToday = parsedCount > 0 ? parsedCount : 1;
+  const progressColors = ['#BBF7D0', '#A7F3D0', '#86EFAC', '#6EE7B7', '#34D399', '#10B981', '#059669'];
+  const ticketBg = isDark ? '#F3FAF5' : '#F0FDF4';
+
+  return (
+    <View style={ticketStyles.wrapper}>
+      {/* Sprout plant on top-left edge */}
+      <View style={ticketStyles.sproutAnchor}>
+        <View style={ticketStyles.sproutLeaves}>
+          <Ionicons name="leaf" size={14} color="#4ADE80" style={{ transform: [{ rotate: '-35deg' }], marginRight: -4 }} />
+          <Ionicons name="leaf" size={14} color="#22C55E" style={{ transform: [{ rotate: '35deg' }] }} />
+        </View>
+        <View style={ticketStyles.soilMound} />
+      </View>
+
+      {/* Main Paper Receipt Body */}
+      <View style={[ticketStyles.paperBody, { backgroundColor: ticketBg }, !isDark && { borderWidth: 1, borderBottomWidth: 0, borderColor: '#DCFCE7' }]}>
+        {/* Top Section */}
+        <View style={ticketStyles.topRow}>
+          <View>
+            <Text style={ticketStyles.metaLabel}>Printed copies: 0</Text>
+            <Text style={[ticketStyles.metaLabel, { marginTop: 3 }]}>Saved digitally</Text>
+          </View>
+
+          {/* Rubber Stamp */}
+          <View style={ticketStyles.stampCircle}>
+            <View style={ticketStyles.stampInnerCircle}>
+              <Ionicons name="leaf-outline" size={16} color="#15803D" />
+            </View>
+            <Text style={ticketStyles.stampTextTop}>PAPER SAVED</Text>
+            <Text style={ticketStyles.stampTextBottom}>• NO PRINT •</Text>
+          </View>
+        </View>
+
+        {/* Headline */}
+        <View style={ticketStyles.headlineBlock}>
+          <Text style={ticketStyles.headlineText}>You saved a piece</Text>
+          <View style={ticketStyles.headlineHighlightRow}>
+            <Text style={ticketStyles.headlineText}>of </Text>
+            <View style={ticketStyles.paperPill}>
+              <Text style={ticketStyles.headlineText}>paper</Text>
+            </View>
+            <Text style={ticketStyles.headlineText}>!</Text>
+          </View>
+        </View>
+
+        {/* Dashed line */}
+        <View style={ticketStyles.dashedLine} />
+
+        {/* Bottom Row */}
+        <View style={ticketStyles.bottomRow}>
+          <View style={ticketStyles.savedTodayGroup}>
+            <Text style={ticketStyles.savedTodayLabel}>Saved today</Text>
+            <View style={ticketStyles.segmentsRow}>
+              {progressColors.map((c, i) => (
+                <View key={i} style={[ticketStyles.segmentBlock, { backgroundColor: c }]} />
+              ))}
+            </View>
+          </View>
+
+          <Text style={ticketStyles.countText}>{countToday}</Text>
+        </View>
+      </View>
+
+      {/* Sawtooth / Zigzag bottom border */}
+      <View style={ticketStyles.sawtoothContainer}>
+        {Array.from({ length: 14 }).map((_, i) => (
+          <View key={i} style={[ticketStyles.sawtoothTooth, { borderTopColor: ticketBg }]} />
+        ))}
+      </View>
+    </View>
+  );
+};
 
 export const BillSavedModal: React.FC<BillSavedModalProps> = ({
   bill,
-  onSendWhatsApp,
-  onPrint,
   onNewBill,
-  onEdit,
+  onPrint,
+  isPrinterConfigured = false,
 }) => {
-  const { theme, isDark } = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
+  const { t } = useLanguage();
+  const { isDark } = useTheme();
 
   if (!bill) return null;
 
-  const itemCount = bill.items.reduce((s, i) => s + i.quantity, 0);
-  let statusDetail = bill.customerName ? `settled (${bill.customerName})` : 'settled';
-  if (bill.paymentMode === 'Pending') {
-    statusDetail = `pending: ${bill.customerName || 'not tracked'}`;
-  } else if (bill.paymentMode === 'Partial Pay') {
-    statusDetail = `Paid ${formatRupee(bill.paidAmount)} • Due ${formatRupee(bill.pendingAmount)} (${bill.customerName || 'customer'})`;
-  } else if (bill.paymentMode === 'Cash + GPay') {
-    statusDetail = `Cash ${formatRupee(bill.cashAmount || 0)} + GPay ${formatRupee(bill.gpayAmount || 0)}${bill.customerName ? ` (${bill.customerName})` : ''}`;
-  }
-
-  const tableTag = bill.tableNumber ? ` • ${bill.tableNumber}` : '';
-  const itemsText = `${itemCount} ${itemCount === 1 ? 'item' : 'items'}${tableTag} • ${statusDetail}`;
-
   return (
-    <Modal visible transparent animationType="slide">
+    <Modal visible transparent animationType="fade" onRequestClose={onNewBill}>
       <View style={styles.overlay}>
-        <View style={styles.sheet}>
-          <View style={styles.handleBar} />
-
-          <View style={styles.headerRow}>
-            <View style={styles.successBadge}>
-              <Ionicons name="checkmark-circle" size={14} color="#059669" />
-              <Text style={styles.successBadgeText}>BILL SAVED</Text>
-            </View>
-            <View style={styles.billNumberCapsule}>
-              <Text style={styles.billNumberText}>{bill.billNumber}</Text>
-            </View>
-          </View>
-
-          <View style={styles.totalRow}>
-            <View>
-              <Text style={styles.totalLabel}>Grand Total</Text>
-              <Text style={styles.totalAmount}>{formatRupee(bill.totalAmount)}</Text>
-            </View>
-            <View style={styles.paymentModeTag}>
-              <PaymentModeIcon mode={bill.paymentMode} size={14} color={colors.text} />
-              <Text style={styles.paymentModeText}>{bill.paymentMode}</Text>
-              {bill.tableNumber && (
-                <View style={styles.tableChip}>
-                  <Ionicons name="restaurant-outline" size={11} color={colors.accent} />
-                  <Text style={styles.tableChipText}>{bill.tableNumber}</Text>
-                </View>
-              )}
-            </View>
-          </View>
-
-          <View style={styles.itemsSummaryBox}>
-            <Text style={styles.itemsSummary}>{itemsText}</Text>
-          </View>
-
-          <View style={styles.actionRow}>
-            {onEdit && (
-              <TouchableOpacity
-                onPress={onEdit}
-                style={styles.editBtn}
-                activeOpacity={0.7}
-                accessibilityLabel="Edit Bill"
-              >
-                <Ionicons name="create-outline" size={19} color={colors.accent900} />
-              </TouchableOpacity>
-            )}
-            <AppButton
-              title="WhatsApp"
-              variant="primary"
-              icon={<Ionicons name="logo-whatsapp" size={16} color="#FFFFFF" />}
-              onPress={onSendWhatsApp}
-              style={styles.waBtn}
-            />
-            <AppButton
-              title="Print"
-              variant="secondary"
-              icon={<Ionicons name="print-outline" size={16} color={colors.text} />}
-              onPress={onPrint}
-              style={styles.printBtn}
-            />
-          </View>
-
-          <AppButton
-            title="Create New Bill"
-            variant="ghost"
-            icon={<Ionicons name="add-circle-outline" size={16} color={colors.accent} />}
+        <View style={[styles.card, { backgroundColor: isDark ? '#121E16' : '#FFFFFF', borderColor: isDark ? '#1C3123' : '#E2E8F0' }]}>
+          {/* Top Corner Close Icon */}
+          <TouchableOpacity
             onPress={onNewBill}
-            style={styles.newBillBtn}
-          />
+            style={[styles.closeBtn, { backgroundColor: isDark ? '#1A2920' : '#F1F5F9' }]}
+            activeOpacity={0.7}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel="Close and Start New Bill"
+          >
+            <Ionicons name="close" size={17} color={isDark ? '#9CA3AF' : '#475569'} />
+          </TouchableOpacity>
+
+          {/* Green Checkmark Ring */}
+          <View style={[styles.checkRing, { borderColor: isDark ? '#34D399' : '#16A34A', backgroundColor: isDark ? '#0F2318' : '#DCFCE7' }]}>
+            <Ionicons name="checkmark" size={30} color={isDark ? '#34D399' : '#16A34A'} />
+          </View>
+
+          {/* Title */}
+          <Text style={[styles.title, { color: isDark ? '#FFFFFF' : '#0F172A' }]}>
+            {t('bill_saved_success', 'Bill saved successfully!')}
+          </Text>
+
+          {/* Subtitle */}
+          <Text style={[styles.subtitle, { color: isDark ? '#9CA3AF' : '#64748B' }]}>
+            Bill #{String(bill.billNumber || '0016').padStart(4, '0')}
+          </Text>
+
+          {/* Exactly matching receipt card */}
+          <SavedBillTicketCard billNumber={bill.billNumber || 16} isDark={isDark} />
+
+          {/* Optional printer button if printer enabled */}
+          {isPrinterConfigured && onPrint && (
+            <TouchableOpacity
+              activeOpacity={0.85}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '100%',
+                height: 44,
+                borderRadius: 12,
+                backgroundColor: '#16A34A',
+                marginTop: 12,
+              }}
+              onPress={onPrint}
+            >
+              <Ionicons name="print-outline" size={17} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Text style={{ fontFamily: typography.fonts.heading, fontSize: 14, fontWeight: '800', color: '#FFFFFF' }}>
+                {t('print_receipt', 'Print Receipt')} (80mm)
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     </Modal>
   );
 };
 
-const createStyles = (theme: Theme) => {
-  const colors = theme.colors;
-  return StyleSheet.create({
-    overlay: {
-      flex: 1,
-      backgroundColor: 'rgba(0, 0, 0, 0.65)',
-      justifyContent: 'flex-end',
-    },
-    sheet: {
-      backgroundColor: colors.surface,
-      borderTopLeftRadius: radii.xl,
-      borderTopRightRadius: radii.xl,
-      paddingHorizontal: 18,
-      paddingTop: 10,
-      paddingBottom: 22,
-      gap: 12,
-      borderTopWidth: 1,
-      borderColor: colors.border,
-      ...shadows.lg,
-    },
-    handleBar: {
-      width: 36,
-      height: 4,
-      borderRadius: 2,
-      backgroundColor: colors.border,
-      alignSelf: 'center',
-      marginBottom: 6,
-    },
-    headerRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-    successBadge: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 5,
-      backgroundColor: theme.isDark ? '#06281E' : '#ECFDF5',
-      paddingHorizontal: 8,
-      paddingVertical: 3,
-      borderRadius: radii.pill,
-      borderWidth: 1,
-      borderColor: theme.isDark ? '#0E5C44' : '#A7F3D0',
-    },
-    successBadgeText: {
-      fontFamily: typography.fonts.heading,
-      fontSize: 10,
-      fontWeight: '800',
-      letterSpacing: 1.1,
-      color: theme.isDark ? '#34D399' : '#059669',
-    },
-    billNumberCapsule: {
-      paddingHorizontal: 8,
-      paddingVertical: 2,
-      backgroundColor: theme.isDark ? colors.surfaceElevated : colors.neutral100,
-      borderRadius: radii.sm,
-      borderWidth: 1,
-      borderColor: colors.border,
-    },
-    billNumberText: {
-      fontFamily: typography.fonts.heading,
-      fontSize: 12,
-      fontWeight: '700',
-      color: colors.textSecondary,
-    },
-    totalRow: {
-      flexDirection: 'row',
-      alignItems: 'flex-end',
-      justifyContent: 'space-between',
-      paddingVertical: 2,
-    },
-    totalLabel: {
-      fontSize: 11,
-      fontFamily: typography.fonts.heading,
-      letterSpacing: 1.1,
-      color: colors.textMuted,
-      textTransform: 'uppercase',
-    },
-    totalAmount: {
-      fontFamily: typography.fonts.heading,
-      fontSize: 28,
-      lineHeight: 32,
-      color: colors.text,
-      fontWeight: '800',
-      marginTop: 2,
-    },
-    paymentModeTag: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      backgroundColor: theme.isDark ? colors.surfaceElevated : '#F8FAFC',
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: radii.md,
-      borderWidth: 1,
-      borderColor: colors.border,
-    },
-    paymentModeText: {
-      fontSize: 13,
-      fontFamily: typography.fonts.heading,
-      fontWeight: '700',
-      color: colors.text,
-    },
-    tableChip: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 3,
-      backgroundColor: theme.isDark ? '#331B05' : colors.accent100,
-      paddingHorizontal: 6,
-      paddingVertical: 2,
-      borderRadius: 4,
-      marginLeft: 4,
-    },
-    tableChipText: {
-      fontSize: 11,
-      color: colors.accent,
-      fontWeight: '700',
-    },
-    itemsSummaryBox: {
-      backgroundColor: theme.isDark ? colors.surfaceElevated : '#F8FAFC',
-      borderRadius: radii.md,
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-      borderWidth: 1,
-      borderColor: colors.border,
-    },
-    itemsSummary: {
-      fontSize: 12,
-      color: colors.textMuted,
-      fontFamily: typography.fonts.body,
-      lineHeight: 16,
-    },
-    actionRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      marginTop: 2,
-    },
-    editBtn: {
-      width: 42,
-      height: 42,
-      borderRadius: radii.md,
-      borderWidth: 1,
-      borderColor: theme.isDark ? '#5C3809' : '#FED7AA',
-      backgroundColor: theme.isDark ? '#2A1A05' : '#FFF7ED',
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-    waBtn: {
-      flex: 1.15,
-      minHeight: 42,
-    },
-    printBtn: {
-      flex: 1,
-      minHeight: 42,
-    },
-    newBillBtn: {
-      minHeight: 38,
-    },
-  });
-};
+const styles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  card: {
+    width: '88%',
+    maxWidth: 320,
+    backgroundColor: '#121E16',
+    borderRadius: 26,
+    padding: 20,
+    paddingTop: 24,
+    paddingBottom: 20,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#1C3123',
+    position: 'relative',
+    ...shadows.card,
+  },
+  closeBtn: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#1A2920',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+  },
+  checkRing: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    borderWidth: 3.5,
+    borderColor: '#34D399',
+    backgroundColor: '#0F2318',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  title: {
+    fontFamily: typography.fonts.heading,
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    textAlign: 'center',
+  },
+  subtitle: {
+    fontFamily: typography.fonts.heading,
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#9CA3AF',
+    marginTop: 3,
+    marginBottom: 2,
+    textAlign: 'center',
+  },
+});

@@ -12,7 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { colors, typography, radii, spacing, shadows, useTheme, Theme } from '../../theme';
 import { APP_CONFIG } from '../../constants/appConfig';
-import { AppButton } from '../common/AppButton';
+import { useLanguage } from '../../context/LanguageContext';
 
 interface SupportModalProps {
   visible: boolean;
@@ -26,7 +26,9 @@ export const SupportModal: React.FC<SupportModalProps> = ({
   supportNumber = APP_CONFIG.supportPhone,
 }) => {
   const { theme, isDark } = useTheme();
+  const { t } = useLanguage();
   const styles = useMemo(() => createStyles(theme), [theme]);
+
   const handleCall = () => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -55,7 +57,7 @@ export const SupportModal: React.FC<SupportModalProps> = ({
               {/* Header */}
               <View style={styles.header}>
                 <View style={styles.iconCircle}>
-                  <Ionicons name="headset" size={26} color={colors.accent700} />
+                  <Ionicons name="headset" size={24} color="#FF5F00" />
                 </View>
                 <TouchableOpacity
                   onPress={onClose}
@@ -66,43 +68,32 @@ export const SupportModal: React.FC<SupportModalProps> = ({
                 </TouchableOpacity>
               </View>
 
-              <Text style={styles.title}>Need Help?</Text>
+              <Text style={styles.title}>{t('help', 'Need Help?')}</Text>
               <Text style={styles.subtitle}>
-                Contact our support team for assistance.
+                +91 {supportNumber} • {APP_CONFIG.supportHours}
               </Text>
 
-              {/* Number Card */}
-              <View style={styles.numberBox}>
-                <Text style={styles.numberLabel}>Support Number:</Text>
+              {/* Small Action Buttons (Replacing Old Card) */}
+              <View style={styles.smallActionsRow}>
                 <TouchableOpacity
-                  activeOpacity={0.7}
+                  activeOpacity={0.8}
                   onPress={handleCall}
-                  style={styles.phoneTouchRow}
+                  style={styles.smallCallBtn}
+                  accessibilityLabel="Call Support"
                 >
-                  <Ionicons name="call" size={20} color={colors.accent700} />
-                  <Text style={styles.numberText}>{supportNumber}</Text>
+                  <Ionicons name="call" size={15} color="#FFFFFF" />
+                  <Text style={styles.smallBtnText}>{t('call', 'Call')}</Text>
                 </TouchableOpacity>
-                <Text style={styles.hoursText}>
-                  Operating hours: {APP_CONFIG.supportHours}
-                </Text>
-              </View>
 
-              {/* Action Buttons */}
-              <View style={styles.actionRow}>
-                <AppButton
-                  title="Call Support"
-                  variant="primary"
-                  icon={<Ionicons name="call-outline" size={17} color="#FFFFFF" />}
-                  onPress={handleCall}
-                  style={styles.actionBtn}
-                />
-                <AppButton
-                  title="WhatsApp"
-                  variant="secondary"
-                  icon={<Ionicons name="logo-whatsapp" size={17} color="#25D366" />}
+                <TouchableOpacity
+                  activeOpacity={0.8}
                   onPress={handleWhatsApp}
-                  style={styles.actionBtn}
-                />
+                  style={styles.smallWaBtn}
+                  accessibilityLabel="WhatsApp Chat"
+                >
+                  <Ionicons name="logo-whatsapp" size={16} color="#FFFFFF" />
+                  <Text style={styles.smallBtnText}>{t('whatsapp_chat', 'WhatsApp Chat')}</Text>
+                </TouchableOpacity>
               </View>
 
               {/* Dismiss */}
@@ -111,7 +102,7 @@ export const SupportModal: React.FC<SupportModalProps> = ({
                 style={styles.cancelBtn}
                 activeOpacity={0.7}
               >
-                <Text style={styles.cancelText}>Close</Text>
+                <Text style={styles.cancelText}>{t('close', 'Close')}</Text>
               </TouchableOpacity>
             </View>
           </TouchableWithoutFeedback>
@@ -133,7 +124,7 @@ const createStyles = (theme: Theme) => {
     },
     card: {
       width: '100%',
-      maxWidth: 360,
+      maxWidth: 340,
       backgroundColor: colors.surface,
       borderRadius: radii.xl,
       padding: 20,
@@ -145,13 +136,13 @@ const createStyles = (theme: Theme) => {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      marginBottom: 12,
+      marginBottom: 10,
     },
     iconCircle: {
-      width: 48,
-      height: 48,
-      borderRadius: 24,
-      backgroundColor: theme.isDark ? '#331B05' : colors.accent100,
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: theme.isDark ? '#331B05' : 'rgba(255, 95, 0, 0.12)',
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -159,80 +150,66 @@ const createStyles = (theme: Theme) => {
       width: 32,
       height: 32,
       borderRadius: 16,
-      backgroundColor: theme.isDark ? colors.surfaceElevated : colors.neutral100,
       alignItems: 'center',
       justifyContent: 'center',
+      backgroundColor: theme.isDark ? colors.surfaceElevated : colors.neutral100,
     },
     title: {
       fontFamily: typography.fonts.heading,
-      fontSize: typography.sizes.h4,
+      fontSize: 18,
       fontWeight: '700',
       color: colors.text,
+      marginBottom: 3,
     },
     subtitle: {
       fontFamily: typography.fonts.body,
-      fontSize: typography.sizes.sm,
-      color: colors.textMuted,
-      marginTop: 4,
-      lineHeight: 18,
+      fontSize: 13,
+      color: colors.textSecondary,
+      marginBottom: 16,
     },
-    numberBox: {
-      backgroundColor: theme.isDark ? colors.surfaceElevated : colors.neutral100,
-      borderRadius: radii.md,
-      padding: 14,
-      marginTop: 16,
-      alignItems: 'center',
-      borderWidth: 1,
-      borderColor: colors.border,
-    },
-    numberLabel: {
-      fontFamily: typography.fonts.body,
-      fontSize: typography.sizes.xs,
-      color: colors.textMuted,
-      textTransform: 'uppercase',
-      letterSpacing: 0.8,
-    },
-    phoneTouchRow: {
+    smallActionsRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
-      marginTop: 6,
-      paddingVertical: 2,
-      paddingHorizontal: 8,
-    },
-    numberText: {
-      fontFamily: typography.fonts.heading,
-      fontSize: 22,
-      fontWeight: '700',
-      color: colors.text,
-      letterSpacing: 1,
-    },
-    hoursText: {
-      fontFamily: typography.fonts.body,
-      fontSize: 11,
-      color: colors.textMuted,
-      marginTop: 6,
-    },
-    actionRow: {
-      flexDirection: 'row',
       gap: 10,
-      marginTop: 16,
+      marginBottom: 14,
     },
-    actionBtn: {
+    smallCallBtn: {
       flex: 1,
-      minHeight: 44,
-    },
-    cancelBtn: {
-      marginTop: 12,
-      paddingVertical: 10,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: '#FF5F00',
+      flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
+      gap: 6,
+      paddingHorizontal: 12,
+    },
+    smallWaBtn: {
+      flex: 1.2,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: '#25D366',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingHorizontal: 12,
+    },
+    smallBtnText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 13,
+      fontWeight: '600',
+      color: '#FFFFFF',
+    },
+    cancelBtn: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 8,
     },
     cancelText: {
-      fontFamily: typography.fonts.heading,
-      fontSize: typography.sizes.sm,
-      color: colors.textMuted,
-      fontWeight: '600',
+      fontFamily: typography.fonts.body,
+      fontSize: 13.5,
+      color: colors.textSecondary,
     },
   });
 };

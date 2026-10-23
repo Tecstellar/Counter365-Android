@@ -1,13 +1,60 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Image, ActivityIndicator, KeyboardAvoidingView } from 'react-native';
+import React, { useState, useEffect, useMemo } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Image, ActivityIndicator, KeyboardAvoidingView, Keyboard } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, typography, spacing, radii } from '../../theme';
+import { colors, typography, spacing, radii, useTheme, Theme } from '../../theme';
 import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '../../components/common/AppButton';
 import { AppInput } from '../../components/common/AppInput';
 
+const INDIAN_STATES = [
+  'Tamil Nadu',
+  'Karnataka',
+  'Kerala',
+  'Andhra Pradesh',
+  'Telangana',
+  'Maharashtra',
+  'Puducherry',
+  'Gujarat',
+  'Delhi',
+  'Uttar Pradesh',
+  'West Bengal',
+  'Rajasthan',
+];
+
+const POPULAR_CITIES: Record<string, string[]> = {
+  'Tamil Nadu': [
+    'Chennai', 'Coimbatore', 'Madurai', 'Tiruchirappalli', 'Salem',
+    'Tiruppur', 'Erode', 'Vellore', 'Thoothukudi', 'Dindigul',
+    'Thanjavur', 'Ranipet', 'Sivakasi', 'Karur', 'Hosur', 'Nagercoil',
+  ],
+  'Karnataka': [
+    'Bengaluru', 'Mysuru', 'Hubballi', 'Mangaluru', 'Belagavi', 'Davanagere',
+  ],
+  'Kerala': [
+    'Thiruvananthapuram', 'Kochi', 'Kozhikode', 'Kollam', 'Thrissur', 'Kannur',
+  ],
+  'Andhra Pradesh': [
+    'Visakhapatnam', 'Vijayawada', 'Guntur', 'Nellore', 'Kurnool', 'Tirupati',
+  ],
+  'Telangana': [
+    'Hyderabad', 'Warangal', 'Nizamabad', 'Karimnagar', 'Khammam',
+  ],
+  'Maharashtra': [
+    'Mumbai', 'Pune', 'Nagpur', 'Thane', 'Nashik', 'Aurangabad',
+  ],
+  'Puducherry': [
+    'Puducherry', 'Karaikal', 'Mahe', 'Yanam',
+  ],
+};
+
+const DEFAULT_CITIES = [
+  'Chennai', 'Coimbatore', 'Madurai', 'Bengaluru', 'Salem', 'Tiruppur',
+  'Trichy', 'Hyderabad', 'Kochi', 'Mumbai',
+];
+
 interface ShopDetailsStepProps {
   shopName: string;
+  ownerName: string;
   shopAddress: string;
   shopState: string;
   shopCity: string;
@@ -21,6 +68,7 @@ interface ShopDetailsStepProps {
   isExtractingGps?: boolean;
   isUploadingLogo?: boolean;
   onChangeName: (text: string) => void;
+  onChangeOwnerName: (text: string) => void;
   onChangeAddress: (text: string) => void;
   onChangeState: (text: string) => void;
   onChangeCity: (text: string) => void;
@@ -33,6 +81,7 @@ interface ShopDetailsStepProps {
 
 export const ShopDetailsStep: React.FC<ShopDetailsStepProps> = ({
   shopName,
+  ownerName,
   shopAddress,
   shopState,
   shopCity,
@@ -46,6 +95,7 @@ export const ShopDetailsStep: React.FC<ShopDetailsStepProps> = ({
   isExtractingGps,
   isUploadingLogo,
   onChangeName,
+  onChangeOwnerName,
   onChangeAddress,
   onChangeState,
   onChangeCity,
@@ -56,7 +106,47 @@ export const ShopDetailsStep: React.FC<ShopDetailsStepProps> = ({
   onBack,
 }) => {
   const insets = useSafeAreaInsets();
+  const { theme, isDark } = useTheme();
+  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const isFormValid = shopName.trim().length > 0 && shopCity.trim().length > 0 && shopPincode.trim().length === 6;
+
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const onShow = (e: any) => {
+      setIsKeyboardVisible(true);
+      setKeyboardHeight(e.endCoordinates ? e.endCoordinates.height : 260);
+    };
+    const onHide = () => {
+      setIsKeyboardVisible(false);
+      setKeyboardHeight(0);
+    };
+
+    const showSub = Keyboard.addListener(showEvent, onShow);
+    const hideSub = Keyboard.addListener(hideEvent, onHide);
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  const suggestedStates = useMemo(() => {
+    if (!shopState) return INDIAN_STATES.slice(0, 8);
+    const filtered = INDIAN_STATES.filter(s => s.toLowerCase().includes(shopState.toLowerCase().trim()));
+    return filtered.length > 0 ? filtered : INDIAN_STATES.slice(0, 8);
+  }, [shopState]);
+
+  const suggestedCities = useMemo(() => {
+    const stateCities = POPULAR_CITIES[shopState] || DEFAULT_CITIES;
+    if (!shopCity) return stateCities.slice(0, 10);
+    const filtered = stateCities.filter(c => c.toLowerCase().includes(shopCity.toLowerCase().trim()));
+    return filtered.length > 0 ? filtered : stateCities.slice(0, 10);
+  }, [shopState, shopCity]);
 
   const topPadding = Math.max(insets.top, Platform.OS === 'android' ? 14 : 16);
   const bottomPadding = Math.max(insets.bottom, Platform.OS === 'android' ? 10 : 12);
@@ -87,17 +177,39 @@ export const ShopDetailsStep: React.FC<ShopDetailsStepProps> = ({
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 0}
       >
         <ScrollView
-          contentContainerStyle={[styles.scrollContent, { paddingBottom: 140 }]}
-          keyboardShouldPersistTaps="always"
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: isKeyboardVisible ? keyboardHeight + 80 : 70 }]}
+          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
+          {/* New Shop Registration Welcome Offer Banner */}
+          <View style={styles.offerBanner}>
+            <View style={styles.offerBadge}>
+              <Ionicons name="sparkles" size={14} color="#FF5F00" />
+              <Text style={styles.offerBadgeText}>SPECIAL REGISTRATION OFFER</Text>
+            </View>
+            <Text style={styles.offerTitle}>🎉 100 Free Bills Included</Text>
+            <Text style={styles.offerSub}>
+              Register your business to unlock your 100 Free Lifetime Bills, WhatsApp receipts, thermal printing & daily analytics — zero credit card required!
+            </Text>
+          </View>
+
           <Text style={styles.title}>Shop details</Text>
           <Text style={styles.subtitle}>This is what heads every bill you share.</Text>
 
           <View style={styles.form}>
+            <AppInput
+              label="Owner's full name"
+              placeholder="e.g. Raja"
+              value={ownerName}
+              onChangeText={onChangeOwnerName}
+              autoCapitalize="words"
+              returnKeyType="next"
+            />
+
             <AppInput
               label="Shop name"
               placeholder="e.g. Anandha Tea Stall"
@@ -146,25 +258,55 @@ export const ShopDetailsStep: React.FC<ShopDetailsStepProps> = ({
               )}
             </TouchableOpacity>
 
-            <AppInput
-              label="State"
-              placeholder="e.g. State"
-              value={shopState}
-              onChangeText={onChangeState}
-              autoCapitalize="words"
-              returnKeyType="next"
-            />
-
-            <View style={styles.row}>
+            {/* State Input with Suggestions */}
+            <View style={styles.stateWrapper}>
               <AppInput
-                label="City / town"
-                placeholder="e.g. Chennai"
-                value={shopCity}
-                onChangeText={onChangeCity}
-                style={styles.cityField}
+                label="State"
+                placeholder="e.g. Tamil Nadu"
+                value={shopState}
+                onChangeText={onChangeState}
                 autoCapitalize="words"
                 returnKeyType="next"
               />
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={styles.chipsScroll}
+              >
+                {suggestedStates.map(st => (
+                  <TouchableOpacity
+                    key={st}
+                    onPress={() => onChangeState(st)}
+                    style={[
+                      styles.suggestionChip,
+                      shopState.toLowerCase() === st.toLowerCase() && styles.suggestionChipSelected,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.suggestionChipText,
+                        shopState.toLowerCase() === st.toLowerCase() && styles.suggestionChipTextSelected,
+                      ]}
+                    >
+                      {st}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+
+            <View style={styles.row}>
+              <View style={styles.cityCol}>
+                <AppInput
+                  label="City / town"
+                  placeholder="e.g. Chennai"
+                  value={shopCity}
+                  onChangeText={onChangeCity}
+                  autoCapitalize="words"
+                  returnKeyType="next"
+                />
+              </View>
 
               <AppInput
                 label="Pincode"
@@ -177,6 +319,34 @@ export const ShopDetailsStep: React.FC<ShopDetailsStepProps> = ({
                 returnKeyType="done"
               />
             </View>
+
+            {/* City Suggestions */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.chipsScroll}
+            >
+              {suggestedCities.map(ct => (
+                <TouchableOpacity
+                  key={ct}
+                  onPress={() => onChangeCity(ct)}
+                  style={[
+                    styles.suggestionChip,
+                    shopCity.toLowerCase() === ct.toLowerCase() && styles.suggestionChipSelected,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.suggestionChipText,
+                      shopCity.toLowerCase() === ct.toLowerCase() && styles.suggestionChipTextSelected,
+                    ]}
+                  >
+                    {ct}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
 
           {/* Optional Logo */}
           <View style={styles.logoRow}>
@@ -207,9 +377,8 @@ export const ShopDetailsStep: React.FC<ShopDetailsStepProps> = ({
           </View>
         </View>
       </ScrollView>
-    </KeyboardAvoidingView>
 
-      {/* Actions */}
+      {/* Actions (Inside KeyboardAvoidingView so buttons are always reachable) */}
       <View style={styles.actionRow}>
         <AppButton
           variant="secondary"
@@ -225,169 +394,241 @@ export const ShopDetailsStep: React.FC<ShopDetailsStepProps> = ({
           style={styles.nextBtn}
         />
       </View>
+    </KeyboardAvoidingView>
     </View>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FAF7F2',
-  },
-  stepHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 10,
-  },
-  logoImage: {
-    width: 120,
-    height: 30,
-  },
-  stepCount: {
-    fontSize: 11,
-    color: colors.textSecondary,
-    fontFamily: typography.fonts.heading,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-  },
-  progressRow: {
-    flexDirection: 'row',
-    gap: 6,
-    paddingHorizontal: 20,
-    paddingBottom: 14,
-  },
-  progressSegment: {
-    flex: 1,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#E5E0D8',
-  },
-  activeSegment: {
-    backgroundColor: '#FD5E03',
-  },
-  scrollContent: {
-    paddingHorizontal: 20,
-    paddingVertical: 6,
-    paddingBottom: 24,
-  },
-  title: {
-    fontFamily: typography.fonts.heading,
-    fontSize: 24,
-    fontWeight: '800',
-    color: colors.text,
-    marginTop: 8,
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 13.5,
-    lineHeight: 19,
-    color: colors.textSecondary,
-    fontFamily: typography.fonts.body,
-    marginBottom: 16,
-  },
-  form: {
-    gap: 14,
-  },
-  row: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  cityField: {
-    flex: 1.4,
-  },
-  pincodeField: {
-    flex: 1,
-  },
-  compactGeoBtn: {
-    alignSelf: 'flex-start',
-    height: 34,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    backgroundColor: '#FFF0E6',
-    borderWidth: 1,
-    borderColor: 'rgba(253, 94, 3, 0.25)',
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: -4,
-    marginBottom: 4,
-  },
-  compactGeoBtnTagged: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
-  },
-  compactGeoText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#FD5E03',
-    fontFamily: typography.fonts.heading,
-  },
-  compactGeoTextTagged: {
-    color: '#059669',
-  },
-  logoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    paddingTop: 6,
-  },
-  logoBox: {
-    width: 64,
-    height: 64,
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderStyle: 'dashed',
-    borderColor: '#D7D2C9',
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  logoBoxSelected: {
-    backgroundColor: '#FFF0E6',
-    borderColor: '#FD5E03',
-  },
-  logoThumbnail: {
-    width: 60,
-    height: 60,
-    borderRadius: 14,
-  },
-  logoText: {
-    fontFamily: typography.fonts.heading,
-    fontSize: 11,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    fontWeight: '700',
-  },
-  logoHint: {
-    flex: 1,
-    fontSize: 12.5,
-    color: colors.textSecondary,
-    fontFamily: typography.fonts.body,
-    lineHeight: 17,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#EFECE6',
-    backgroundColor: '#FAF7F2',
-    gap: 10,
-  },
-  backBtn: {
-    width: 54,
-    minHeight: 50,
-    borderRadius: 16,
-  },
-  backArrow: {
-    fontSize: 20,
-    color: colors.text,
-  },
-  nextBtn: {
-    flex: 1,
-    minHeight: 50,
-    borderRadius: 16,
-  },
-});
+const createStyles = (theme: Theme, isDark: boolean) => {
+  const colors = theme.colors;
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    stepHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 20,
+      paddingTop: 16,
+      paddingBottom: 10,
+    },
+    logoImage: {
+      width: 120,
+      height: 30,
+    },
+    stepCount: {
+      fontSize: 11,
+      color: colors.textSecondary,
+      fontFamily: typography.fonts.heading,
+      fontWeight: '700',
+      letterSpacing: 0.8,
+    },
+    progressRow: {
+      flexDirection: 'row',
+      gap: 6,
+      paddingHorizontal: 20,
+      paddingBottom: 14,
+    },
+    progressSegment: {
+      flex: 1,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: isDark ? colors.surfaceSecondary : '#E5E0D8',
+    },
+    activeSegment: {
+      backgroundColor: colors.accent,
+    },
+    scrollContent: {
+      paddingHorizontal: 20,
+      paddingVertical: 6,
+      paddingBottom: 24,
+    },
+    offerBanner: {
+      backgroundColor: isDark ? '#2D1B11' : '#FFF7F0',
+      borderRadius: radii.md,
+      borderWidth: 1.5,
+      borderColor: '#FF5F00',
+      padding: 14,
+      marginTop: 4,
+      marginBottom: 12,
+    },
+    offerBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginBottom: 4,
+    },
+    offerBadgeText: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: '#FF5F00',
+      fontFamily: typography.fonts.heading,
+      letterSpacing: 0.8,
+    },
+    offerTitle: {
+      fontSize: 16,
+      fontWeight: '800',
+      color: isDark ? '#FFFFFF' : '#111111',
+      fontFamily: typography.fonts.heading,
+      marginBottom: 4,
+    },
+    offerSub: {
+      fontSize: 12.5,
+      lineHeight: 18,
+      color: isDark ? '#D1D5DB' : '#4B5563',
+      fontFamily: typography.fonts.body,
+    },
+    title: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 24,
+      fontWeight: '800',
+      color: colors.text,
+      marginTop: 8,
+      marginBottom: 4,
+    },
+    subtitle: {
+      fontSize: 13.5,
+      lineHeight: 19,
+      color: colors.textSecondary,
+      fontFamily: typography.fonts.body,
+      marginBottom: 16,
+    },
+    form: {
+      gap: 14,
+    },
+    stateWrapper: {
+      gap: 6,
+    },
+    chipsScroll: {
+      flexDirection: 'row',
+      gap: 8,
+      paddingVertical: 4,
+    },
+    suggestionChip: {
+      paddingHorizontal: 13,
+      paddingVertical: 6,
+      borderRadius: radii.pill,
+      backgroundColor: isDark ? colors.surfaceSecondary : '#F4F4F5',
+      borderWidth: 1,
+      borderColor: isDark ? colors.border : '#E4E4E7',
+    },
+    suggestionChipSelected: {
+      backgroundColor: '#FF5F00',
+      borderColor: '#FF5F00',
+    },
+    suggestionChipText: {
+      fontSize: 12,
+      fontFamily: typography.fonts.heading,
+      color: colors.textSecondary,
+      fontWeight: '600',
+    },
+    suggestionChipTextSelected: {
+      color: '#FFFFFF',
+      fontWeight: '700',
+    },
+    row: {
+      flexDirection: 'row',
+      gap: 10,
+    },
+    cityCol: {
+      flex: 1.4,
+    },
+    cityField: {
+      flex: 1.4,
+    },
+    pincodeField: {
+      flex: 1,
+    },
+    compactGeoBtn: {
+      alignSelf: 'flex-start',
+      height: 34,
+      paddingHorizontal: 14,
+      borderRadius: 12,
+      backgroundColor: isDark ? colors.surfaceSecondary : '#FFF0E6',
+      borderWidth: 1,
+      borderColor: isDark ? colors.border : 'rgba(253, 94, 3, 0.25)',
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginTop: -4,
+      marginBottom: 4,
+    },
+    compactGeoBtnTagged: {
+      backgroundColor: isDark ? colors.surfaceSecondary : '#ECFDF5',
+      borderColor: isDark ? colors.border : '#A7F3D0',
+    },
+    compactGeoText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: colors.accent,
+      fontFamily: typography.fonts.heading,
+    },
+    compactGeoTextTagged: {
+      color: '#059669',
+    },
+    logoRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 14,
+      paddingTop: 6,
+    },
+    logoBox: {
+      width: 64,
+      height: 64,
+      borderRadius: 16,
+      borderWidth: 1.5,
+      borderStyle: 'dashed',
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    logoBoxSelected: {
+      backgroundColor: isDark ? colors.surfaceSecondary : '#FFF0E6',
+      borderColor: colors.accent,
+    },
+    logoThumbnail: {
+      width: 60,
+      height: 60,
+      borderRadius: 14,
+    },
+    logoText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 11,
+      color: colors.textSecondary,
+      textAlign: 'center',
+      fontWeight: '700',
+    },
+    logoHint: {
+      flex: 1,
+      fontSize: 12.5,
+      color: colors.textSecondary,
+      fontFamily: typography.fonts.body,
+      lineHeight: 17,
+    },
+    actionRow: {
+      flexDirection: 'row',
+      paddingHorizontal: 20,
+      paddingVertical: 12,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      backgroundColor: colors.surface,
+      gap: 10,
+    },
+    backBtn: {
+      width: 54,
+      minHeight: 50,
+      borderRadius: 16,
+    },
+    backArrow: {
+      fontSize: 20,
+      color: colors.text,
+    },
+    nextBtn: {
+      flex: 1,
+      minHeight: 50,
+      borderRadius: 16,
+    },
+  });
+};

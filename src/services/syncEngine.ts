@@ -2,6 +2,8 @@ import { storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { SyncQueueItem } from '../types/models';
 import { generateUUID } from '../lib/uuid';
+import { shopService } from './shopService';
+import { contactService } from './contactService';
 
 const LOCAL_SYNC_QUEUE_KEY = '@counterpro/sync_queue';
 
@@ -69,17 +71,73 @@ export const syncEngine = {
 
           const validOpId = isValidUUID(item.operationId) ? item.operationId : null;
 
-          const { error: billErr } = await (supabase.from('bills') as any).upsert({
+          // Conflict resolution: Check if another device already persisted this bill number
+          let finalBillNumber = bill.billNumber;
+          try {
+            const { data: existingSameNumber } = await (supabase.from('bills') as any)
+              .select('id, client_operation_id')
+              .eq('shop_id', bill.shopId)
+              .eq('bill_number', bill.billNumber)
+              .maybeSingle();
+
+            if (existingSameNumber && existingSameNumber.id !== bill.id && existingSameNumber.client_operation_id !== validOpId) {
+              // Conflicting bill exists from another device! Assign permanent server sequence
+              const { data: maxRows } = await (supabase.from('bills') as any)
+                .select('bill_number')
+                .eq('shop_id', bill.shopId);
+
+              let maxSeq = 0;
+              const seqRegex = /[-_#](\d+)$/;
+              if (maxRows) {
+                for (const row of maxRows) {
+                  const m = row.bill_number?.match(seqRegex);
+                  if (m && m[1]) {
+                    const num = parseInt(m[1], 10);
+                    if (!isNaN(num) && num > maxSeq) maxSeq = num;
+                  }
+                }
+              }
+              const prefixMatch = bill.billNumber.match(/^([A-Za-z0-9]+[-_][A-Za-z]+[-_]|[A-Za-z0-9]+[-_]|#)/);
+              const prefixPart = prefixMatch ? prefixMatch[1] : 'BILL-';
+              finalBillNumber = `${prefixPart}${String(maxSeq + 1).padStart(3, '0')}`;
+              bill.billNumber = finalBillNumber;
+            }
+          } catch {}
+
+          // Ensure parent shop exists in Supabase before upserting bill
+          await shopService.ensureShopExists(bill.shopId);
+
+          // Ensure customer exists in Supabase so bills_customer_id_fkey is satisfied
+          let validCustomerId: string | null = null;
+          if (bill.customerId && isValidUUID(bill.customerId)) {
+            const customerExists = await contactService.ensureCustomerExists(
+              bill.customerId,
+              bill.shopId,
+              bill.customerName,
+              bill.customerPhone
+            );
+            if (customerExists) {
+              validCustomerId = bill.customerId;
+            }
+          }
+
+          const billPayload = {
             id: bill.id,
             shop_id: bill.shopId,
-            bill_number: bill.billNumber,
-            customer_id: bill.customerId && isValidUUID(bill.customerId) ? bill.customerId : null,
+            bill_number: finalBillNumber,
+            customer_id: validCustomerId,
             customer_name: bill.customerName || null,
             customer_phone: bill.customerPhone || null,
             table_number: bill.tableNumber || null,
             status: bill.status || 'completed',
             subtotal: bill.subtotal,
-            discount_amount: 0.00,
+            discount_amount: bill.discountAmount || 0.00,
+            discount_type: bill.discountType || null,
+            discount_value: bill.discountValue || 0.00,
+            discount_applied_by: bill.discountAppliedBy || null,
+            discount_approved_by: bill.discountApprovedBy || null,
+            original_subtotal: bill.originalSubtotal || null,
+            original_total: bill.originalTotal || null,
             gst_rate: bill.gstRate,
             gst_amount: bill.gstAmount,
             tax_amount: bill.gstAmount,
@@ -100,12 +158,36 @@ export const syncEngine = {
             edited_by_name: bill.editedByName || null,
             edited_by_role: bill.editedByRole || null,
             is_deleted: bill.isDeleted || false,
+            is_cancelled: bill.isCancelled || false,
+            cancellation_reason: bill.cancellationReason || null,
             deleted_at: bill.deletedAt || null,
             deleted_by_name: bill.deletedByName || null,
             deleted_by_role: bill.deletedByRole || null,
             completed_at: bill.completedAt || new Date().toISOString(),
             settled_at: bill.settledAt || null,
-          });
+          };
+
+          let { error: billErr } = await (supabase.from('bills') as any).upsert(billPayload);
+
+          if (billErr) {
+            // Self-heal 1: retry after ensuring shop row exists
+            if (billErr.message && billErr.message.includes('bills_shop_id_fkey')) {
+              await shopService.ensureShopExists(bill.shopId);
+              const { error: retryErr } = await (supabase.from('bills') as any).upsert(billPayload);
+              if (!retryErr) billErr = null;
+            }
+            // Self-heal 2: retry after clearing missing customer FK so bill is NEVER blocked
+            else if (
+              billPayload.customer_id &&
+              (billErr.message?.includes('bills_customer_id_fkey') ||
+                (billErr as any).details?.includes('bills_customer_id_fkey'))
+            ) {
+              console.warn('syncEngine bills_customer_id_fkey self-heal: clearing missing customer_id and retrying:', bill.billNumber);
+              billPayload.customer_id = null;
+              const { error: retryErr } = await (supabase.from('bills') as any).upsert(billPayload);
+              if (!retryErr) billErr = null;
+            }
+          }
 
           if (billErr) {
             throw new Error(`Bills upsert failed: ${billErr.message}`);
@@ -130,6 +212,9 @@ export const syncEngine = {
           processed++;
         } else if (item.action === 'add_expense') {
           const exp = item.payload;
+          if (exp.shopId) {
+            await shopService.ensureShopExists(exp.shopId);
+          }
           const { error: expErr } = await (supabase.from('expenses') as any).upsert({
             id: exp.id,
             shop_id: exp.shopId,

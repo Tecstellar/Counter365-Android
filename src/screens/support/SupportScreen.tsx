@@ -10,11 +10,13 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
-import { colors, typography, radii, spacing, shadows } from '../../theme';
+import { colors, typography, radii, spacing, shadows, useTheme, Theme } from '../../theme';
 import { APP_CONFIG } from '../../constants/appConfig';
 import { useShop } from '../../context/ShopContext';
 import { useAuth } from '../../context/AuthContext';
+import { useLanguage } from '../../context/LanguageContext';
 import { AppButton } from '../../components/common/AppButton';
 
 interface SupportScreenProps {
@@ -29,6 +31,10 @@ interface FaqItem {
 }
 
 export const SupportScreen: React.FC<SupportScreenProps> = ({ onBackToHome }) => {
+  const { theme, isDark } = useTheme();
+  const { t } = useLanguage();
+  const insets = useSafeAreaInsets();
+  const styles = React.useMemo(() => createStyles(theme, isDark, insets), [theme, isDark, insets]);
   const { shop } = useShop();
   const { currentRole, profile } = useAuth();
   const [expandedFaqId, setExpandedFaqId] = useState<string | null>('billing');
@@ -123,7 +129,7 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({ onBackToHome }) =>
           <Ionicons name="arrow-back" size={22} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.headerTitleWrap}>
-          <Text style={styles.headerTitle}>Help & Support</Text>
+          <Text style={styles.headerTitle}>{t('help_and_legal', 'Help & Support')}</Text>
           <Text style={styles.headerSubtitle}>Official assistance for Counter365</Text>
         </View>
       </View>
@@ -133,80 +139,34 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({ onBackToHome }) =>
         contentContainerStyle={styles.contentContainer}
         showsVerticalScrollIndicator={false}
       >
-        {/* Support Hotline Hero Card */}
-        <View style={styles.hotlineCard}>
-          <View style={styles.hotlineTop}>
-            <View style={styles.iconCircle}>
-              <Ionicons name="headset" size={28} color="#FFFFFF" />
-            </View>
-            <View style={styles.hotlineMeta}>
-              <View style={styles.badgeRow}>
-                <View style={styles.liveBadge}>
-                  <View style={styles.liveDot} />
-                  <Text style={styles.liveBadgeText}>Active Support Desk</Text>
-                </View>
-              </View>
-              <Text style={styles.hotlineNumberText}>+91 {supportNumber}</Text>
-              <Text style={styles.hotlineHours}>
-                Operating Hours: {APP_CONFIG.supportHours}
-              </Text>
-            </View>
-          </View>
+        {/* Small Contact Action Buttons */}
+        <View style={styles.smallActionsRow}>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={handleCall}
+            style={styles.smallCallBtn}
+            accessibilityLabel="Call Support"
+          >
+            <Ionicons name="call" size={15} color="#FFFFFF" />
+            <Text style={styles.smallBtnText}>{t('call', 'Call')}</Text>
+          </TouchableOpacity>
 
-          <Text style={styles.hotlineDesc}>
-            Need immediate help with billing, printers, or your account? Our dedicated support team is available every day.
-          </Text>
-
-          {/* Direct Contact Action Buttons */}
-          <View style={styles.actionRow}>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={handleCall}
-              style={styles.callIconBtn}
-              accessibilityLabel="Call Support"
-            >
-              <Ionicons name="call" size={19} color="#FFFFFF" />
-              <Text style={styles.callIconBtnText}>Call Support</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={handleWhatsApp}
-              style={styles.waIconBtn}
-              accessibilityLabel="WhatsApp Chat"
-            >
-              <Ionicons name="logo-whatsapp" size={19} color="#FFFFFF" />
-              <Text style={styles.waIconBtnText}>WhatsApp Chat</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Diagnostic / Account Info */}
-        <View style={styles.diagnosticCard}>
-          <View style={styles.diagnosticRow}>
-            <Text style={styles.diagnosticLabel}>Shop Name</Text>
-            <Text style={styles.diagnosticValue} numberOfLines={1}>
-              {shop.name || 'Not configured'}
-            </Text>
-          </View>
-          <View style={styles.diagnosticDivider} />
-          <View style={styles.diagnosticRow}>
-            <Text style={styles.diagnosticLabel}>User & Role</Text>
-            <Text style={styles.diagnosticValue}>
-              {profile?.fullName ? `${profile.fullName} (${currentRole})` : currentRole}
-            </Text>
-          </View>
-          <View style={styles.diagnosticDivider} />
-          <View style={styles.diagnosticRow}>
-            <Text style={styles.diagnosticLabel}>App Version</Text>
-            <Text style={styles.diagnosticValue}>v{appVersion} • Production</Text>
-          </View>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={handleWhatsApp}
+            style={styles.smallWaBtn}
+            accessibilityLabel="WhatsApp Chat"
+          >
+            <Ionicons name="logo-whatsapp" size={16} color="#FFFFFF" />
+            <Text style={styles.smallBtnText}>{t('whatsapp_chat', 'WhatsApp Chat')}</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Guides & FAQs */}
         <View style={styles.faqSection}>
-          <Text style={styles.sectionTitle}>Frequently Asked Questions</Text>
+          <Text style={styles.sectionTitle}>{t('faq_title', 'Frequently Asked Questions')}</Text>
           <Text style={styles.sectionSubtitle}>
-            Tap any topic below to view step-by-step guidance
+            {t('faq_subtitle', 'Tap any topic below to view step-by-step guidance')}
           </Text>
 
           <View style={styles.faqList}>
@@ -246,7 +206,7 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({ onBackToHome }) =>
             Counter365 • Premium POS & Billing System for Food Shops
           </Text>
           <Text style={styles.footerSubText}>
-            Official Support: 8903368006 • 7:00 AM – 11:00 PM
+            Official Support: 8870500106 • 7:00 AM – 11:00 PM
           </Text>
         </View>
       </ScrollView>
@@ -254,286 +214,174 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({ onBackToHome }) =>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FAF7F2',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#FAF7F2',
-    borderBottomWidth: 1,
-    borderBottomColor: '#EFECE6',
-  },
-  backBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#EFECE6',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-    ...shadows.sm,
-  },
-  headerTitleWrap: {
-    flex: 1,
-  },
-  headerTitle: {
-    fontFamily: typography.fonts.heading,
-    fontSize: 18,
-    fontWeight: '800',
-    color: colors.text,
-  },
-  headerSubtitle: {
-    fontFamily: typography.fonts.body,
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginTop: 1,
-  },
-  content: {
-    flex: 1,
-  },
-  contentContainer: {
-    padding: 16,
-    gap: 14,
-    paddingBottom: 70,
-  },
-  hotlineCard: {
-    backgroundColor: '#111111',
-    borderRadius: 24,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    ...shadows.card,
-  },
-  hotlineTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-  },
-  iconCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    backgroundColor: 'rgba(253, 94, 3, 0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  hotlineMeta: {
-    flex: 1,
-  },
-  badgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  liveBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(34, 197, 94, 0.15)',
-    paddingHorizontal: 9,
-    paddingVertical: 3,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(74, 222, 128, 0.25)',
-  },
-  liveDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#4ADE80',
-  },
-  liveBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#4ADE80',
-    fontFamily: typography.fonts.heading,
-  },
-  hotlineNumberText: {
-    fontFamily: typography.fonts.heading,
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    letterSpacing: 0.5,
-    fontVariant: ['tabular-nums'],
-  },
-  hotlineHours: {
-    fontFamily: typography.fonts.body,
-    fontSize: 11.5,
-    color: 'rgba(255, 255, 255, 0.55)',
-    marginTop: 2,
-  },
-  hotlineDesc: {
-    fontFamily: typography.fonts.body,
-    fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.8)',
-    lineHeight: 19,
-    marginTop: 14,
-    marginBottom: 16,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  callIconBtn: {
-    flex: 1,
-    height: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    borderRadius: 14,
-    backgroundColor: '#FD5E03',
-  },
-  callIconBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 14,
-    fontFamily: typography.fonts.heading,
-  },
-  waIconBtn: {
-    flex: 1,
-    height: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    borderRadius: 14,
-    backgroundColor: '#25D366',
-  },
-  waIconBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 14,
-    fontFamily: typography.fonts.heading,
-  },
-  diagnosticCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#EFECE6',
-    ...shadows.card,
-  },
-  diagnosticRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 9,
-  },
-  diagnosticLabel: {
-    fontFamily: typography.fonts.body,
-    fontSize: 13,
-    color: colors.textSecondary,
-  },
-  diagnosticValue: {
-    fontFamily: typography.fonts.heading,
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.text,
-    maxWidth: '60%',
-    textAlign: 'right',
-  },
-  diagnosticDivider: {
-    height: 1,
-    backgroundColor: '#FAF7F2',
-  },
-  cloudStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  cloudStatusText: {
-    fontFamily: typography.fonts.body,
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#059669',
-  },
-  faqSection: {
-    marginTop: 6,
-  },
-  sectionTitle: {
-    fontFamily: typography.fonts.heading,
-    fontSize: 16,
-    fontWeight: '800',
-    color: colors.text,
-  },
-  sectionSubtitle: {
-    fontFamily: typography.fonts.body,
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginTop: 2,
-    marginBottom: 12,
-  },
-  faqList: {
-    gap: 10,
-  },
-  faqItem: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#EFECE6',
-    overflow: 'hidden',
-    ...shadows.card,
-  },
-  faqHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 14,
-    gap: 12,
-  },
-  faqIconBox: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: '#FFF0E6',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  faqQuestion: {
-    flex: 1,
-    fontFamily: typography.fonts.heading,
-    fontSize: 13.5,
-    fontWeight: '700',
-    color: colors.text,
-  },
-  faqBody: {
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    paddingTop: 4,
-    borderTopWidth: 1,
-    borderTopColor: '#FAF7F2',
-    backgroundColor: '#FAF7F2',
-  },
-  faqAnswer: {
-    fontFamily: typography.fonts.body,
-    fontSize: 13,
-    lineHeight: 20,
-    color: colors.text,
-  },
-  footerWrap: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 18,
-    gap: 4,
-  },
-  footerText: {
-    fontFamily: typography.fonts.heading,
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    textAlign: 'center',
-  },
-  footerSubText: {
-    fontFamily: typography.fonts.body,
-    fontSize: 11,
-    color: colors.textSecondary,
-    textAlign: 'center',
-  },
-});
+const createStyles = (theme: Theme, isDark: boolean, insets?: { top: number; bottom: number; left: number; right: number }) => {
+  const colors = theme.colors;
+  const bottomInset = insets?.bottom || 0;
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      backgroundColor: colors.background,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    backBtn: {
+      width: 42,
+      height: 42,
+      borderRadius: 14,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 12,
+      ...shadows.sm,
+    },
+    headerTitleWrap: {
+      flex: 1,
+    },
+    headerTitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 18,
+      fontWeight: '800',
+      color: colors.text,
+    },
+    headerSubtitle: {
+      fontFamily: typography.fonts.body,
+      fontSize: 12,
+      color: colors.textSecondary,
+      marginTop: 1,
+    },
+    content: {
+      flex: 1,
+    },
+    contentContainer: {
+      padding: 16,
+      gap: 14,
+      paddingBottom: Math.max(bottomInset, 16) + 84,
+    },
+    smallActionsRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      marginBottom: 20,
+    },
+    smallCallBtn: {
+      flex: 1,
+      height: 40,
+      borderRadius: radii.pill,
+      backgroundColor: '#FF5F00',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingHorizontal: 12,
+      ...shadows.sm,
+    },
+    smallWaBtn: {
+      flex: 1.25,
+      height: 40,
+      borderRadius: radii.pill,
+      backgroundColor: '#25D366',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingHorizontal: 12,
+      ...shadows.sm,
+    },
+    smallBtnText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 13,
+      fontWeight: '700',
+      color: '#FFFFFF',
+    },
+    faqSection: {
+      marginTop: 6,
+    },
+    sectionTitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 16,
+      fontWeight: '800',
+      color: colors.text,
+    },
+    sectionSubtitle: {
+      fontFamily: typography.fonts.body,
+      fontSize: 12,
+      color: colors.textSecondary,
+      marginTop: 2,
+      marginBottom: 12,
+    },
+    faqList: {
+      gap: 10,
+    },
+    faqItem: {
+      backgroundColor: colors.surface,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: colors.border,
+      overflow: 'hidden',
+      ...shadows.card,
+    },
+    faqHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 14,
+      gap: 12,
+    },
+    faqIconBox: {
+      width: 36,
+      height: 36,
+      borderRadius: 12,
+      backgroundColor: isDark ? colors.surfaceSecondary : '#FFF0E6',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    faqQuestion: {
+      flex: 1,
+      fontFamily: typography.fonts.heading,
+      fontSize: 13.5,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    faqBody: {
+      paddingHorizontal: 16,
+      paddingBottom: 16,
+      paddingTop: 4,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      backgroundColor: isDark ? colors.surfaceSecondary : '#FAF7F2',
+    },
+    faqAnswer: {
+      fontFamily: typography.fonts.body,
+      fontSize: 13,
+      lineHeight: 20,
+      color: colors.text,
+    },
+    footerWrap: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 18,
+      gap: 4,
+    },
+    footerText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 11,
+      fontWeight: '700',
+      color: colors.textSecondary,
+      textAlign: 'center',
+    },
+    footerSubText: {
+      fontFamily: typography.fonts.body,
+      fontSize: 11,
+      color: colors.textSecondary,
+      textAlign: 'center',
+    },
+  });
+};

@@ -3,8 +3,9 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { colors, typography, radii, shadows, useTheme } from '../../theme';
+import { colors, typography, radii, shadows, useTheme, Theme } from '../../theme';
 import { AppRoute } from '../../types/navigation';
+import { useLanguage } from '../../context/LanguageContext';
 
 interface BottomTabBarProps {
   currentRoute: AppRoute;
@@ -25,6 +26,8 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
+  const { t } = useLanguage();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
 
   const isHomeActive =
     currentRoute === 'home' ||
@@ -40,28 +43,28 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
   const tabs: TabConfig[] = [
     {
       route: 'home',
-      label: 'Home',
+      label: t('home', 'Home'),
       icon: 'home-outline',
       iconActive: 'home',
       isActive: isHomeActive,
     },
     {
       route: 'bills',
-      label: 'Bills',
+      label: t('bills', 'Bills'),
       icon: 'receipt-outline',
       iconActive: 'receipt',
       isActive: isBillsActive,
     },
     {
       route: 'sales',
-      label: 'New Bill',
+      label: t('new_bill', 'New Bill'),
       icon: 'add-circle-outline',
       iconActive: 'add-circle',
       isActive: isSalesActive,
     },
     {
       route: 'account',
-      label: 'Account',
+      label: t('account', 'Account'),
       icon: 'person-outline',
       iconActive: 'person',
       isActive: isAccountActive,
@@ -110,49 +113,52 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
-  floatingWrapper: {
-    backgroundColor: 'transparent',
-    paddingHorizontal: 16,
-    paddingTop: 4,
-  },
-  dockContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-around',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    maxWidth: 400,
-    width: '100%',
-    alignSelf: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: '#EFECE6',
-    ...shadows.floating,
-  },
-  activePillTab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.accent700,
-    borderRadius: 16,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    gap: 8,
-    ...shadows.orangeGlow,
-  },
-  activePillLabel: {
-    fontSize: typography.sizes.chip,
-    fontFamily: typography.fonts.bodySemiBold,
-    color: '#FFFFFF',
-    fontWeight: '700',
-    letterSpacing: -0.135,
-  },
-  inactiveTab: {
-    width: 48,
-    height: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 16,
-  },
-});
+const createStyles = (theme: Theme) => {
+  const colors = theme.colors;
+  return StyleSheet.create({
+    floatingWrapper: {
+      backgroundColor: 'transparent',
+      paddingHorizontal: 16,
+      paddingTop: 4,
+    },
+    dockContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-around',
+      backgroundColor: colors.surface,
+      borderRadius: 22,
+      maxWidth: 400,
+      width: '100%',
+      alignSelf: 'center',
+      paddingHorizontal: 8,
+      paddingVertical: 6,
+      borderWidth: 1,
+      borderColor: colors.border,
+      ...shadows.floating,
+    },
+    activePillTab: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.primary,
+      borderRadius: 16,
+      paddingHorizontal: 18,
+      paddingVertical: 10,
+      gap: 8,
+      ...shadows.orangeGlow,
+    },
+    activePillLabel: {
+      fontSize: typography.sizes.chip,
+      fontFamily: typography.fonts.bodySemiBold,
+      color: '#FFFFFF',
+      fontWeight: '700',
+      letterSpacing: -0.135,
+    },
+    inactiveTab: {
+      width: 48,
+      height: 48,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 16,
+    },
+  });
+};

@@ -1,52 +1,122 @@
-import React, { useState } from 'react';
+import React, { useRef } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
-  Image,
-  ActivityIndicator,
   useWindowDimensions,
+  Animated,
+  PanResponder,
+  Platform,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, typography, radii, shadows, useTheme, Theme } from '../../theme';
 import { MenuItem } from '../../types/models';
 import { formatRupee } from '../../lib/money';
-import { getDishFoodIcon } from '../../constants/dishIcons';
-import { getDishImageUrl } from '../../constants/dishImages';
-import { DishVectorIcon } from '../common/DishVectorIcon';
+import { getPhosphorIconConfig } from '../../constants/phosphorDishIcons';
 
 interface ItemTileProps {
   item: MenuItem;
   categoryName?: string;
   quantity: number;
+  isMostlyUsed?: boolean;
+  isFlying?: boolean;
   onAddFull: () => void;
   onAddHalf: () => void;
   onDecrease?: () => void;
   onSoldOutNotice: () => void;
   tileSize?: number;
+  canManageMenu?: boolean;
+  isOrganizeMode?: boolean;
+  isPicked?: boolean;
+  onPickItem?: (item: MenuItem) => void;
+  onDragStart?: (item: MenuItem, pageX: number, pageY: number) => void;
+  onDragMove?: (pageX: number, pageY: number) => void;
+  onDragEnd?: (pageX: number, pageY: number) => void;
 }
 
 export const ItemTile: React.FC<ItemTileProps> = ({
   item,
   categoryName,
   quantity,
+  isMostlyUsed,
+  isFlying = false,
   onAddFull,
   onAddHalf,
   onDecrease,
   onSoldOutNotice,
   tileSize: customTileSize,
+  canManageMenu = false,
+  isOrganizeMode = false,
+  isPicked = false,
+  onPickItem,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
 }) => {
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
   const { width: windowWidth } = useWindowDimensions();
-  // 3 columns with 16px side padding and 10px gaps
-  const defaultTileSize = Math.floor((windowWidth - 52) / 3);
+  // 4 columns with responsive spacing
+  const defaultTileSize = Math.floor((windowWidth - 36) / 4);
   const size = customTileSize || defaultTileSize;
-  const photoHeight = Math.round(size * 0.52);
+  const photoHeight = Math.round(size * 0.40);
 
-  const [imageError, setImageError] = useState(false);
+  // Subtle tap scale animation (scale to 0.96)
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const flyYAnim = useRef(new Animated.Value(0)).current;
+  const flyScaleAnim = useRef(new Animated.Value(1)).current;
+  const flyOpacityAnim = useRef(new Animated.Value(1)).current;
+
+  React.useEffect(() => {
+    if (isFlying) {
+      Animated.parallel([
+        Animated.timing(flyYAnim, {
+          toValue: -70,
+          duration: 280,
+          useNativeDriver: true,
+        }),
+        Animated.timing(flyScaleAnim, {
+          toValue: 0.3,
+          duration: 280,
+          useNativeDriver: true,
+        }),
+        Animated.timing(flyOpacityAnim, {
+          toValue: 0,
+          duration: 280,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      flyYAnim.setValue(0);
+      flyScaleAnim.setValue(1);
+      flyOpacityAnim.setValue(1);
+    }
+  }, [isFlying]);
+
+  const isDraggingRef = useRef(false);
+  const touchStartPos = useRef({ x: 0, y: 0 });
+  const touchStartTime = useRef(0);
+  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
+
+  const handlePressIn = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 0.96,
+      useNativeDriver: true,
+      speed: 50,
+      bounciness: 4,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      useNativeDriver: true,
+      speed: 40,
+      bounciness: 6,
+    }).start();
+  };
 
   const handlePress = () => {
     if (!item.isAvailable) {
@@ -59,7 +129,7 @@ export const ItemTile: React.FC<ItemTileProps> = ({
     onAddFull();
   };
 
-  const handleLongPress = () => {
+  const handleLongPressHalf = () => {
     if (!item.isAvailable) {
       onSoldOutNotice();
       return;
@@ -70,6 +140,79 @@ export const ItemTile: React.FC<ItemTileProps> = ({
     onAddHalf();
   };
 
+  // Direct pull-to-drag, pick-and-put, and tap responder
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => false,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return Math.abs(gestureState.dx) > 6 || Math.abs(gestureState.dy) > 6;
+      },
+      onMoveShouldSetPanResponderCapture: () => false,
+      onPanResponderTerminationRequest: () => !isDraggingRef.current,
+      onPanResponderGrant: (evt) => {
+        touchStartTime.current = Date.now();
+        touchStartPos.current = { x: evt.nativeEvent.pageX, y: evt.nativeEvent.pageY };
+        isDraggingRef.current = false;
+        handlePressIn();
+
+        if (longPressTimer.current) clearTimeout(longPressTimer.current);
+
+        // In normal billing mode, long-press (380ms) auto-triggers Organize Pick mode without touching bill
+        if (!isOrganizeMode && canManageMenu) {
+          longPressTimer.current = setTimeout(() => {
+            if (!isDraggingRef.current) {
+              try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+              onPickItem?.(item);
+            }
+          }, 380);
+        }
+      },
+      onPanResponderMove: (evt, gestureState) => {
+        const dist = Math.hypot(gestureState.dx, gestureState.dy);
+        if (dist > 8) {
+          if (longPressTimer.current) clearTimeout(longPressTimer.current);
+          if (!isDraggingRef.current && canManageMenu) {
+            isDraggingRef.current = true;
+            try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+            onDragStart?.(item, evt.nativeEvent.pageX, evt.nativeEvent.pageY);
+          }
+          if (isDraggingRef.current) {
+            onDragMove?.(evt.nativeEvent.pageX, evt.nativeEvent.pageY);
+          }
+        }
+      },
+      onPanResponderRelease: (evt, gestureState) => {
+        if (longPressTimer.current) clearTimeout(longPressTimer.current);
+        handlePressOut();
+        const duration = Date.now() - touchStartTime.current;
+        const dist = Math.hypot(gestureState.dx, gestureState.dy);
+
+        if (isDraggingRef.current) {
+          isDraggingRef.current = false;
+          onDragEnd?.(evt.nativeEvent.pageX, evt.nativeEvent.pageY);
+        } else if (dist < 10 && duration < 600) {
+          if (isOrganizeMode) {
+            // Organize Mode: Click picks item as copy, never touches the bill!
+            try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+            onPickItem?.(item);
+          } else {
+            // Billing Mode: Tap adds product to current bill
+            handlePress();
+          }
+        }
+      },
+      onPanResponderTerminate: () => {
+        if (longPressTimer.current) clearTimeout(longPressTimer.current);
+        handlePressOut();
+        if (isDraggingRef.current) {
+          isDraggingRef.current = false;
+          onDragEnd?.(-1, -1);
+        }
+      },
+    })
+  ).current;
+
   const hasQty = quantity > 0;
   const isSoldOut = !item.isAvailable;
 
@@ -77,58 +220,79 @@ export const ItemTile: React.FC<ItemTileProps> = ({
     formatRupee(item.price) +
     (item.hasHalf && item.halfPrice ? ` · ½${formatRupee(item.halfPrice)}` : '');
 
-  const photoUri = item.imageUrl || getDishImageUrl(item.name, categoryName);
-  const hasPhoto = Boolean(
-    photoUri &&
-      (photoUri.startsWith('file:') ||
-        photoUri.startsWith('http') ||
-        photoUri.startsWith('data:') ||
-        photoUri.startsWith('content:'))
-  );
+  const iconConfig = getPhosphorIconConfig(item.name, categoryName, item.icon);
+  const PhosphorIcon = iconConfig.IconComponent;
+  const isDark = theme.isDark;
 
-  const isGenerating = item.imageStatus === 'generating';
+  const webDragProps = Platform.OS === 'web' ? {
+    draggable: canManageMenu,
+    onDragStart: (e: any) => {
+      if (e.dataTransfer) {
+        e.dataTransfer.setData('text/plain', `item:${item.id}`);
+        e.dataTransfer.effectAllowed = 'move';
+      }
+      onDragStart?.(item, e.clientX || 0, e.clientY || 0);
+    },
+    onDragEnd: (e: any) => {
+      onDragEnd?.(e.clientX || 0, e.clientY || 0);
+    },
+  } : {};
 
   return (
-    <View
+    <Animated.View
+      {...panResponder.panHandlers}
+      {...webDragProps}
       style={[
         styles.tileContainer,
-        { width: size, minHeight: size },
+        {
+          width: size,
+          minHeight: size,
+          transform: [
+            { scale: Animated.multiply(scaleAnim, flyScaleAnim) },
+            { translateY: flyYAnim },
+          ],
+          opacity: flyOpacityAnim,
+        },
         hasQty && styles.tileInCart,
         isSoldOut && styles.tileSoldOut,
+        isPicked && styles.tilePicked,
       ]}
     >
-      <TouchableOpacity
-        activeOpacity={0.72}
-        delayPressIn={60}
-        delayLongPress={430}
-        pressRetentionOffset={{ top: 4, left: 4, right: 4, bottom: 4 }}
-        onPress={handlePress}
-        onLongPress={handleLongPress}
-        style={styles.tilePressable}
-      >
-        {/* Photo / Icon Container */}
-        <View style={[styles.photoBox, { height: photoHeight }]}>
-          {isGenerating ? (
-            <View style={styles.generatingBox}>
-              <ActivityIndicator size="small" color="#FD5E03" />
-              <Text style={styles.generatingText}>AI Photo...</Text>
-            </View>
-          ) : !imageError && hasPhoto ? (
-            <Image
-              source={{ uri: photoUri }}
-              style={styles.photoImage}
-              resizeMode="cover"
-              onError={() => setImageError(true)}
+      {/* Picked Visual Indicator in Organize Mode */}
+      {isPicked && (
+        <View style={styles.pickedBadge} pointerEvents="none">
+          <Ionicons name="copy" size={10} color="#FFFFFF" />
+          <Text style={styles.pickedBadgeText}>PICKED</Text>
+        </View>
+      )}
+
+      <View style={styles.tilePressable}>
+        {/* Phosphor Duotone Vector Icon Stage */}
+        <View
+          style={[
+            styles.iconBanner,
+            {
+              height: photoHeight,
+              backgroundColor: isDark ? iconConfig.darkBg : iconConfig.pastelBg,
+            },
+          ]}
+        >
+          <View
+            style={[
+              styles.iconCircle,
+              {
+                backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#FFFFFF',
+                borderColor: isDark ? iconConfig.darkBorder : iconConfig.borderColor,
+                shadowColor: isDark ? '#000000' : iconConfig.tintColor,
+              },
+            ]}
+          >
+            <PhosphorIcon
+              size={16}
+              weight="duotone"
+              color={iconConfig.tintColor}
             />
-          ) : (
-            <View style={styles.photoFallback}>
-              <DishVectorIcon
-                dishName={item.name}
-                categoryName={categoryName}
-                size={Math.max(22, Math.round(photoHeight * 0.50))}
-              />
-            </View>
-          )}
+          </View>
         </View>
 
         {/* Name and Price */}
@@ -142,16 +306,23 @@ export const ItemTile: React.FC<ItemTileProps> = ({
             </Text>
             {/* Small + action button */}
             <View style={styles.addMiniBtn}>
-              <Ionicons name="add" size={13} color="#FD5E03" />
+              <Ionicons name="add" size={12} color="#FD5E03" />
             </View>
           </View>
         </View>
-      </TouchableOpacity>
+      </View>
 
       {/* Quantity badge: top-right */}
       {hasQty && (
         <View style={styles.qtyBadge}>
           <Text style={styles.qtyText}>{quantity}</Text>
+        </View>
+      )}
+
+      {/* Mostly Used Flame Badge: compact fire icon badge */}
+      {isMostlyUsed && !hasQty && (
+        <View style={styles.mostlyUsedBadge}>
+          <Ionicons name="flame" size={11} color="#FFFFFF" />
         </View>
       )}
 
@@ -173,16 +344,17 @@ export const ItemTile: React.FC<ItemTileProps> = ({
           <Text style={styles.soldOutText}>SOLD OUT</Text>
         </View>
       )}
-    </View>
+    </Animated.View>
   );
 };
 
 const createStyles = (theme: Theme) => {
   const colors = theme.colors;
+  const isDark = theme.isDark;
   return StyleSheet.create({
   tileContainer: {
     backgroundColor: colors.surface,
-    borderRadius: 18,
+    borderRadius: 13,
     borderWidth: 1,
     borderColor: colors.border,
     overflow: 'hidden',
@@ -201,46 +373,64 @@ const createStyles = (theme: Theme) => {
   tileSoldOut: {
     opacity: 0.55,
   },
-  photoBox: {
-    width: '100%',
-    backgroundColor: colors.accent100,
-    overflow: 'hidden',
-    borderTopLeftRadius: 17,
-    borderTopRightRadius: 17,
+  tilePicked: {
+    borderColor: '#FF5F00',
+    borderWidth: 2.5,
+    backgroundColor: isDark ? 'rgba(255, 95, 0, 0.2)' : 'rgba(255, 95, 0, 0.1)',
+    shadowColor: '#FF5F00',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.6,
+    shadowRadius: 6,
+    elevation: 8,
   },
-  photoImage: {
-    width: '100%',
-    height: '100%',
-  },
-  photoFallback: {
-    flex: 1,
+  pickedBadge: {
+    position: 'absolute',
+    top: 4,
+    left: 4,
+    backgroundColor: '#FF5F00',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.accent100,
+    gap: 3,
+    zIndex: 15,
+    elevation: 8,
   },
-  generatingBox: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.accent100,
-    gap: 4,
-  },
-  generatingText: {
+  pickedBadgeText: {
     fontFamily: typography.fonts.heading,
-    fontSize: 9.5,
-    fontWeight: '700',
-    color: '#FF5F00',
+    fontSize: 8.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+  },
+  iconBanner: {
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconCircle: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
   infoBox: {
-    paddingHorizontal: 9,
-    paddingTop: 8,
-    paddingBottom: 9,
-    gap: 4,
+    paddingHorizontal: 4,
+    paddingTop: 3,
+    paddingBottom: 4,
+    gap: 1,
   },
   name: {
     fontFamily: typography.fonts.heading,
-    fontSize: 13,
-    lineHeight: 16,
+    fontSize: 10.5,
+    lineHeight: 13,
     fontWeight: '700',
     color: colors.text,
   },
@@ -248,54 +438,71 @@ const createStyles = (theme: Theme) => {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 2,
+    marginTop: 1,
   },
   price: {
-    fontSize: 12.5,
-    lineHeight: 16,
+    fontSize: 10.5,
+    lineHeight: 13,
     color: colors.text,
     fontFamily: typography.fonts.heading,
     fontWeight: '800',
     flex: 1,
   },
   addMiniBtn: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
     backgroundColor: colors.accent100,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  mostlyUsedBadge: {
+    position: 'absolute',
+    top: 4,
+    left: 4,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#FD5E03',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 8,
+    elevation: 3,
+    shadowColor: '#FD5E03',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+  },
   minusBadge: {
     position: 'absolute',
-    top: 6,
-    left: 6,
-    minWidth: 24,
-    height: 24,
-    paddingHorizontal: 6,
+    top: 4,
+    left: 4,
+    minWidth: 17,
+    height: 17,
+    paddingHorizontal: 3,
     backgroundColor: colors.danger,
-    borderRadius: 12,
+    borderRadius: 8.5,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
-    elevation: 6,
+    elevation: 5,
   },
   minusText: {
     fontFamily: typography.fonts.heading,
-    fontSize: 14,
-    lineHeight: 16,
+    fontSize: 10.5,
+    lineHeight: 12,
     fontWeight: '800',
     color: '#FFFFFF',
   },
   qtyBadge: {
     position: 'absolute',
-    top: 6,
-    right: 6,
-    minWidth: 24,
-    height: 24,
-    paddingHorizontal: 7,
+    top: 4,
+    right: 4,
+    minWidth: 17,
+    height: 17,
+    paddingHorizontal: 3,
     backgroundColor: '#FF5F00',
-    borderRadius: 12,
+    borderRadius: 8.5,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 9,
@@ -303,7 +510,7 @@ const createStyles = (theme: Theme) => {
   },
   qtyText: {
     fontFamily: typography.fonts.heading,
-    fontSize: 11.5,
+    fontSize: 9,
     color: '#FFFFFF',
     fontWeight: '800',
   },

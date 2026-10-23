@@ -2,6 +2,8 @@ import { storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { ExpenseRecord } from '../types/models';
 import { generateUUID } from '../lib/uuid';
+import { authService } from './authService';
+import { shopService } from './shopService';
 
 const LOCAL_EXPENSES_KEY = '@counterpro/expenses';
 
@@ -36,8 +38,14 @@ export const expenseService = {
           shopId: e.shop_id,
           description: e.description || e.item_name || 'Expense',
           amount: Number(e.amount || 0),
+          category: e.category || 'General',
+          paymentMode: e.payment_mode || 'Cash',
           expenseDate: e.expense_date,
+          createdByName: e.created_by_name || null,
+          createdByRole: e.created_by_role || null,
+          createdById: e.created_by || null,
           createdAt: e.created_at,
+          updatedAt: e.updated_at || null,
         }));
 
         const mergedMap = new Map<string, ExpenseRecord>();
@@ -83,14 +91,47 @@ export const expenseService = {
   /**
    * Add a real expense and persist directly to Supabase and local cache
    */
-  async addExpense(shopId: string, description: string, amount: number): Promise<ExpenseRecord> {
+  async addExpense(
+    shopId: string,
+    description: string,
+    amount: number,
+    options?: {
+      category?: string;
+      paymentMode?: string;
+      creator?: { id?: string; name?: string; role?: string };
+    }
+  ): Promise<ExpenseRecord> {
+    const canExp = await authService.canUserPerform(shopId, options?.creator?.id, 'exp');
+    if (!canExp) {
+      throw new Error("You don't have access for that");
+    }
+
+    if (options?.creator?.role === 'Biller') {
+      throw new Error('Unauthorized: Billers cannot create expenses.');
+    }
+
+    if (options?.creator?.id) {
+      const isActive = await authService.isUserActiveInShop(shopId, options.creator.id);
+      if (!isActive) {
+        throw new Error('Your staff account has been deactivated. Please contact the shop owner.');
+      }
+    }
+
     const list = await this.getExpenses(shopId);
+    const localNow = new Date();
+    const localDateStr = `${localNow.getFullYear()}-${String(localNow.getMonth() + 1).padStart(2, '0')}-${String(localNow.getDate()).padStart(2, '0')}`;
+
     const newExp: ExpenseRecord = {
       id: generateUUID(),
       shopId,
       description,
       amount,
-      expenseDate: new Date().toISOString().split('T')[0],
+      category: options?.category || 'General',
+      paymentMode: options?.paymentMode || 'Cash',
+      createdByName: options?.creator?.name || 'Supervisor',
+      createdByRole: options?.creator?.role || 'Supervisor',
+      createdById: options?.creator?.id || null,
+      expenseDate: localDateStr,
       createdAt: new Date().toISOString(),
     };
     const updated = [newExp, ...list];
@@ -101,6 +142,7 @@ export const expenseService = {
     }
 
     try {
+      await shopService.ensureShopExists(shopId);
       const { error } = await (supabase.from('expenses') as any).insert({
         id: newExp.id,
         shop_id: newExp.shopId,
@@ -108,7 +150,11 @@ export const expenseService = {
         description: newExp.description || 'Expense',
         item_name: newExp.description || 'Expense',
         amount: newExp.amount,
+        category: newExp.category,
+        payment_mode: newExp.paymentMode,
         expense_date: newExp.expenseDate,
+        created_by_name: newExp.createdByName,
+        created_by_role: newExp.createdByRole,
       });
       if (error) {
         console.warn('addExpense Supabase error:', error.message);
@@ -127,8 +173,25 @@ export const expenseService = {
     shopId: string,
     expenseId: string,
     description: string,
-    amount: number
+    amount: number,
+    actor?: { id?: string; name?: string; role?: string }
   ): Promise<ExpenseRecord[]> {
+    const canExp = await authService.canUserPerform(shopId, actor?.id, 'exp');
+    if (!canExp) {
+      throw new Error("You don't have access for that");
+    }
+
+    if (actor?.role === 'Biller') {
+      throw new Error('Unauthorized: Billers cannot edit expenses.');
+    }
+
+    if (actor?.id) {
+      const isActive = await authService.isUserActiveInShop(shopId, actor.id);
+      if (!isActive) {
+        throw new Error('Your staff account has been deactivated. Please contact the shop owner.');
+      }
+    }
+
     const saved = await storage.getObject<ExpenseRecord[]>(LOCAL_EXPENSES_KEY, []);
     const updated = saved.map(e => {
       if (e.id === expenseId && e.shopId === shopId) {
@@ -136,6 +199,7 @@ export const expenseService = {
           ...e,
           description,
           amount,
+          updatedAt: new Date().toISOString(),
         };
       }
       return e;
@@ -154,6 +218,7 @@ export const expenseService = {
           description,
           item_name: description,
           amount,
+          updated_at: new Date().toISOString(),
         })
         .eq('id', expenseId)
         .eq('shop_id', shopId);
@@ -171,7 +236,27 @@ export const expenseService = {
   /**
    * Delete an expense and remove from Supabase and local cache
    */
-  async deleteExpense(shopId: string, expenseId: string): Promise<ExpenseRecord[]> {
+  async deleteExpense(
+    shopId: string,
+    expenseId: string,
+    actor?: { id?: string; name?: string; role?: string }
+  ): Promise<ExpenseRecord[]> {
+    const canExp = await authService.canUserPerform(shopId, actor?.id, 'exp');
+    if (!canExp) {
+      throw new Error("You don't have access for that");
+    }
+
+    if (actor?.role === 'Biller') {
+      throw new Error('Unauthorized: Billers cannot delete expenses.');
+    }
+
+    if (actor?.id) {
+      const isActive = await authService.isUserActiveInShop(shopId, actor.id);
+      if (!isActive) {
+        throw new Error('Your staff account has been deactivated. Please contact the shop owner.');
+      }
+    }
+
     const saved = await storage.getObject<ExpenseRecord[]>(LOCAL_EXPENSES_KEY, []);
     const updated = saved.filter(e => !(e.id === expenseId && e.shopId === shopId));
 

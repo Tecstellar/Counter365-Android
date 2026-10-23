@@ -34,8 +34,16 @@ export interface Shop {
   dailyBackupEnabled: boolean;
   printerEnabled: boolean;
   printerName?: string | null;
+  printerUrl?: string | null;
+  printerConnectionType?: string | null;
   tableManagementEnabled?: boolean;
   tableCount?: number;
+  maxStaffLimit?: number;
+  ownerName?: string;
+  invoicePrefix?: string;
+  invoiceResetCycle?: 'monthly' | 'yearly';
+  totalBillsCreated?: number;
+  upiId?: string | null;
   createdAt?: string;
 }
 
@@ -48,6 +56,9 @@ export interface ShopMember {
   role: UserRole;
   isActive: boolean;
   overrides?: Partial<Record<PermissionKey, boolean>>;
+  deactivatedAt?: string | null;
+  deactivatedBy?: string | null;
+  deactivationReason?: string | null;
 }
 
 export interface MenuItem {
@@ -63,7 +74,9 @@ export interface MenuItem {
   imageUrl?: string | null;
   imagePrompt?: string | null;
   imageStatus?: 'pending' | 'generating' | 'completed' | 'failed' | null;
+  costPrice?: number | null;
   sortOrder: number;
+  icon?: string | null;
 }
 
 export interface MenuCategory {
@@ -96,6 +109,13 @@ export interface Bill {
   tableNumber?: string | null;
   status: 'draft' | 'completed' | 'cancelled' | 'refunded' | 'edited' | 'deleted';
   subtotal: number;
+  originalSubtotal?: number;
+  originalTotal?: number;
+  discountType?: 'percentage' | 'fixed' | null;
+  discountValue?: number;
+  discountAmount?: number;
+  discountAppliedBy?: string | null;
+  discountApprovedBy?: string | null;
   gstRate: number;
   gstAmount: number;
   totalAmount: number;
@@ -118,10 +138,14 @@ export interface Bill {
   editedAt?: string | null;
   editedByName?: string | null;
   editedByRole?: UserRole | string | null;
+  editedById?: string | null;
   isDeleted?: boolean;
+  isCancelled?: boolean;
   deletedAt?: string | null;
   deletedByName?: string | null;
   deletedByRole?: UserRole | string | null;
+  deletedById?: string | null;
+  cancellationReason?: string | null;
 }
 
 export interface BillPaymentCollection {
@@ -129,6 +153,8 @@ export interface BillPaymentCollection {
   amount: number;
   paymentMode: PaymentMethod;
   paidAt: string;
+  receivedByName?: string | null;
+  receivedById?: string | null;
 }
 
 export interface BillItemRecord {
@@ -153,7 +179,7 @@ export interface PendingPaymentRecord {
   amountPaid: number;
   ageDescription: string;
   status: 'open' | 'settled' | 'cancelled';
-  bills: Array<{ billNumber: string; date: string; amount: number }>;
+  bills: Array<{ billNumber: string; date: string; amount: number; billId?: string }>;
   createdAt: string;
 }
 
@@ -162,9 +188,15 @@ export interface ExpenseRecord {
   shopId: string;
   description: string;
   amount: number;
+  category?: string;
+  paymentMode?: 'Cash' | 'GPay' | string;
   expenseDate: string;
   vendorId?: string | null;
+  createdByName?: string | null;
+  createdByRole?: string | null;
+  createdById?: string | null;
   createdAt: string;
+  updatedAt?: string | null;
 }
 
 export interface CustomerRecord {
@@ -278,7 +310,7 @@ export interface AccountDeletionRecord {
   deletedAt?: string;
 }
 
-export type SubscriptionPlanId = '1_month' | '3_months' | '6_months' | '1_year' | 'free';
+export type SubscriptionPlanId = '1_month' | '3_months' | '6_months' | '1_year' | 'free' | 'pro';
 
 export type SubscriptionStatus = 'active' | 'trialing' | 'past_due' | 'cancelled' | 'expired';
 
@@ -296,6 +328,9 @@ export interface SubscriptionRecord {
   currentPeriodStart?: string | null;
   currentPeriodEnd?: string | null;
   paymentReference?: string | null;
+  paymentMethod?: string | null;
+  activatedByAdminId?: string | null;
+  adminNotes?: string | null;
   cashfreeOrderId?: string | null;
   currency?: string | null;
   durationMonths?: number | null;

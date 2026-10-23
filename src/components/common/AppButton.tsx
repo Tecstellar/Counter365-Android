@@ -120,7 +120,14 @@ export const AppButton: React.FC<AppButtonProps> = ({
         <>
           {icon && <View style={styles.iconWrap}>{icon}</View>}
           {title ? (
-            <Text style={[getTextStyle(), getTextSizeStyle(), textStyle]}>{title}</Text>
+            <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit={true}
+              minimumFontScale={0.75}
+              style={[getTextStyle(), getTextSizeStyle(), textStyle]}
+            >
+              {title}
+            </Text>
           ) : (
             children
           )}

@@ -8,9 +8,11 @@ import {
   TextInput,
   Modal,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, typography, radii, spacing, shadows, useTheme, Theme } from '../../theme';
 import { AppButton } from '../../components/common/AppButton';
 import { SwipeToDeleteRow } from '../../components/common/SwipeToDeleteRow';
@@ -18,9 +20,11 @@ import { BillActionMenuModal } from '../../components/modals/BillActionMenuModal
 import { useShop } from '../../context/ShopContext';
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
+import { useLanguage } from '../../context/LanguageContext';
 import { billingService } from '../../services/billingService';
 import { exportService } from '../../services/exportService';
 import { whatsappService } from '../../services/whatsappService';
+import { printerService } from '../../services/printerService';
 import { Bill } from '../../types/models';
 import { formatRupee } from '../../lib/money';
 
@@ -37,10 +41,12 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
   onEditBill,
 }) => {
   const { theme, isDark } = useTheme();
-  const styles = React.useMemo(() => createStyles(theme), [theme]);
+  const insets = useSafeAreaInsets();
+  const styles = React.useMemo(() => createStyles(theme, insets), [theme, insets]);
   const { shop, refreshSubscription } = useShop();
   const { currentRole, profile, currentMember } = useAuth();
   const { flash } = useCart();
+  const { t } = useLanguage();
 
   const [bills, setBills] = useState<Bill[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -54,6 +60,7 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
   // Bill action menu modal state (Three dots)
   const [selectedBillForMenu, setSelectedBillForMenu] = useState<Bill | null>(null);
   const [isMenuVisible, setIsMenuVisible] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<{ x: number; y: number } | null>(null);
 
   // Bill items preview modal state
   const [previewBill, setPreviewBill] = useState<Bill | null>(null);
@@ -93,9 +100,41 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch {}
-    const msg = whatsappService.formatCustomerBill(bill, shop.name);
+    flash('Preparing bill receipt...');
+    let pdfUrl: string | undefined;
+    try {
+      const receiptRes = await exportService.generateAndUploadBillReceipt(bill, shop);
+      if (receiptRes?.pdfUrl) {
+        pdfUrl = receiptRes.pdfUrl;
+      }
+    } catch (err) {
+      console.warn('Receipt upload notice:', err);
+    }
+    const msg = whatsappService.formatCustomerBill(bill, shop.name, shop.upiId, shop.phone, pdfUrl);
     await whatsappService.shareViaWhatsApp(msg, bill.customerPhone);
     flash(`Bill ${bill.billNumber} sent on WhatsApp`);
+  };
+
+  const handlePrintBill = async (bill: Bill) => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
+    if (!shop.printerEnabled || (!shop.printerName && !shop.printerUrl)) {
+      flash('Please configure printer in Account Settings');
+      return;
+    }
+    flash(`Printing Bill #${bill.billNumber}...`);
+    try {
+      const ok = await printerService.printReceipt(bill, shop, '80mm');
+      if (ok) {
+        flash(`Bill #${bill.billNumber} sent to printer`);
+      } else {
+        flash('Printer could not be reached');
+      }
+    } catch (err) {
+      console.warn('handlePrintBill error:', err);
+      flash('Failed to print bill');
+    }
   };
 
   const filteredBills = useMemo(() => {
@@ -140,25 +179,67 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
 
   const handleConfirmDelete = async () => {
     if (!billToDelete || !shop.id) return;
+    if (currentRole !== 'Owner') {
+      flash('Only the shop Owner can delete or cancel bills');
+      setBillToDelete(null);
+      return;
+    }
     setIsDeleting(true);
     try {
       try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning); } catch {}
-      await billingService.deleteBill(shop.id, billToDelete.id, {
-        name: profile?.fullName || currentMember?.fullName || currentRole,
-        role: currentRole,
-        id: profile?.id || currentMember?.id,
-      });
+      await billingService.deleteBill(
+        shop.id,
+        billToDelete.id,
+        {
+          name: profile?.fullName || currentMember?.fullName || currentRole,
+          role: currentRole,
+          id: profile?.id || currentMember?.id,
+        },
+        'Cancelled from Bills register'
+      );
 
       setBillToDelete(null);
       await loadBills();
       try { await refreshSubscription(); } catch {}
-      flash(`Bill ${billToDelete.billNumber} deleted`);
-    } catch (err) {
+      flash(`Bill ${billToDelete.billNumber} cancelled & voided`);
+    } catch (err: any) {
       console.warn('handleConfirmDelete error:', err);
-      flash('Failed to delete bill');
+      flash(err?.message || 'Failed to cancel bill');
     } finally {
       setIsDeleting(false);
     }
+  };
+
+  const handleRestoreBill = (bill: Bill) => {
+    if (currentRole !== 'Owner') {
+      flash('Only the shop Owner can restore cancelled bills');
+      return;
+    }
+    Alert.alert(
+      'Restore Bill',
+      `Restore Bill ${bill.billNumber} (${formatRupee(bill.totalAmount)}) back to the active bill register?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Restore Bill',
+          onPress: async () => {
+            try {
+              try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
+              await billingService.restoreBill(shop.id, bill.id, {
+                name: profile?.fullName || currentMember?.fullName || currentRole,
+                role: currentRole,
+                id: profile?.id || currentMember?.id,
+              });
+              await loadBills();
+              try { await refreshSubscription(); } catch {}
+              flash(`Bill ${bill.billNumber} restored successfully`);
+            } catch (err: any) {
+              flash(err?.message || 'Failed to restore bill');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const formatTimestamp = (dateStr?: string) => {
@@ -211,7 +292,7 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
           <Ionicons name="search-outline" size={18} color={colors.textMuted} style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search by bill #, customer name or phone..."
+            placeholder={t('search_bills', 'Search bill by # or customer...')}
             placeholderTextColor={colors.textMuted}
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -238,7 +319,7 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
             activeOpacity={0.7}
           >
             <Text style={[styles.tabChipText, activeTab === 'all' && styles.activeTabChipText]}>
-              All ({counts.all})
+              {t('all', 'All')} ({counts.all})
             </Text>
           </TouchableOpacity>
 
@@ -248,7 +329,7 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
             activeOpacity={0.7}
           >
             <Text style={[styles.tabChipText, activeTab === 'active' && styles.activeTabChipText]}>
-              Active ({counts.active})
+              {t('paid', 'Active')} ({counts.active})
             </Text>
           </TouchableOpacity>
 
@@ -258,7 +339,7 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
             activeOpacity={0.7}
           >
             <Text style={[styles.tabChipText, activeTab === 'edited' && styles.activeTabChipText]}>
-              Edited ({counts.edited})
+              {t('edit', 'Edited')} ({counts.edited})
             </Text>
           </TouchableOpacity>
 
@@ -268,7 +349,7 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
             activeOpacity={0.7}
           >
             <Text style={[styles.tabChipText, activeTab === 'deleted' && styles.activeTabChipText]}>
-              Recently Deleted ({counts.deleted})
+              {t('cancelled', 'Cancelled')} ({counts.deleted})
             </Text>
           </TouchableOpacity>
         </ScrollView>
@@ -278,14 +359,14 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
       {isLoading ? (
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color={colors.accent} />
-          <Text style={styles.loadingText}>Loading bills...</Text>
+          <Text style={styles.loadingText}>{t('loading', 'Loading bills...')}</Text>
         </View>
       ) : filteredBills.length === 0 ? (
         <View style={styles.centerContainer}>
           <View style={styles.emptyIconCircle}>
             <Ionicons name="receipt-outline" size={32} color={colors.textMuted} />
           </View>
-          <Text style={styles.emptyTitle}>No bills found</Text>
+          <Text style={styles.emptyTitle}>{t('no_bills_found', 'No bills found')}</Text>
           <Text style={styles.emptySubtitle}>
             {searchQuery
               ? 'Try searching with a different bill number or customer name.'
@@ -302,7 +383,7 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
           showsVerticalScrollIndicator={false}
         >
           {filteredBills.map((bill) => {
-            const isDeleted = bill.isDeleted || bill.status === 'deleted';
+            const isDeleted = bill.isDeleted || bill.status === 'deleted' || bill.status === 'cancelled';
             const isEdited = bill.isEdited || bill.status === 'edited';
 
             return (
@@ -323,16 +404,28 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
                   <View style={styles.cardHeader}>
                     <View style={styles.billNumberRow}>
                       <View style={styles.billIconCircle}>
-                        <Ionicons name="receipt-outline" size={14} color={colors.accent} />
+                        <Ionicons name="receipt-outline" size={14} color={isDeleted ? colors.textMuted : colors.accent} />
                       </View>
                       <Text style={[styles.billNumber, isDeleted && styles.strikethrough]}>
-                        {bill.billNumber}
+                        #{bill.billNumber}
                       </Text>
 
                       {isDeleted ? (
-                        <View style={styles.deletedBadge}>
-                          <Text style={styles.deletedBadgeText}>DELETED</Text>
-                        </View>
+                        <>
+                          <View style={styles.deletedBadge}>
+                            <Text style={styles.deletedBadgeText}>{t('cancelled', 'CANCELLED')}</Text>
+                          </View>
+                          <TouchableOpacity
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            activeOpacity={0.7}
+                            onPress={() => handleRestoreBill(bill)}
+                            style={styles.restoreHeaderChip}
+                            accessibilityLabel="Restore bill"
+                          >
+                            <Ionicons name="refresh" size={11} color="#15803D" />
+                            <Text style={styles.restoreHeaderChipText}>{t('restore', 'Restore')}</Text>
+                          </TouchableOpacity>
+                        </>
                       ) : isEdited ? (
                         <View style={styles.editedBadge}>
                           <Text style={styles.editedBadgeText}>EDITED</Text>
@@ -353,16 +446,19 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
                       </Text>
                       {!isDeleted && (
                         <TouchableOpacity
-                          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                          onPress={() => {
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          activeOpacity={0.7}
+                          onPress={(e) => {
                             try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+                            const { pageX, pageY } = e.nativeEvent;
+                            setMenuAnchor({ x: pageX, y: pageY });
                             setSelectedBillForMenu(bill);
                             setIsMenuVisible(true);
                           }}
                           style={styles.menuIconBtn}
                           accessibilityLabel="Bill actions"
                         >
-                          <Ionicons name="ellipsis-vertical" size={18} color={colors.textMuted} />
+                          <Ionicons name="ellipsis-vertical" size={16} color={colors.textSecondary} />
                         </TouchableOpacity>
                       )}
                     </View>
@@ -392,12 +488,15 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
                     </TouchableOpacity>
                   </View>
 
+
+
                   {/* Audit Trail Section */}
                   {(bill.createdByName || isEdited || isDeleted) && (
                     <View style={styles.auditBox}>
                       {isDeleted && bill.deletedByName ? (
                         <Text style={[styles.auditLine, { color: colors.danger || '#DC2626' }]}>
-                          Deleted by <Text style={styles.auditHighlight}>{bill.deletedByName}</Text> ({bill.deletedByRole || 'Staff'}) {bill.deletedAt ? `on ${formatTimestamp(bill.deletedAt)}` : ''}
+                          Cancelled by <Text style={styles.auditHighlight}>{bill.deletedByName}</Text> ({bill.deletedByRole || 'Staff'}) {bill.deletedAt ? `on ${formatTimestamp(bill.deletedAt)}` : ''}
+                          {bill.cancellationReason ? ` • ${bill.cancellationReason}` : ''}
                         </Text>
                       ) : isEdited && bill.editedByName ? (
                         <Text style={[styles.auditLine, { color: '#B45309' }]}>
@@ -420,16 +519,17 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
       {/* Bill Action Menu Modal (Three dots) */}
       <BillActionMenuModal
         visible={isMenuVisible}
-        onClose={() => setIsMenuVisible(false)}
+        onClose={() => {
+          setIsMenuVisible(false);
+          setMenuAnchor(null);
+        }}
+        anchorPosition={menuAnchor}
         bill={selectedBillForMenu}
+        onPrint={handlePrintBill}
         onDownloadPdf={handleDownloadPdf}
         onShareWhatsApp={handleShareWhatsApp}
-        onEdit={(bill) => {
-          onEditBill(bill);
-        }}
-        onDelete={(bill) => {
-          setBillToDelete(bill);
-        }}
+        onEdit={currentRole !== 'Biller' ? onEditBill : undefined}
+        onDelete={currentRole === 'Owner' ? (bill) => setBillToDelete(bill) : undefined}
       />
 
       {/* Delete Confirmation Modal */}
@@ -530,17 +630,33 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
             </View>
 
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-              <AppButton
-                title="Download PDF"
-                variant="primary"
-                icon={<Ionicons name="document-text-outline" size={17} color="#FFFFFF" />}
-                onPress={() => {
-                  if (previewBill) {
-                    handleDownloadPdf(previewBill);
-                  }
-                }}
-                style={{ flex: 1.3 }}
-              />
+              {(previewBill?.isDeleted || previewBill?.status === 'cancelled') ? (
+                <AppButton
+                  title="Restore Bill"
+                  variant="primary"
+                  icon={<Ionicons name="refresh-outline" size={17} color="#FFFFFF" />}
+                  onPress={() => {
+                    if (previewBill) {
+                      const b = previewBill;
+                      setPreviewBill(null);
+                      handleRestoreBill(b);
+                    }
+                  }}
+                  style={{ flex: 1.3, backgroundColor: '#16A34A' }}
+                />
+              ) : (
+                <AppButton
+                  title="Download PDF"
+                  variant="primary"
+                  icon={<Ionicons name="document-text-outline" size={17} color="#FFFFFF" />}
+                  onPress={() => {
+                    if (previewBill) {
+                      handleDownloadPdf(previewBill);
+                    }
+                  }}
+                  style={{ flex: 1.3 }}
+                />
+              )}
               <AppButton
                 title="Close"
                 variant="secondary"
@@ -555,8 +671,9 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
   );
 };
 
-const createStyles = (theme: Theme) => {
+const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left: number; right: number }) => {
   const colors = theme.colors;
+  const bottomInset = insets?.bottom || 0;
   return StyleSheet.create({
   container: {
     flex: 1,
@@ -707,6 +824,7 @@ const createStyles = (theme: Theme) => {
   },
   scrollContent: {
     padding: 12,
+    paddingBottom: Math.max(bottomInset, 20) + 120,
     gap: 8,
   },
   billCard: {
@@ -722,7 +840,8 @@ const createStyles = (theme: Theme) => {
   deletedBillCard: {
     backgroundColor: colors.surfaceSecondary,
     borderColor: colors.border,
-    opacity: 0.75,
+    borderLeftWidth: 3.5,
+    borderLeftColor: '#DC2626',
   },
   cardHeader: {
     flexDirection: 'row',
@@ -751,7 +870,10 @@ const createStyles = (theme: Theme) => {
   },
   strikethrough: {
     textDecorationLine: 'line-through',
+    textDecorationStyle: 'solid',
+    textDecorationColor: '#DC2626',
     color: colors.textMuted,
+    opacity: 0.8,
   },
   deletedBadge: {
     backgroundColor: '#FEE2E2',
@@ -807,10 +929,78 @@ const createStyles = (theme: Theme) => {
   deletedTotalAmount: {
     color: colors.textMuted,
   },
+  restoreHeaderChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginLeft: 3,
+  },
+  restoreHeaderChipText: {
+    color: '#15803D',
+    fontSize: 10.5,
+    fontWeight: '700',
+    fontFamily: typography.fonts.heading,
+  },
+  restoreBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#16A34A',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: radii.sm,
+  },
+  restoreBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+    fontFamily: typography.fonts.heading,
+  },
+  restoreIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#16A34A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelledActionRow: {
+    marginTop: 6,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight,
+  },
+  fullRestoreBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#16A34A',
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: radii.md,
+    ...shadows.sm,
+  },
+  fullRestoreBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+    fontFamily: typography.fonts.heading,
+    letterSpacing: 0.2,
+  },
   menuIconBtn: {
-    padding: 5,
-    borderRadius: radii.pill,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: theme.isDark ? colors.surfaceElevated : colors.neutral100,
+    borderWidth: 1,
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },

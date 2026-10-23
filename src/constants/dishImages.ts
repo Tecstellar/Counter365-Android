@@ -126,28 +126,176 @@ export const DISH_IMAGE_MAP: Record<string, string> = {
   'meals': 'https://images.unsplash.com/photo-1610057099443-fde8c4d50f91?w=400&q=80&auto=format&fit=crop',
   'rice meals': 'https://images.unsplash.com/photo-1610057099443-fde8c4d50f91?w=400&q=80&auto=format&fit=crop',
   'thali': 'https://images.unsplash.com/photo-1610057099443-fde8c4d50f91?w=400&q=80&auto=format&fit=crop',
+  'pizza': 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=400&q=80&auto=format&fit=crop',
+  'paneer': 'https://images.unsplash.com/photo-1631452180519-c014fe946bc7?w=400&q=80&auto=format&fit=crop',
+  'paneer butter masala': 'https://images.unsplash.com/photo-1631452180519-c014fe946bc7?w=400&q=80&auto=format&fit=crop',
+  'naan': 'https://images.unsplash.com/photo-1626074353765-517a681e40be?w=400&q=80&auto=format&fit=crop',
+  'butter naan': 'https://images.unsplash.com/photo-1626074353765-517a681e40be?w=400&q=80&auto=format&fit=crop',
+  'tandoori': 'https://images.unsplash.com/photo-1599488615731-7e5c2823ff28?w=400&q=80&auto=format&fit=crop',
+  'tandoori chicken': 'https://images.unsplash.com/photo-1599488615731-7e5c2823ff28?w=400&q=80&auto=format&fit=crop',
+  'butter chicken': 'https://images.unsplash.com/photo-1603894584373-5ac82b2ae398?w=400&q=80&auto=format&fit=crop',
+  'chicken curry': 'https://images.unsplash.com/photo-1603894584373-5ac82b2ae398?w=400&q=80&auto=format&fit=crop',
+  'mutton biryani': 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=400&q=80&auto=format&fit=crop',
+  'fish fry': 'https://images.unsplash.com/photo-1534604973900-c43ab4c2e0ab?w=400&q=80&auto=format&fit=crop',
+  'fish curry': 'https://images.unsplash.com/photo-1534604973900-c43ab4c2e0ab?w=400&q=80&auto=format&fit=crop',
+  'egg curry': 'https://images.unsplash.com/photo-1525351484163-7529414344d8?w=400&q=80&auto=format&fit=crop',
+  'chole bhature': 'https://images.unsplash.com/photo-1626777552726-4a6b54c97e46?w=400&q=80&auto=format&fit=crop',
+  'pav bhaji': 'https://images.unsplash.com/photo-1606491956689-2ea866880c84?w=400&q=80&auto=format&fit=crop',
+  'pani puri': 'https://images.unsplash.com/photo-1601050690597-df0568f70950?w=400&q=80&auto=format&fit=crop',
+  'chaat': 'https://images.unsplash.com/photo-1601050690597-df0568f70950?w=400&q=80&auto=format&fit=crop',
+  'dal makhani': 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=400&q=80&auto=format&fit=crop',
+  'dal tadka': 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=400&q=80&auto=format&fit=crop',
+  'curd rice': 'https://images.unsplash.com/photo-1610057099443-fde8c4d50f91?w=400&q=80&auto=format&fit=crop',
+  'ice cream': 'https://images.unsplash.com/photo-1497034825429-c343d7c6a68f?w=400&q=80&auto=format&fit=crop',
+  'gulab jamun': 'https://images.unsplash.com/photo-1589301760014-d929f3979dbc?w=400&q=80&auto=format&fit=crop',
+  'pasta': 'https://images.unsplash.com/photo-1551183053-bf91a1d81141?w=400&q=80&auto=format&fit=crop',
+  'soup': 'https://images.unsplash.com/photo-1547592166-23ac45744acd?w=400&q=80&auto=format&fit=crop',
+  'manchurian': 'https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=400&q=80&auto=format&fit=crop',
 };
 
-// Category defaults
+// Category defaults — authentic, vibrant restaurant-grade photography for every culinary category
 export const CATEGORY_DEFAULT_IMAGES: Record<string, string> = {
+  // Teas, Coffees & Hot Beverages
   'Tea & Coffee': 'https://images.unsplash.com/photo-1576092768241-dec231879fc3?w=400&q=80&auto=format&fit=crop',
+  'Tea': 'https://images.unsplash.com/photo-1576092768241-dec231879fc3?w=400&q=80&auto=format&fit=crop',
+  'Chai': 'https://images.unsplash.com/photo-1576092768241-dec231879fc3?w=400&q=80&auto=format&fit=crop',
   'Coffee': 'https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=400&q=80&auto=format&fit=crop',
+  'Hot Drinks': 'https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=400&q=80&auto=format&fit=crop',
+  'Hot Beverages': 'https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=400&q=80&auto=format&fit=crop',
+
+  // Tea & Snacks combinations
+  'Tea & Snacks': 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=400&q=80&auto=format&fit=crop',
+  'Chai & Snacks': 'https://images.unsplash.com/photo-1601050690597-df0568f70950?w=400&q=80&auto=format&fit=crop',
   'Snacks': 'https://images.unsplash.com/photo-1601050690597-df0568f70950?w=400&q=80&auto=format&fit=crop',
-  'Cold': 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=400&q=80&auto=format&fit=crop',
-  'Beverages': 'https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=400&q=80&auto=format&fit=crop',
+  'Evening Snacks': 'https://images.unsplash.com/photo-1601050690597-df0568f70950?w=400&q=80&auto=format&fit=crop',
+  'Hot Savouries': 'https://images.unsplash.com/photo-1601050690597-df0568f70950?w=400&q=80&auto=format&fit=crop',
+  'Chaat': 'https://images.unsplash.com/photo-1601050690597-df0568f70950?w=400&q=80&auto=format&fit=crop',
+
+  // Cold Drinks, Juices & Shakes
+  'Cold Drinks': 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=400&q=80&auto=format&fit=crop',
+  'Cool Drinks': 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=400&q=80&auto=format&fit=crop',
+  'Drinks': 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=400&q=80&auto=format&fit=crop',
+  'Soft Drinks': 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=400&q=80&auto=format&fit=crop',
+  'Beverages': 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=400&q=80&auto=format&fit=crop',
+  'Cold Beverages': 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=400&q=80&auto=format&fit=crop',
+  'Juices': 'https://images.unsplash.com/photo-1613478223719-2ab802602423?w=400&q=80&auto=format&fit=crop',
+  'Juice': 'https://images.unsplash.com/photo-1613478223719-2ab802602423?w=400&q=80&auto=format&fit=crop',
+  'Fresh Juice': 'https://images.unsplash.com/photo-1613478223719-2ab802602423?w=400&q=80&auto=format&fit=crop',
+  'Fruit Juices': 'https://images.unsplash.com/photo-1613478223719-2ab802602423?w=400&q=80&auto=format&fit=crop',
+  'Shakes': 'https://images.unsplash.com/photo-1572490122747-3968b75cc699?w=400&q=80&auto=format&fit=crop',
+  'Milkshakes': 'https://images.unsplash.com/photo-1572490122747-3968b75cc699?w=400&q=80&auto=format&fit=crop',
+  'Mojitos': 'https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=400&q=80&auto=format&fit=crop',
+
+  // Breakfast, Tiffin & Meals
   'Tiffin': 'https://images.unsplash.com/photo-1668236543090-82eba5ee5976?w=400&q=80&auto=format&fit=crop',
+  'Breakfast': 'https://images.unsplash.com/photo-1668236543090-82eba5ee5976?w=400&q=80&auto=format&fit=crop',
+  'South Indian': 'https://images.unsplash.com/photo-1668236543090-82eba5ee5976?w=400&q=80&auto=format&fit=crop',
   'Morning': 'https://images.unsplash.com/photo-1589301760014-d929f3979dbc?w=400&q=80&auto=format&fit=crop',
   'Evening': 'https://images.unsplash.com/photo-1565557623262-b51c2513a641?w=400&q=80&auto=format&fit=crop',
-  'Fast Food': 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=400&q=80&auto=format&fit=crop',
   'Meals': 'https://images.unsplash.com/photo-1610057099443-fde8c4d50f91?w=400&q=80&auto=format&fit=crop',
+  'Lunch': 'https://images.unsplash.com/photo-1610057099443-fde8c4d50f91?w=400&q=80&auto=format&fit=crop',
+  'Dinner': 'https://images.unsplash.com/photo-1610057099443-fde8c4d50f91?w=400&q=80&auto=format&fit=crop',
+  'Main Course': 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=400&q=80&auto=format&fit=crop',
   'Main': 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=400&q=80&auto=format&fit=crop',
+  'Biryani': 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=400&q=80&auto=format&fit=crop',
+  'Rice': 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=400&q=80&auto=format&fit=crop',
+  'Rice Varieties': 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=400&q=80&auto=format&fit=crop',
+
+  // Fast Food, Burgers, Pizzas, Sandwiches
+  'Fast Food': 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=400&q=80&auto=format&fit=crop',
+  'Burgers': 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=400&q=80&auto=format&fit=crop',
+  'Sandwiches': 'https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=400&q=80&auto=format&fit=crop',
+  'Pizzas': 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=400&q=80&auto=format&fit=crop',
+  'Chinese': 'https://images.unsplash.com/photo-1585032226651-759b368d7246?w=400&q=80&auto=format&fit=crop',
+  'Noodles': 'https://images.unsplash.com/photo-1585032226651-759b368d7246?w=400&q=80&auto=format&fit=crop',
   'Starters': 'https://images.unsplash.com/photo-1562967914-608f82629710?w=400&q=80&auto=format&fit=crop',
+  'Appetizers': 'https://images.unsplash.com/photo-1562967914-608f82629710?w=400&q=80&auto=format&fit=crop',
+  'Bakery': 'https://images.unsplash.com/photo-1555507036-ab1f4038808a?w=400&q=80&auto=format&fit=crop',
   'Bakes': 'https://images.unsplash.com/photo-1555507036-ab1f4038808a?w=400&q=80&auto=format&fit=crop',
+  'Desserts': 'https://images.unsplash.com/photo-1497034825429-c343d7c6a68f?w=400&q=80&auto=format&fit=crop',
+  'Sweets': 'https://images.unsplash.com/photo-1589301760014-d929f3979dbc?w=400&q=80&auto=format&fit=crop',
+  'Ice Cream': 'https://images.unsplash.com/photo-1497034825429-c343d7c6a68f?w=400&q=80&auto=format&fit=crop',
+  'Curries': 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=400&q=80&auto=format&fit=crop',
+  'Others': 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&q=80&auto=format&fit=crop',
+  'General': 'https://images.unsplash.com/photo-1576092768241-dec231879fc3?w=400&q=80&auto=format&fit=crop',
 };
 
 /**
- * Returns an exact, authentic photograph URL strictly matching the dish name.
- * Uses exact match -> token match -> slug match -> category fallback.
+ * Returns an authentic category-specific food image strictly matching the category name.
+ * Resolves synonyms (e.g. "Cold Drinks", "Drinks", "Tea & Snacks") accurately.
+ */
+export function getCategoryImageUrl(categoryName?: string): string {
+  if (!categoryName) {
+    return CATEGORY_DEFAULT_IMAGES['Tea & Coffee'];
+  }
+  const clean = categoryName.trim();
+  if (CATEGORY_DEFAULT_IMAGES[clean]) {
+    return CATEGORY_DEFAULT_IMAGES[clean];
+  }
+  const lower = clean.toLowerCase();
+
+  // Precise category intent mapping
+  if ((lower.includes('tea') || lower.includes('chai')) && lower.includes('snack')) {
+    return CATEGORY_DEFAULT_IMAGES['Tea & Snacks'];
+  }
+  if (lower.includes('cold') || lower.includes('cool') || lower.includes('soft drink') || (lower.includes('drink') && !lower.includes('hot'))) {
+    return CATEGORY_DEFAULT_IMAGES['Cold Drinks'];
+  }
+  if (lower.includes('juice')) {
+    return CATEGORY_DEFAULT_IMAGES['Juices'];
+  }
+  if (lower.includes('shake')) {
+    return CATEGORY_DEFAULT_IMAGES['Shakes'];
+  }
+  if (lower.includes('coffee')) {
+    return CATEGORY_DEFAULT_IMAGES['Coffee'];
+  }
+  if (lower.includes('tea') || lower.includes('chai')) {
+    return CATEGORY_DEFAULT_IMAGES['Tea'];
+  }
+  if (lower.includes('snack') || lower.includes('savoury') || lower.includes('chaat') || lower.includes('bites')) {
+    return CATEGORY_DEFAULT_IMAGES['Snacks'];
+  }
+  if (lower.includes('breakfast') || lower.includes('tiffin') || lower.includes('morning') || lower.includes('dosa') || lower.includes('idli')) {
+    return CATEGORY_DEFAULT_IMAGES['Breakfast'];
+  }
+  if (lower.includes('biryani') || lower.includes('pulao') || lower.includes('rice')) {
+    return CATEGORY_DEFAULT_IMAGES['Biryani'];
+  }
+  if (lower.includes('meal') || lower.includes('thali') || lower.includes('lunch') || lower.includes('dinner') || lower.includes('main')) {
+    return CATEGORY_DEFAULT_IMAGES['Meals'];
+  }
+  if (lower.includes('chinese') || lower.includes('noodle') || lower.includes('fried rice') || lower.includes('manchurian')) {
+    return CATEGORY_DEFAULT_IMAGES['Chinese'];
+  }
+  if (lower.includes('burger') || lower.includes('sandwich') || lower.includes('pizza') || lower.includes('fast food')) {
+    return CATEGORY_DEFAULT_IMAGES['Fast Food'];
+  }
+  if (lower.includes('bake') || lower.includes('bakery') || lower.includes('cake') || lower.includes('bread') || lower.includes('pastry')) {
+    return CATEGORY_DEFAULT_IMAGES['Bakery'];
+  }
+  if (lower.includes('dessert') || lower.includes('sweet') || lower.includes('halwa') || lower.includes('kheer')) {
+    return CATEGORY_DEFAULT_IMAGES['Desserts'];
+  }
+  if (lower.includes('ice cream') || lower.includes('kulfi')) {
+    return CATEGORY_DEFAULT_IMAGES['Ice Cream'];
+  }
+  if (lower.includes('starter') || lower.includes('fry') || lower.includes('tandoor') || lower.includes('tikka') || lower.includes('appetizer')) {
+    return CATEGORY_DEFAULT_IMAGES['Starters'];
+  }
+
+  for (const [key, url] of Object.entries(CATEGORY_DEFAULT_IMAGES)) {
+    if (lower.includes(key.toLowerCase()) || key.toLowerCase().includes(lower)) {
+      return url;
+    }
+  }
+
+  return CATEGORY_DEFAULT_IMAGES['Tea & Coffee'];
+}
+
+/**
+ * Returns an exact photograph URL matching the dish or its category.
+ * If exact dish photograph is not found, automatically applies the category-matched image.
  */
 export function getDishImageUrl(
   dishName: string,
@@ -159,7 +307,7 @@ export function getDishImageUrl(
     return existingUrl;
   }
 
-  // 1. Direct slug match if provided by AI or caller
+  // 1. Direct slug match if provided
   if (slugHint) {
     const cleanSlug = slugHint.toLowerCase().replace(/_/g, ' ').trim();
     if (DISH_IMAGE_MAP[cleanSlug]) {
@@ -173,39 +321,36 @@ export function getDishImageUrl(
     .replace(/\s+/g, ' ')
     .trim();
 
-  if (!clean) {
-    return CATEGORY_DEFAULT_IMAGES[categoryName || 'Tea & Coffee'] || DISH_IMAGE_MAP['tea'];
-  }
-
-  // 2. Direct exact match
-  if (DISH_IMAGE_MAP[clean]) {
+  // 2. Direct exact match in curated dish catalog
+  if (clean && DISH_IMAGE_MAP[clean]) {
     return DISH_IMAGE_MAP[clean];
   }
 
-  // 3. Multi-word phrase matching (sorted by length descending for specificity)
+  // 3. Multi-word phrase matching
   const sortedKeys = Object.keys(DISH_IMAGE_MAP).sort((a, b) => b.length - a.length);
   for (const key of sortedKeys) {
     const regex = new RegExp(`\\b${key}\\b`, 'i');
-    if (regex.test(clean)) {
+    if (clean && regex.test(clean)) {
       return DISH_IMAGE_MAP[key];
     }
   }
 
   // 4. Token-level partial match
-  const tokens = clean.split(' ').filter(t => t.length > 2);
-  for (const token of tokens) {
-    if (DISH_IMAGE_MAP[token]) {
-      return DISH_IMAGE_MAP[token];
+  if (clean) {
+    const tokens = clean.split(' ').filter(t => t.length > 2);
+    for (const token of tokens) {
+      if (DISH_IMAGE_MAP[token]) {
+        return DISH_IMAGE_MAP[token];
+      }
     }
   }
 
-  // 5. Category-accurate default
-  if (categoryName && CATEGORY_DEFAULT_IMAGES[categoryName]) {
-    return CATEGORY_DEFAULT_IMAGES[categoryName];
+  // 5. Category-accurate default: All items in this category share the exact category image
+  if (categoryName) {
+    return getCategoryImageUrl(categoryName);
   }
 
-  // 6. Safe culinary standard
-  return 'https://images.unsplash.com/photo-1576092768241-dec231879fc3?w=400&q=80&auto=format&fit=crop';
+  return CATEGORY_DEFAULT_IMAGES['Tea & Coffee'];
 }
 
 export { getDishFoodIcon, DISH_ICON_MAP, CATEGORY_ICON_MAP } from './dishIcons';

@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, StyleSheet, StyleProp, ViewStyle } from 'react-native';
-import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
-import { getDishVectorIconConfig } from '../../constants/dishIcons';
+import { getPhosphorIconConfig } from '../../constants/phosphorDishIcons';
+import { useTheme } from '../../theme';
 
 interface DishVectorIconProps {
   dishName?: string;
@@ -10,54 +10,61 @@ interface DishVectorIconProps {
   color?: string;
   showBadge?: boolean;
   style?: StyleProp<ViewStyle>;
+  customImageUrl?: string | null;
+  overrideIconKey?: string | null;
 }
 
 export const DishVectorIcon: React.FC<DishVectorIconProps> = ({
-  dishName,
+  dishName = '',
   categoryName,
   size = 24,
   color,
   showBadge = true,
   style,
+  overrideIconKey,
 }) => {
-  const config = getDishVectorIconConfig(dishName, categoryName);
-  const iconColor = color || config.color;
+  const { theme } = useTheme();
+  const isDark = theme.isDark;
 
-  const badgeSize = Math.max(34, Math.round(size * 1.55));
-  const badgeRadius = Math.round(badgeSize / 2);
+  const iconConfig = getPhosphorIconConfig(dishName, categoryName, overrideIconKey);
+  const PhosphorIcon = iconConfig.IconComponent;
+  const iconColor = color || iconConfig.tintColor;
 
-  if (!showBadge) {
-    return (
-      <View style={[styles.container, style]}>
-        {config.family === 'Ionicons' ? (
-          <Ionicons name={config.name as any} size={size} color={iconColor} />
-        ) : (
-          <MaterialCommunityIcons name={config.name as any} size={size} color={iconColor} />
-        )}
-      </View>
-    );
-  }
+  const badgeSize = Math.max(36, Math.round(size * 1.55));
+  const badgeRadius = Math.round(badgeSize * 0.36);
+
+  const badgeBg = isDark ? iconConfig.darkBg : iconConfig.pastelBg;
+  const badgeBorder = isDark ? iconConfig.darkBorder : iconConfig.borderColor;
 
   return (
     <View style={[styles.container, style]}>
-      <View
-        style={[
-          styles.badge,
-          {
-            width: badgeSize,
-            height: badgeSize,
-            borderRadius: badgeRadius,
-            backgroundColor: `${iconColor}15`,
-            borderColor: `${iconColor}25`,
-          },
-        ]}
-      >
-        {config.family === 'Ionicons' ? (
-          <Ionicons name={config.name as any} size={size} color={iconColor} />
-        ) : (
-          <MaterialCommunityIcons name={config.name as any} size={size} color={iconColor} />
-        )}
-      </View>
+      {showBadge ? (
+        <View
+          style={[
+            styles.badge,
+            {
+              width: badgeSize,
+              height: badgeSize,
+              borderRadius: badgeRadius,
+              backgroundColor: badgeBg,
+              borderColor: badgeBorder,
+              shadowColor: isDark ? '#000000' : iconColor,
+            },
+          ]}
+        >
+          <PhosphorIcon
+            size={size}
+            weight="duotone"
+            color={iconColor}
+          />
+        </View>
+      ) : (
+        <PhosphorIcon
+          size={size}
+          weight="duotone"
+          color={iconColor}
+        />
+      )}
     </View>
   );
 };
@@ -71,5 +78,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
+    shadowOffset: { width: 0, height: 1.5 },
+    shadowOpacity: 0.12,
+    shadowRadius: 3,
+    elevation: 2,
   },
 });

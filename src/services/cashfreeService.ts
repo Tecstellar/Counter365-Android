@@ -24,13 +24,18 @@ export interface CashfreeVerifyResult {
 // Cashfree Gateway Configuration
 const CF_APP_ID = process.env.EXPO_PUBLIC_CASHFREE_APP_ID || '';
 const CF_SECRET_KEY = process.env.EXPO_PUBLIC_CASHFREE_SECRET_KEY || '';
-const CF_ENV = process.env.EXPO_PUBLIC_CASHFREE_ENV || 'TEST';
 
-const CF_BASE_URL = CF_ENV === 'PROD'
+const rawEnv = (process.env.EXPO_PUBLIC_CASHFREE_ENV || '').toUpperCase();
+const isProdKey = CF_SECRET_KEY.toLowerCase().includes('prod');
+const isTestKey = CF_SECRET_KEY.toLowerCase().includes('test');
+
+export const CF_ENV = rawEnv === 'PROD' || isProdKey ? 'PROD' : (isTestKey ? 'TEST' : (rawEnv || 'PROD'));
+
+export const CF_BASE_URL = CF_ENV === 'PROD'
   ? 'https://api.cashfree.com/pg'
   : 'https://sandbox.cashfree.com/pg';
 
-const CF_CHECKOUT_URL = CF_ENV === 'PROD'
+export const CF_CHECKOUT_URL = CF_ENV === 'PROD'
   ? 'https://payments.cashfree.com/order/#'
   : 'https://payments-test.cashfree.com/order/#';
 
@@ -51,6 +56,7 @@ export const cashfreeService = {
     }
 
     isOrderInitiating = true;
+    let lastError = '';
 
     try {
       const timestamp = Date.now();
@@ -100,9 +106,11 @@ export const cashfreeService = {
             currency: 'INR',
           };
         } else {
+          lastError = cfData?.message || cfData?.error || 'Cashfree payment session creation failed';
           console.warn('[Cashfree] Orders API error response:', cfData);
         }
-      } catch (orderErr) {
+      } catch (orderErr: any) {
+        lastError = orderErr?.message || 'Cashfree connection error';
         console.warn('[Cashfree] Direct Orders API error:', orderErr);
       }
 
@@ -133,7 +141,7 @@ export const cashfreeService = {
 
       return {
         success: false,
-        error: 'Unable to generate payment link. Please check your network and Cashfree credentials.',
+        error: lastError || 'Unable to generate payment link. Please check your network and Cashfree credentials.',
       };
     } catch (err: any) {
       console.error('cashfreeService initiateOrder exception:', err);

@@ -80,7 +80,7 @@ export const TrialExpiredLockModal: React.FC<TrialExpiredLockModalProps> = ({
           </TouchableOpacity>
 
           <Text style={styles.helperText}>
-            Select from our 1, 3, 6, or 12 month plans. Instant activation via Cashfree.
+            Select from our 1, 3, 6, or 12 month plans. Instant activation via PayU (UPI, Cards, NetBanking).
           </Text>
         </View>
       </View>

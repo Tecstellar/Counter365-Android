@@ -34,9 +34,14 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const loadSavedTheme = async () => {
       try {
         const saved = await storage.getItem(THEME_STORAGE_KEY);
-        if (saved === 'dark' || saved === 'light') {
-          setModeState(saved);
-          currentActiveTheme = saved === 'dark' ? darkTheme : lightTheme;
+        if (saved === 'light') {
+          setModeState('light');
+          currentActiveTheme = lightTheme;
+        } else {
+          // Default to light mode as requested
+          setModeState('light');
+          currentActiveTheme = lightTheme;
+          await storage.setItem(THEME_STORAGE_KEY, 'light');
         }
       } catch (err) {
         console.warn('Failed to load saved theme mode:', err);

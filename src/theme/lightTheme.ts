@@ -101,6 +101,9 @@ export const lightColors: ThemeColors = {
   ok: '#138A4B',
   okSoft: '#E3F5EA',
   err: '#D93A1F',
+  gl: 'rgba(255, 255, 255, 0.66)',
+  glb: 'rgba(255, 255, 255, 0.75)',
+  gc: 'rgba(255, 255, 255, 0.74)',
 };
 
 export const lightTheme: Theme = {

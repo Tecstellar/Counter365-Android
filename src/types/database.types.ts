@@ -86,6 +86,53 @@ export interface Database {
           completed_at: string;
         };
       };
+      customers: {
+        Row: {
+          id: string;
+          shop_id: string;
+          name: string;
+          phone: string | null;
+          location: string | null;
+          notes: string | null;
+          total_bills: number;
+          pending_balance: number;
+          status_tag: string | null;
+          is_active: boolean;
+          is_vip: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Insert: {
+          id?: string;
+          shop_id: string;
+          name: string;
+          phone?: string | null;
+          location?: string | null;
+          notes?: string | null;
+          total_bills?: number;
+          pending_balance?: number;
+          status_tag?: string | null;
+          is_active?: boolean;
+          is_vip?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          shop_id?: string;
+          name?: string;
+          phone?: string | null;
+          location?: string | null;
+          notes?: string | null;
+          total_bills?: number;
+          pending_balance?: number;
+          status_tag?: string | null;
+          is_active?: boolean;
+          is_vip?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
       account_deletions: {
         Row: {
           id: string;

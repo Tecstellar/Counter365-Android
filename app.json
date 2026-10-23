@@ -51,8 +51,17 @@
           "contactsPermission": "Allow Counter365 to import customer contact details for billing and ledger khata."
         }
       ],
-      "expo-video"
+      "expo-video",
+      "expo-updates"
     ],
+    "updates": {
+      "url": "https://u.expo.dev/3a8aa2b0-0cce-48b2-a9d5-e9fdfb40426c",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "extra": {
       "eas": {
         "projectId": "3a8aa2b0-0cce-48b2-a9d5-e9fdfb40426c"

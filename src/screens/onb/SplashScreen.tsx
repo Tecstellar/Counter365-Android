@@ -1,14 +1,18 @@
 import React, { useEffect, useRef } from 'react';
-import { StyleSheet, TouchableOpacity, StatusBar } from 'react-native';
+import { StyleSheet, TouchableOpacity, StatusBar, Image, View, Text } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { typography } from '../../theme/typography';
 
 interface SplashScreenProps {
   onComplete: () => void;
 }
 
 const introVideo = require('../../../assets/intro.mp4');
+const tecstellarLogo = require('../../../assets/tecstellar_logo.png');
 
 export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
+  const insets = useSafeAreaInsets();
   const hasFinishedRef = useRef(false);
 
   const handleFinish = () => {
@@ -53,6 +57,21 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
         contentFit="cover"
         nativeControls={false}
       />
+      {/* Tecstellar logo small in bottom center */}
+      <View
+        pointerEvents="none"
+        style={[
+          styles.bottomLogoContainer,
+          { bottom: Math.max(insets.bottom, 20) + 14 },
+        ]}
+      >
+        <Text style={styles.fromText}>from</Text>
+        <Image
+          source={tecstellarLogo}
+          style={styles.bottomLogo}
+          resizeMode="contain"
+        />
+      </View>
     </TouchableOpacity>
   );
 };
@@ -63,5 +82,25 @@ const styles = StyleSheet.create({
     backgroundColor: '#000000',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  bottomLogoContainer: {
+    position: 'absolute',
+    alignSelf: 'center',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+    elevation: 6,
+  },
+  fromText: {
+    fontFamily: typography.fonts.body,
+    fontSize: 11,
+    color: '#111827',
+    letterSpacing: 0.8,
+    marginBottom: 4,
+    textTransform: 'lowercase',
+  },
+  bottomLogo: {
+    width: 108,
+    height: 23,
   },
 });

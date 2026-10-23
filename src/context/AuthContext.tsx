@@ -1,10 +1,14 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { AppState } from 'react-native';
 import { UserProfile, ShopMember, UserRole, PermissionKey } from '../types/models';
 import { authService } from '../services/authService';
 import { shopService } from '../services/shopService';
 import { SendOtpResult } from '../services/twoFactorService';
+import { storage } from '../lib/storage';
+import { generateUUID } from '../lib/uuid';
+import { supabase } from '../lib/supabase';
 
-const ROLE_DEFAULT_PERMISSIONS: Record<UserRole, Record<PermissionKey, boolean>> = {
+export const ROLE_DEFAULT_PERMISSIONS: Record<UserRole, Record<PermissionKey, boolean>> = {
   Owner: { bill: true, total: true, exp: true, pend: true, report: true, menu: true, users: true, subscription: true },
   Supervisor: { bill: true, total: true, exp: true, pend: true, report: true, menu: true, users: false, subscription: false },
   Biller: { bill: true, total: true, exp: false, pend: false, report: false, menu: false, users: false, subscription: false },
@@ -22,6 +26,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   updateMemberOverride: (permKey: PermissionKey, val: boolean) => Promise<void>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<UserProfile>;
+  refreshMemberSession: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({} as any);
@@ -34,16 +39,123 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     loadSession();
+
+    // 1. Supabase Realtime listener on shop_members table:
+    // If owner updates permissions/overrides, biller/supervisor gets updated immediately!
+    const channel = supabase
+      .channel('member-permissions-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'shop_members' },
+        () => {
+          refreshMemberSession();
+        }
+      )
+      .subscribe();
+
+    // 2. Continuous fast polling fallback so staff devices immediately receive overrides
+    const pollInterval = setInterval(() => {
+      refreshMemberSession();
+    }, 3000);
+
+    // 3. AppState listener: immediately sync when staff returns to or opens the app
+    const appStateSub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        refreshMemberSession();
+      }
+    });
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(pollInterval);
+      appStateSub.remove();
+    };
   }, []);
 
   const loadSession = async () => {
     try {
-      const savedProfile = await authService.getCurrentProfile();
-      const savedMember = await authService.getCurrentMember();
+      let savedProfile = await authService.getCurrentProfile();
+      let savedMember = await authService.getCurrentMember();
+
+      // Resilient fallback for Expo Go / restarts: If profile is missing but active_shop exists, restore session
+      if (!savedProfile) {
+        const savedShop = await storage.getObject<any>('@counterpro/active_shop', null);
+        if (savedShop && savedShop.id && savedShop.phone) {
+          savedProfile = {
+            id: generateUUID(),
+            fullName: savedShop.ownerName || `${savedShop.name} Owner`,
+            phone: savedShop.phone,
+          };
+          await authService.saveCurrentProfile(savedProfile);
+        }
+      }
+
+      if (!savedMember && savedProfile) {
+        const savedShop = await storage.getObject<any>('@counterpro/active_shop', null);
+        if (savedShop && savedShop.id) {
+          savedMember = {
+            id: `m_${savedProfile.id}`,
+            shopId: savedShop.id,
+            userId: savedProfile.id,
+            fullName: savedProfile.fullName,
+            phone: savedProfile.phone,
+            role: 'Owner',
+            isActive: true,
+          };
+          await authService.saveCurrentMember(savedMember);
+        }
+      }
+
       if (savedProfile) {
         setProfile(savedProfile);
       }
+
       if (savedMember) {
+        // Authoritatively sync member role, active status, and permission overrides
+        try {
+          // 1. Check local users cache
+          const localUsers = await storage.getObject<ShopMember[]>('@counterpro/shop_users', []);
+          const cleanSavedP = savedMember.phone ? savedMember.phone.replace(/\D/g, '').slice(-10) : '';
+          const matchedLocal = localUsers?.find(m => {
+            const cleanM = m.phone ? m.phone.replace(/\D/g, '').slice(-10) : '';
+            return m.id === savedMember!.id || (cleanSavedP && cleanM && cleanM === cleanSavedP);
+          });
+          if (matchedLocal) {
+            savedMember = {
+              ...savedMember,
+              role: matchedLocal.role,
+              isActive: matchedLocal.isActive,
+              overrides: matchedLocal.overrides || {},
+            };
+          }
+
+          // 2. Fetch authoritative member row from Supabase
+          if (savedMember.id) {
+            const { data: dbMember } = await (supabase.from('shop_members') as any)
+              .select('*')
+              .eq('id', savedMember.id)
+              .maybeSingle();
+
+            if (dbMember) {
+              let parsedOverrides = dbMember.permissions_override;
+              if (typeof parsedOverrides === 'string') {
+                try {
+                  parsedOverrides = JSON.parse(parsedOverrides);
+                } catch {}
+              }
+              savedMember = {
+                ...savedMember,
+                role: (dbMember.role as UserRole) || savedMember.role,
+                isActive: dbMember.is_active ?? savedMember.isActive,
+                overrides: (typeof parsedOverrides === 'object' && parsedOverrides !== null) ? parsedOverrides : {},
+              };
+            }
+          }
+          await authService.saveCurrentMember(savedMember);
+        } catch (syncErr) {
+          console.warn('AuthContext member sync notice:', syncErr);
+        }
+
         setCurrentMember(savedMember);
         setCurrentRole(savedMember.role);
       }
@@ -52,19 +164,88 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const refreshMemberSession = async () => {
+    let savedMember = await authService.getCurrentMember();
+    if (!savedMember) return;
+    try {
+      const localUsers = await storage.getObject<ShopMember[]>('@counterpro/shop_users', []);
+      const cleanSavedP = savedMember.phone ? savedMember.phone.replace(/\D/g, '').slice(-10) : '';
+      const matchedLocal = localUsers?.find(m => {
+        const cleanM = m.phone ? m.phone.replace(/\D/g, '').slice(-10) : '';
+        return m.id === savedMember!.id || (cleanSavedP && cleanM && cleanM === cleanSavedP);
+      });
+      if (matchedLocal) {
+        savedMember = {
+          ...savedMember,
+          role: matchedLocal.role,
+          isActive: matchedLocal.isActive,
+          overrides: matchedLocal.overrides || {},
+        };
+      }
+      if (savedMember.id) {
+        let dbMember: any = null;
+        try {
+          const { data } = await (supabase.from('shop_members') as any)
+            .select('*')
+            .eq('id', savedMember.id)
+            .maybeSingle();
+          dbMember = data;
+        } catch {}
+
+        if (!dbMember && savedMember.phone) {
+          try {
+            const cleanP = savedMember.phone.replace(/[^0-9]/g, '').slice(-10);
+            const { data } = await (supabase.from('shop_members') as any)
+              .select('*')
+              .eq('phone', cleanP)
+              .order('created_at', { ascending: false })
+              .limit(1);
+            if (data && data.length > 0) dbMember = data[0];
+          } catch {}
+        }
+
+        if (dbMember) {
+          let parsedOverrides = dbMember.permissions_override;
+          if (typeof parsedOverrides === 'string') {
+            try {
+              parsedOverrides = JSON.parse(parsedOverrides);
+            } catch {}
+          }
+          savedMember = {
+            ...savedMember,
+            role: (dbMember.role as UserRole) || savedMember.role,
+            isActive: dbMember.is_active ?? savedMember.isActive,
+            overrides: (typeof parsedOverrides === 'object' && parsedOverrides !== null) ? parsedOverrides : {},
+          };
+        }
+      }
+      await authService.saveCurrentMember(savedMember);
+      setCurrentMember(savedMember);
+      setCurrentRole(savedMember.role);
+    } catch (err) {
+      console.warn('refreshMemberSession error:', err);
+    }
+  };
+
   const setRole = (role: UserRole) => {
     setCurrentRole(role);
   };
 
   const can = (perm: PermissionKey): boolean => {
+    // Inactive staff members have ZERO permissions across the application
+    if (currentMember && currentMember.isActive === false) {
+      return false;
+    }
+
     if (currentRole === 'Owner') return true;
     
     // Check if user has active override
     if (currentMember?.overrides && currentMember.overrides[perm] !== undefined) {
-      return currentMember.overrides[perm] as boolean;
+      return Boolean(currentMember.overrides[perm]);
     }
 
-    return ROLE_DEFAULT_PERMISSIONS[currentRole][perm] ?? false;
+    const defaultPerms = ROLE_DEFAULT_PERMISSIONS[currentRole];
+    return defaultPerms ? Boolean(defaultPerms[perm]) : false;
   };
 
   const sendOtp = async (phone: string): Promise<SendOtpResult> => {
@@ -165,6 +346,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         logout,
         updateMemberOverride,
         updateProfile,
+        refreshMemberSession,
       }}
     >
       {children}

@@ -1,12 +1,16 @@
 import { storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
-import { Bill, CartItem, PaymentMethod, PendingPaymentRecord, BillPaymentCollection } from '../types/models';
+import { Bill, CartItem, PaymentMethod, PendingPaymentRecord, BillPaymentCollection, Shop } from '../types/models';
 import { calculateGST } from '../lib/money';
 import { syncEngine } from './syncEngine';
 import { generateUUID } from '../lib/uuid';
 import { subscriptionService } from './subscriptionService';
+import { shopService } from './shopService';
+import { contactService } from './contactService';
+import { generateDefaultInvoicePrefix, formatInvoiceNumber } from '../lib/invoiceUtils';
+import { authService } from './authService';
 
-const LOCAL_BILLS_KEY = '@counterpro/bills';
+export const LOCAL_BILLS_KEY = '@counterpro/bills';
 const LOCAL_BILL_COUNT_KEY = '@counterpro/bill_count';
 
 /**
@@ -34,8 +38,18 @@ export const billingService = {
     if (!shopId) return 0;
     const TOTAL_KEY = `@counterpro/total_bills_created_${shopId}`;
     const storedCount = await storage.getObject<number>(TOTAL_KEY, 0);
+    let remoteCount = 0;
+    try {
+      const { data: s } = await (supabase.from('shops') as any)
+        .select('total_bills_created')
+        .eq('id', shopId)
+        .maybeSingle();
+      if (s?.total_bills_created) {
+        remoteCount = Number(s.total_bills_created);
+      }
+    } catch {}
     const allBills = await this.getBills(shopId);
-    const maxCount = Math.max(storedCount, allBills.length);
+    const maxCount = Math.max(storedCount, remoteCount, allBills.length);
     if (maxCount > storedCount) {
       await storage.setObject(TOTAL_KEY, maxCount);
     }
@@ -59,11 +73,70 @@ export const billingService = {
   },
 
   /**
-   * Get next deterministic bill number for this shop (e.g. #0001, #0002)
+   * Get next deterministic bill/invoice number for this shop based on prefix and reset cycle (monthly or yearly).
+   * E.g. "RTS-October-001" or "RTS-001".
+   * Never reuses or steps backward over cancelled or deleted bills.
    */
-  async getNextBillNumber(shopId?: string): Promise<string> {
-    const count = await this.getTotalBillsCreated(shopId);
-    return '#' + String(count + 1).padStart(4, '0');
+  async getNextBillNumber(shopId?: string, shopParam?: Shop): Promise<string> {
+    try {
+      const sId = shopId || shopParam?.id;
+      const shop = shopParam || (await shopService.getActiveShop());
+      const prefix = shop?.invoicePrefix || generateDefaultInvoicePrefix(shop?.name);
+      const resetCycle = shop?.invoiceResetCycle || 'monthly';
+      const now = new Date();
+
+      if (resetCycle === 'monthly') {
+        const existingBills = sId ? await this.getBills(sId) : [];
+        const currentMonth = now.getMonth();
+        const currentYear = now.getFullYear();
+
+        let maxSeq = 0;
+        const monthNameRegex = new RegExp(`^${prefix}[-_]?[A-Za-z]+[-_]?(\\d+)$`, 'i');
+        const genericSeqRegex = /[-_#](\d+)$/;
+
+        for (const b of existingBills) {
+          if (!b.createdAt || !b.billNumber) continue;
+          const d = new Date(b.createdAt);
+          if (d.getMonth() === currentMonth && d.getFullYear() === currentYear) {
+            const m = b.billNumber.match(monthNameRegex) || b.billNumber.match(genericSeqRegex);
+            if (m && m[1]) {
+              const num = parseInt(m[1], 10);
+              if (!isNaN(num) && num > maxSeq) {
+                maxSeq = num;
+              }
+            }
+          }
+        }
+
+        const monthlyBillsCount = existingBills.filter(b => {
+          if (!b.createdAt) return false;
+          const d = new Date(b.createdAt);
+          return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+        }).length;
+
+        const nextSeq = Math.max(maxSeq, monthlyBillsCount) + 1;
+        return formatInvoiceNumber(prefix, 'monthly', nextSeq, now);
+      } else {
+        const count = await this.getTotalBillsCreated(sId);
+        const existingBills = sId ? await this.getBills(sId) : [];
+        let maxSeq = count;
+        const genericSeqRegex = /[-_#](\d+)$/;
+        for (const b of existingBills) {
+          if (!b.billNumber) continue;
+          const m = b.billNumber.match(genericSeqRegex);
+          if (m && m[1]) {
+            const num = parseInt(m[1], 10);
+            if (!isNaN(num) && num > maxSeq) {
+              maxSeq = num;
+            }
+          }
+        }
+        return formatInvoiceNumber(prefix, 'yearly', maxSeq + 1, now);
+      }
+    } catch {
+      const count = await this.getTotalBillsCreated(shopId);
+      return '#' + String(count + 1).padStart(4, '0');
+    }
   },
 
   /**
@@ -80,21 +153,43 @@ export const billingService = {
       return; // Skip writing if shopId is not a valid Postgres UUID (e.g. mock test environment)
     }
 
+    // Ensure parent shop exists in Supabase so bills_shop_id_fkey is satisfied
+    await shopService.ensureShopExists(bill.shopId);
+
+    // Ensure customer exists in Supabase so bills_customer_id_fkey is satisfied
+    let validCustomerId: string | null = null;
+    if (bill.customerId && isValidUUID(bill.customerId)) {
+      const customerExists = await contactService.ensureCustomerExists(
+        bill.customerId,
+        bill.shopId,
+        bill.customerName,
+        bill.customerPhone
+      );
+      if (customerExists) {
+        validCustomerId = bill.customerId;
+      }
+    }
+
     const dbPaymentMode = toSupabasePaymentMode(originalPaymentMode);
     const validOpId = isValidUUID(bill.clientOperationId) ? bill.clientOperationId : null;
 
-    // 1. Insert bill into public.bills
-    const { error: billError } = await (supabase.from('bills') as any).upsert({
+    const billPayload = {
       id: bill.id,
       shop_id: bill.shopId,
       bill_number: bill.billNumber,
-      customer_id: bill.customerId && isValidUUID(bill.customerId) ? bill.customerId : null,
+      customer_id: validCustomerId,
       customer_name: bill.customerName || null,
       customer_phone: bill.customerPhone || null,
       table_number: bill.tableNumber || null,
       status: bill.status || 'completed',
       subtotal: bill.subtotal,
-      discount_amount: 0.00,
+      discount_amount: bill.discountAmount || 0.00,
+      discount_type: bill.discountType || null,
+      discount_value: bill.discountValue || 0.00,
+      discount_applied_by: bill.discountAppliedBy || null,
+      discount_approved_by: bill.discountApprovedBy || null,
+      original_subtotal: bill.originalSubtotal || null,
+      original_total: bill.originalTotal || null,
       gst_rate: bill.gstRate,
       gst_amount: bill.gstAmount,
       tax_amount: bill.gstAmount,
@@ -115,12 +210,43 @@ export const billingService = {
       edited_by_name: bill.editedByName || null,
       edited_by_role: bill.editedByRole || null,
       is_deleted: bill.isDeleted || false,
+      is_cancelled: bill.isCancelled || false,
+      cancellation_reason: bill.cancellationReason || null,
       deleted_at: bill.deletedAt || null,
       deleted_by_name: bill.deletedByName || null,
       deleted_by_role: bill.deletedByRole || null,
-      completed_at: bill.completedAt || new Date().toISOString(),
+      deleted_by_id: bill.deletedById || null,
+      created_at: bill.createdAt || new Date().toISOString(),
+      completed_at: bill.completedAt || bill.createdAt || new Date().toISOString(),
       settled_at: bill.settledAt || null,
-    });
+    };
+
+    // 1. Insert bill into public.bills
+    let { error: billError } = await (supabase.from('bills') as any).upsert(billPayload);
+
+    if (billError) {
+      // Self-heal 1: If foreign key violated on shop, force provision the parent shop and retry once
+      if (billError.message && billError.message.includes('bills_shop_id_fkey')) {
+        await shopService.ensureShopExists(bill.shopId);
+        const { error: retryError } = await (supabase.from('bills') as any).upsert(billPayload);
+        if (!retryError) {
+          billError = null;
+        }
+      }
+      // Self-heal 2: If customer foreign key violated, retry with customer_id = null so bill is NEVER blocked
+      else if (
+        billPayload.customer_id &&
+        (billError.message?.includes('bills_customer_id_fkey') ||
+          (billError as any).details?.includes('bills_customer_id_fkey'))
+      ) {
+        console.warn('bills_customer_id_fkey self-heal: clearing missing customer_id and retrying:', bill.billNumber);
+        billPayload.customer_id = null;
+        const { error: retryError } = await (supabase.from('bills') as any).upsert(billPayload);
+        if (!retryError) {
+          billError = null;
+        }
+      }
+    }
 
     if (billError) {
       throw new Error(`Bills table error: ${billError.message}`);
@@ -240,12 +366,14 @@ export const billingService = {
         let existingCust: any = null;
 
         if (cleanPhone && cleanPhone.length === 10) {
-          const { data: byPhone } = await (supabase.from('customers') as any)
+          const query = (supabase.from('customers') as any)
             .select('id, name, total_bills, pending_balance, phone')
-            .eq('shop_id', bill.shopId)
-            .ilike('phone', `%${cleanPhone}%`)
-            .limit(1)
-            .maybeSingle();
+            .eq('shop_id', bill.shopId);
+          const { data: byPhone } = typeof query.ilike === 'function'
+            ? await query.ilike('phone', `%${cleanPhone}%`).limit(1).maybeSingle()
+            : typeof query.like === 'function'
+              ? await query.like('phone', `%${cleanPhone}%`).limit(1).maybeSingle()
+              : await query.eq('phone', cleanPhone).limit(1).maybeSingle();
           existingCust = byPhone;
         }
 
@@ -291,6 +419,9 @@ export const billingService = {
   async syncLocalBillsToCloud(shopId: string): Promise<{ synced: number; failed: number }> {
     if (!shopId) return { synced: 0, failed: 0 };
 
+    // Ensure parent shop exists in cloud before attempting bill push
+    await shopService.ensureShopExists(shopId);
+
     const localBills = await storage.getObject<Bill[]>(LOCAL_BILLS_KEY, []);
     const shopBills = localBills.filter(b => b.shopId === shopId);
     if (shopBills.length === 0) return { synced: 0, failed: 0 };
@@ -321,7 +452,9 @@ export const billingService = {
           );
           synced++;
         } catch (syncErr) {
-          console.warn(`Failed to push local bill ${bill.billNumber} to cloud:`, syncErr);
+          if (process.env.NODE_ENV !== 'test') {
+            console.warn(`Failed to push local bill ${bill.billNumber} to cloud:`, syncErr);
+          }
           failed++;
         }
       }
@@ -441,14 +574,35 @@ export const billingService = {
     cart: CartItem[];
     paymentMode: PaymentMethod;
     gstEnabled: boolean;
+    gstRate?: number;
     customerName?: string;
     customerPhone?: string;
+    customerId?: string;
     paidAmount?: number;
     cashAmount?: number;
     gpayAmount?: number;
     tableNumber?: string | null;
     creator?: { name?: string; role?: string; id?: string };
+    discount?: { type: 'percentage' | 'fixed'; value: number; appliedBy?: string; approvedBy?: string };
+    createdAt?: string;
   }): Promise<{ bill: Bill; isDuplicate: boolean }> {
+    // 0. Server-side session/active validation & permission validation for staff
+    if (params.creator?.id) {
+      const isActive = await authService.isUserActiveInShop(params.shopId, params.creator.id);
+      if (!isActive) {
+        throw new Error('Your staff account has been deactivated. Please contact the shop owner.');
+      }
+      const canBill = await authService.canUserPerform(params.shopId, params.creator.id, 'bill');
+      if (!canBill) {
+        throw new Error("You don't have access for that");
+      }
+    } else {
+      const canBill = await authService.canUserPerform(params.shopId, undefined, 'bill');
+      if (!canBill) {
+        throw new Error("You don't have access for that");
+      }
+    }
+
     const existingBills = await this.getBills(params.shopId);
     const totalCreatedCount = await this.getTotalBillsCreated(params.shopId);
     const currentCount = Math.max(existingBills.length, totalCreatedCount);
@@ -465,16 +619,44 @@ export const billingService = {
     }
 
     const nextCount = currentCount + 1;
-    const billNumber = '#' + String(nextCount).padStart(4, '0');
+    const billNumber = await this.getNextBillNumber(params.shopId);
 
     // Persist running total bills created (counts active + deleted bills permanently)
     const TOTAL_KEY = `@counterpro/total_bills_created_${params.shopId}`;
     await storage.setObject(TOTAL_KEY, nextCount);
+    try {
+      await (supabase.from('shops') as any)
+        .update({ total_bills_created: nextCount })
+        .eq('id', params.shopId);
+    } catch {}
 
-    const subtotal = params.cart.reduce((sum, item) => sum + item.lineTotal, 0);
-    const gstRate = params.gstEnabled ? 5 : 0;
-    const gstAmount = params.gstEnabled ? calculateGST(subtotal, 5) : 0;
-    const totalAmount = subtotal + gstAmount;
+    const originalSubtotal = params.cart.reduce((sum, item) => sum + item.lineTotal, 0);
+
+    // Validate discount authority
+    let discountAmount = 0;
+    if (params.discount && params.discount.value > 0) {
+      if (params.creator?.role === 'Biller') {
+        const isExceeded = params.discount.type === 'percentage'
+          ? params.discount.value > 10
+          : params.discount.value > (originalSubtotal * 0.1);
+        if (isExceeded && !params.discount.approvedBy) {
+          throw new Error('Unauthorized: Discounts above 10% require Supervisor or Owner approval.');
+        }
+      }
+      discountAmount = params.discount.type === 'percentage'
+        ? (originalSubtotal * params.discount.value) / 100
+        : params.discount.value;
+      // Never allow discount to exceed subtotal
+      discountAmount = Math.max(0, Math.min(discountAmount, originalSubtotal));
+    }
+
+    const finalSubtotal = originalSubtotal - discountAmount;
+    const gstRate = params.gstEnabled
+      ? (params.gstRate !== undefined && params.gstRate !== null ? params.gstRate : 5)
+      : 0;
+    const gstAmount = params.gstEnabled ? calculateGST(finalSubtotal, gstRate) : 0;
+    const totalAmount = finalSubtotal + gstAmount;
+    const originalTotal = originalSubtotal + (params.gstEnabled ? calculateGST(originalSubtotal, gstRate) : 0);
 
     let paidAmount = totalAmount;
     let pendingAmount = 0;
@@ -507,9 +689,17 @@ export const billingService = {
       billNumber,
       customerName: params.customerName || (isPendingOrPartial ? 'Not tracked' : null),
       customerPhone: params.customerPhone || null,
+      customerId: params.customerId || null,
       tableNumber: params.tableNumber || null,
       status: 'completed',
-      subtotal,
+      subtotal: finalSubtotal,
+      originalSubtotal,
+      originalTotal,
+      discountType: params.discount?.type || null,
+      discountValue: params.discount?.value || 0,
+      discountAmount,
+      discountAppliedBy: params.discount?.appliedBy || params.creator?.name || null,
+      discountApprovedBy: params.discount?.approvedBy || null,
       gstRate,
       gstAmount,
       totalAmount,
@@ -528,8 +718,8 @@ export const billingService = {
         quantity: c.quantity,
         lineTotal: c.lineTotal,
       })),
-      createdAt: new Date().toISOString(),
-      completedAt: new Date().toISOString(),
+      createdAt: params.createdAt ? new Date(params.createdAt).toISOString() : new Date().toISOString(),
+      completedAt: params.createdAt ? new Date(params.createdAt).toISOString() : new Date().toISOString(),
       createdByName: params.creator?.name || 'Owner',
       createdByRole: (params.creator?.role as any) || 'Owner',
       createdById: params.creator?.id || null,
@@ -538,7 +728,9 @@ export const billingService = {
           id: generateUUID(),
           amount: paidAmount,
           paymentMode: params.paymentMode,
-          paidAt: new Date().toISOString(),
+          paidAt: params.createdAt ? new Date(params.createdAt).toISOString() : new Date().toISOString(),
+          receivedByName: params.creator?.name || 'Owner',
+          receivedById: params.creator?.id || null,
         }
       ] : [],
     };
@@ -548,18 +740,57 @@ export const billingService = {
     await storage.setObject(LOCAL_BILLS_KEY, updatedBills);
     await storage.setObject(LOCAL_BILL_COUNT_KEY, nextCount);
 
-    // 2. Direct Supabase write for bills, items, payments, pendings
-    try {
-      await this.persistBillToCloud(bill, params.paymentMode, cashAmount, gpayAmount);
-    } catch (dbErr) {
-      console.warn('Direct cloud persist failed, queueing for background sync:', dbErr);
-      await syncEngine.enqueue({
-        operationId,
-        shopId: params.shopId,
-        action: 'create_bill',
-        payload: bill,
-      });
+    // Update customer in local store immediately for zero-delay visibility & offline ledger
+    if (bill.customerName && bill.customerName !== 'Not tracked') {
+      try {
+        const localCusts = await storage.getObject<any[]>('@counterpro/customers', []);
+        const cleanPhone = bill.customerPhone ? bill.customerPhone.replace(/[^0-9]/g, '').slice(-10) : '';
+        const match = localCusts.find(c =>
+          c.shopId === bill.shopId && (
+            (cleanPhone && c.phone && c.phone.replace(/[^0-9]/g, '').slice(-10) === cleanPhone) ||
+            c.name === bill.customerName
+          )
+        );
+        if (match) {
+          match.totalBills = (match.totalBills || 0) + 1;
+          match.pendingBalance = (match.pendingBalance || 0) + bill.pendingAmount;
+          match.statusTag = match.pendingBalance > 0 ? 'Pending' : 'Regular';
+        } else {
+          localCusts.push({
+            id: generateUUID(),
+            shopId: bill.shopId,
+            name: bill.customerName,
+            phone: bill.customerPhone || null,
+            totalBills: 1,
+            pendingBalance: bill.pendingAmount,
+            statusTag: bill.pendingAmount > 0 ? 'Pending' : 'Regular',
+            isActive: true,
+          });
+        }
+        await storage.setObject('@counterpro/customers', localCusts);
+      } catch (lCustErr) {
+        console.warn('Local customer cache update notice:', lCustErr);
+      }
     }
+
+    // 2. Direct Supabase write for bills, items, payments, pendings
+    // Fast path: race cloud persist with 350ms so UI never lags on mobile network.
+    // If network is slow, it safely completes or enqueues in background.
+    const persistTask = this.persistBillToCloud(bill, params.paymentMode, cashAmount, gpayAmount)
+      .catch(async (dbErr) => {
+        console.warn('Direct cloud persist failed, queueing for background sync:', dbErr);
+        await syncEngine.enqueue({
+          operationId,
+          shopId: params.shopId,
+          action: 'create_bill',
+          payload: bill,
+        });
+      });
+
+    await Promise.race([
+      persistTask,
+      new Promise(resolve => setTimeout(resolve, 350)),
+    ]);
 
     return { bill, isDuplicate: false };
   },
@@ -573,21 +804,38 @@ export const billingService = {
     cart: CartItem[];
     paymentMode: PaymentMethod;
     gstEnabled: boolean;
+    gstRate?: number;
     customerName?: string;
     customerPhone?: string;
+    customerId?: string | null;
     paidAmount?: number;
     cashAmount?: number;
     gpayAmount?: number;
     tableNumber?: string | null;
     editor?: { name: string; role: string; id?: string };
   }): Promise<Bill> {
+    if (params.editor?.role === 'Biller') {
+      throw new Error('Unauthorized: Billers cannot edit completed bills.');
+    }
+
+    if (params.editor?.id) {
+      const isActive = await authService.isUserActiveInShop(params.shopId, params.editor.id);
+      if (!isActive) {
+        throw new Error('Your staff account has been deactivated. Please contact the shop owner.');
+      }
+    }
+
     const allBills = await this.getBills(params.shopId);
     const existingBill = allBills.find(b => b.id === params.billId);
     if (!existingBill) throw new Error('Bill not found');
 
     const subtotal = params.cart.reduce((sum, item) => sum + item.lineTotal, 0);
-    const gstRate = params.gstEnabled ? 5 : 0;
-    const gstAmount = params.gstEnabled ? calculateGST(subtotal, 5) : 0;
+    const gstRate = params.gstEnabled
+      ? (params.gstRate !== undefined && params.gstRate !== null
+          ? params.gstRate
+          : (existingBill.gstRate || 5))
+      : 0;
+    const gstAmount = params.gstEnabled ? calculateGST(subtotal, gstRate) : 0;
     const totalAmount = subtotal + gstAmount;
 
     let paidAmount = totalAmount;
@@ -615,10 +863,13 @@ export const billingService = {
 
     const updatedBill: Bill = {
       ...existingBill,
+      customerId: params.customerId !== undefined ? params.customerId : existingBill.customerId,
       customerName: params.customerName || (pendingAmount > 0 ? 'Not tracked' : null),
       customerPhone: params.customerPhone || null,
       tableNumber: params.tableNumber || null,
       subtotal,
+      originalSubtotal: existingBill.originalSubtotal || existingBill.subtotal,
+      originalTotal: existingBill.originalTotal || existingBill.totalAmount,
       gstRate,
       gstAmount,
       totalAmount,
@@ -641,6 +892,8 @@ export const billingService = {
           amount: paidAmount,
           paymentMode: params.paymentMode,
           paidAt: existingBill.collections?.[0]?.paidAt || existingBill.createdAt || nowIso,
+          receivedByName: params.editor?.name || 'Owner',
+          receivedById: params.editor?.id || null,
         }
       ] : [],
       initialPaidAmount: paidAmount,
@@ -649,6 +902,7 @@ export const billingService = {
       editedAt: nowIso,
       editedByName: params.editor?.name || 'Owner',
       editedByRole: (params.editor?.role as any) || 'Owner',
+      editedById: params.editor?.id || null,
     };
 
     // 1. Update local storage
@@ -658,11 +912,27 @@ export const billingService = {
     // 2. Update Supabase
     try {
       const dbMode = toSupabasePaymentMode(params.paymentMode);
-      await (supabase.from('bills') as any).update({
+      let validCustomerId: string | null = null;
+      if (updatedBill.customerId && isValidUUID(updatedBill.customerId)) {
+        const customerExists = await contactService.ensureCustomerExists(
+          updatedBill.customerId,
+          updatedBill.shopId,
+          updatedBill.customerName,
+          updatedBill.customerPhone
+        );
+        if (customerExists) {
+          validCustomerId = updatedBill.customerId;
+        }
+      }
+
+      const updatePayload: any = {
+        customer_id: validCustomerId,
         customer_name: updatedBill.customerName || null,
         customer_phone: updatedBill.customerPhone || null,
         table_number: updatedBill.tableNumber || null,
         subtotal: updatedBill.subtotal,
+        original_subtotal: updatedBill.originalSubtotal || null,
+        original_total: updatedBill.originalTotal || null,
         gst_rate: updatedBill.gstRate,
         gst_amount: updatedBill.gstAmount,
         tax_amount: updatedBill.gstAmount,
@@ -677,8 +947,24 @@ export const billingService = {
         edited_at: updatedBill.editedAt,
         edited_by_name: updatedBill.editedByName,
         edited_by_role: updatedBill.editedByRole,
+        edited_by_id: updatedBill.editedById || null,
         collections: updatedBill.collections || [],
-      }).eq('id', params.billId);
+      };
+
+      const { error: updateErr } = await (supabase.from('bills') as any).update(updatePayload).eq('id', params.billId);
+      if (updateErr) {
+        if (
+          updatePayload.customer_id &&
+          (updateErr.message?.includes('bills_customer_id_fkey') ||
+            (updateErr as any).details?.includes('bills_customer_id_fkey'))
+        ) {
+          console.warn('updateBill bills_customer_id_fkey self-heal: clearing customer_id and retrying:', updatedBill.billNumber);
+          updatePayload.customer_id = null;
+          await (supabase.from('bills') as any).update(updatePayload).eq('id', params.billId);
+        } else {
+          console.warn('updateBill Supabase notice:', updateErr);
+        }
+      }
 
       // Re-insert bill items
       await (supabase.from('bill_items') as any).delete().eq('bill_id', params.billId);
@@ -763,11 +1049,24 @@ export const billingService = {
       // Adjust customer aggregate if applicable
       const pendingDiff = updatedBill.pendingAmount - (existingBill.pendingAmount || 0);
       if (pendingDiff !== 0 && updatedBill.customerName && updatedBill.customerName !== 'Not tracked') {
-        const { data: cust } = await (supabase.from('customers') as any)
-          .select('id, pending_balance')
-          .eq('shop_id', params.shopId)
-          .eq('name', updatedBill.customerName)
-          .maybeSingle();
+        const cleanPhone = updatedBill.customerPhone ? updatedBill.customerPhone.replace(/[^0-9]/g, '').slice(-10) : '';
+        let cust: any = null;
+        if (cleanPhone && cleanPhone.length === 10) {
+          const { data: byPhone } = await (supabase.from('customers') as any)
+            .select('id, pending_balance')
+            .eq('shop_id', params.shopId)
+            .ilike('phone', `%${cleanPhone}%`)
+            .maybeSingle();
+          cust = byPhone;
+        }
+        if (!cust) {
+          const { data: byName } = await (supabase.from('customers') as any)
+            .select('id, pending_balance')
+            .eq('shop_id', params.shopId)
+            .eq('name', updatedBill.customerName)
+            .maybeSingle();
+          cust = byName;
+        }
 
         if (cust) {
           await (supabase.from('customers') as any)
@@ -777,6 +1076,22 @@ export const billingService = {
             .eq('id', cust.id);
         }
       }
+
+      // Audit log in Supabase
+      await (supabase.from('audit_logs') as any).insert({
+        shop_id: params.shopId,
+        actor_user_id: params.editor?.id && isValidUUID(params.editor.id) ? params.editor.id : null,
+        action: 'bill.edited',
+        entity_type: 'bill',
+        entity_id: params.billId,
+        metadata: {
+          bill_number: existingBill.billNumber,
+          previous_total: existingBill.totalAmount,
+          new_total: updatedBill.totalAmount,
+          editor_name: params.editor?.name,
+          editor_role: params.editor?.role,
+        },
+      });
     } catch (err) {
       console.warn('updateBill Supabase notice:', err);
     }
@@ -785,13 +1100,28 @@ export const billingService = {
   },
 
   /**
-   * Soft-delete a bill with complete audit trail (retains record for audit and 100-bill count)
+   * Cancel/soft-delete a bill with complete audit trail (retains record for audit and 100-bill count)
    */
   async deleteBill(
     shopId: string,
     billId: string,
-    deleter: { name: string; role: string; id?: string }
+    deleter: { name: string; role: string; id?: string },
+    cancellationReason?: string
   ): Promise<Bill> {
+    if (deleter.role !== 'Owner') {
+      if (deleter.role === 'Biller') {
+        throw new Error('Unauthorized: Billers cannot delete or cancel bills. Only the shop Owner can delete or cancel bills.');
+      }
+      throw new Error(`Unauthorized: Only the shop Owner can delete or cancel bills. ${deleter.role}s cannot delete or cancel bills.`);
+    }
+
+    if (deleter.id) {
+      const isActive = await authService.isUserActiveInShop(shopId, deleter.id);
+      if (!isActive) {
+        throw new Error('Your staff account has been deactivated. Please contact the shop owner.');
+      }
+    }
+
     const allBills = await this.getBills(shopId);
     const target = allBills.find(b => b.id === billId);
     if (!target) throw new Error('Bill not found');
@@ -800,25 +1130,50 @@ export const billingService = {
 
     const deletedBill: Bill = {
       ...target,
-      status: 'deleted',
+      status: 'cancelled',
       isDeleted: true,
+      isCancelled: true,
       deletedAt: nowIso,
       deletedByName: deleter.name,
       deletedByRole: (deleter.role as any) || 'Owner',
+      deletedById: deleter.id || null,
+      cancellationReason: cancellationReason || 'Cancelled by staff',
     };
 
     // 1. Update local storage
     const updatedList = allBills.map(b => (b.id === billId ? deletedBill : b));
     await storage.setObject(LOCAL_BILLS_KEY, updatedList);
 
-    // 2. Soft-delete in Supabase
+    // Also adjust local customer cache dues immediately
+    if (target.customerName && target.pendingAmount > 0) {
+      try {
+        const localCusts = await storage.getObject<any[]>('@counterpro/customers', []);
+        const cleanPhone = target.customerPhone ? target.customerPhone.replace(/[^0-9]/g, '').slice(-10) : '';
+        const match = localCusts.find(c =>
+          c.shopId === shopId && (
+            (cleanPhone && c.phone && c.phone.replace(/[^0-9]/g, '').slice(-10) === cleanPhone) ||
+            c.name === target.customerName
+          )
+        );
+        if (match) {
+          match.pendingBalance = Math.max(0, (match.pendingBalance || 0) - target.pendingAmount);
+          match.statusTag = match.pendingBalance > 0 ? 'Pending' : 'Regular';
+          await storage.setObject('@counterpro/customers', localCusts);
+        }
+      } catch {}
+    }
+
+    // 2. Soft-delete/cancel in Supabase
     try {
       await (supabase.from('bills') as any).update({
-        status: 'deleted',
+        status: 'cancelled',
         is_deleted: true,
+        is_cancelled: true,
+        cancellation_reason: deletedBill.cancellationReason,
         deleted_at: nowIso,
         deleted_by_name: deleter.name,
         deleted_by_role: deleter.role,
+        deleted_by_id: deleter.id || null,
       }).eq('id', billId);
 
       // Cancel any open pending payment for this bill
@@ -828,11 +1183,24 @@ export const billingService = {
 
       // Adjust customer pending balance if applicable
       if (target.customerName && target.pendingAmount > 0) {
-        const { data: cust } = await (supabase.from('customers') as any)
-          .select('id, pending_balance')
-          .eq('shop_id', shopId)
-          .eq('name', target.customerName)
-          .maybeSingle();
+        const cleanPhone = target.customerPhone ? target.customerPhone.replace(/[^0-9]/g, '').slice(-10) : '';
+        let cust: any = null;
+        if (cleanPhone && cleanPhone.length === 10) {
+          const { data: byPhone } = await (supabase.from('customers') as any)
+            .select('id, pending_balance')
+            .eq('shop_id', shopId)
+            .ilike('phone', `%${cleanPhone}%`)
+            .maybeSingle();
+          cust = byPhone;
+        }
+        if (!cust) {
+          const { data: byName } = await (supabase.from('customers') as any)
+            .select('id, pending_balance')
+            .eq('shop_id', shopId)
+            .eq('name', target.customerName)
+            .maybeSingle();
+          cust = byName;
+        }
 
         if (cust) {
           await (supabase.from('customers') as any)
@@ -842,6 +1210,41 @@ export const billingService = {
             .eq('id', cust.id);
         }
       }
+
+      // Also adjust local customer cache dues
+      if (target.customerName && target.pendingAmount > 0) {
+        try {
+          const localCusts = await storage.getObject<any[]>('@counterpro/customers', []);
+          const cleanPhone = target.customerPhone ? target.customerPhone.replace(/[^0-9]/g, '').slice(-10) : '';
+          const match = localCusts.find(c =>
+            c.shopId === shopId && (
+              (cleanPhone && c.phone && c.phone.replace(/[^0-9]/g, '').slice(-10) === cleanPhone) ||
+              c.name === target.customerName
+            )
+          );
+          if (match) {
+            match.pendingBalance = Math.max(0, (match.pendingBalance || 0) - target.pendingAmount);
+            match.statusTag = match.pendingBalance > 0 ? 'Pending' : 'Regular';
+            await storage.setObject('@counterpro/customers', localCusts);
+          }
+        } catch {}
+      }
+
+      // Record in audit_logs
+      await (supabase.from('audit_logs') as any).insert({
+        shop_id: shopId,
+        actor_user_id: deleter.id && isValidUUID(deleter.id) ? deleter.id : null,
+        action: 'bill.cancelled',
+        entity_type: 'bill',
+        entity_id: billId,
+        metadata: {
+          bill_number: target.billNumber,
+          original_total: target.totalAmount,
+          reason: deletedBill.cancellationReason,
+          cancelled_by: deleter.name,
+          cancelled_by_role: deleter.role,
+        },
+      });
     } catch (err) {
       console.warn('deleteBill Supabase notice:', err);
     }
@@ -850,7 +1253,137 @@ export const billingService = {
   },
 
   /**
-   * Derive real pending payments from actual bills and Supabase pending_payments
+   * Restore a cancelled/voided bill back to active register with complete audit trail
+   */
+  async restoreBill(
+    shopId: string,
+    billId: string,
+    restorer: { name: string; role: string; id?: string }
+  ): Promise<Bill> {
+    if (restorer.role !== 'Owner') {
+      if (restorer.role === 'Biller') {
+        throw new Error('Unauthorized: Billers cannot restore bills. Only the shop Owner can restore cancelled bills.');
+      }
+      throw new Error(`Unauthorized: Only the shop Owner can restore cancelled bills. ${restorer.role}s cannot restore bills.`);
+    }
+
+    if (restorer.id) {
+      const isActive = await authService.isUserActiveInShop(shopId, restorer.id);
+      if (!isActive) {
+        throw new Error('Unauthorized: User is inactive or deleted from shop.');
+      }
+    }
+
+    const allBills = await this.getBills(shopId);
+    const target = allBills.find(b => b.id === billId);
+    if (!target) {
+      throw new Error('Bill not found');
+    }
+
+    // Determine restored status (if edited prior to cancel, returns to edited; otherwise completed)
+    const restoredStatus: 'completed' | 'edited' = target.isEdited ? 'edited' : 'completed';
+
+    const restoredBill: Bill = {
+      ...target,
+      status: restoredStatus,
+      isDeleted: false,
+      isCancelled: false,
+      cancellationReason: undefined,
+      deletedAt: undefined,
+      deletedByName: undefined,
+      deletedByRole: undefined,
+      deletedById: null,
+    };
+
+    // 1. Update local storage
+    const updatedList = allBills.map(b => (b.id === billId ? restoredBill : b));
+    await storage.setObject(LOCAL_BILLS_KEY, updatedList);
+
+    // Also re-adjust local customer cache dues immediately if pending
+    if (target.customerName && target.pendingAmount > 0) {
+      try {
+        const localCusts = await storage.getObject<any[]>('@counterpro/customers', []);
+        const cleanPhone = target.customerPhone ? target.customerPhone.replace(/[^0-9]/g, '').slice(-10) : '';
+        const match = localCusts.find(c =>
+          c.shopId === shopId && (
+            (cleanPhone && c.phone && c.phone.replace(/[^0-9]/g, '').slice(-10) === cleanPhone) ||
+            c.name === target.customerName
+          )
+        );
+        if (match) {
+          match.pendingBalance = (match.pendingBalance || 0) + target.pendingAmount;
+          match.statusTag = match.pendingBalance > 0 ? 'Pending' : 'Regular';
+          await storage.setObject('@counterpro/customers', localCusts);
+        }
+      } catch {}
+    }
+
+    // 2. Restore in Supabase
+    try {
+      await (supabase.from('bills') as any).update({
+        status: restoredStatus,
+        is_deleted: false,
+        is_cancelled: false,
+        cancellation_reason: null,
+        deleted_at: null,
+        deleted_by_name: null,
+        deleted_by_role: null,
+        deleted_by_id: null,
+      }).eq('id', billId);
+
+      // Restore open pending payment for this bill if applicable
+      if (target.pendingAmount && target.pendingAmount > 0) {
+        await (supabase.from('pending_payments') as any)
+          .update({ status: 'pending' })
+          .eq('bill_id', billId);
+
+        // Re-adjust customer pending balance in Supabase
+        if (target.customerName) {
+          const cleanPhone = target.customerPhone ? target.customerPhone.replace(/[^0-9]/g, '').slice(-10) : '';
+          const { data: customerData } = await (supabase.from('customers') as any)
+            .select('id, pending_balance, total_bills')
+            .eq('shop_id', shopId)
+            .eq('phone', cleanPhone)
+            .maybeSingle();
+
+          if (customerData) {
+            const currentBalance = customerData.pending_balance || 0;
+            const newBalance = currentBalance + target.pendingAmount;
+            await (supabase.from('customers') as any)
+              .update({
+                pending_balance: newBalance,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', customerData.id);
+          }
+        }
+      }
+
+      // Record audit log
+      await (supabase.from('audit_logs') as any).insert({
+        shop_id: shopId,
+        actor_user_id: restorer.id && isValidUUID(restorer.id) ? restorer.id : null,
+        action: 'bill.restored',
+        entity_type: 'bill',
+        entity_id: billId,
+        metadata: {
+          bill_number: target.billNumber,
+          original_total: target.totalAmount,
+          restored_by: restorer.name,
+          restored_by_role: restorer.role,
+        },
+      });
+    } catch (err) {
+      console.warn('restoreBill Supabase notice:', err);
+    }
+
+    return restoredBill;
+  },
+
+  /**
+   * Derive real pending payments from actual bills and Supabase pending_payments,
+   * grouped by customer so multiple bills under the same person appear as one clean ledger item
+   * with their total due amount and an expandable breakdown of individual bills.
    */
   async getPendingPayments(shopId: string): Promise<PendingPaymentRecord[]> {
     if (!shopId) return [];
@@ -859,20 +1392,172 @@ export const billingService = {
     // Only active bills with an actual positive pending balance
     const pendingBills = bills.filter(b => Number(b.pendingAmount || 0) > 0);
 
-    return pendingBills.map(b => ({
-      id: b.id,
-      shopId: b.shopId,
-      billId: b.id,
-      billNumber: b.billNumber,
-      customerName: b.customerName || 'Not tracked',
-      customerPhone: b.customerPhone,
-      amountDue: b.pendingAmount,
-      amountPaid: b.paidAmount,
-      ageDescription: 'Today',
-      status: 'open',
-      bills: [{ billNumber: b.billNumber, date: b.createdAt, amount: b.pendingAmount }],
-      createdAt: b.createdAt,
-    }));
+    // Group pending bills by customer (by clean phone if available, else customerName)
+    const groups = new Map<string, typeof pendingBills>();
+
+    for (const b of pendingBills) {
+      const cleanPhone = b.customerPhone ? b.customerPhone.replace(/[^0-9]/g, '').slice(-10) : '';
+      const key = cleanPhone && cleanPhone.length === 10
+        ? `phone_${cleanPhone}`
+        : `name_${(b.customerName || 'Not tracked').toLowerCase().trim()}`;
+
+      const existing = groups.get(key) || [];
+      existing.push(b);
+      groups.set(key, existing);
+    }
+
+    const records: PendingPaymentRecord[] = [];
+
+    for (const [, groupBills] of groups.entries()) {
+      // Sort group bills by date (newest first for primary info, but track oldest date)
+      groupBills.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      const primary = groupBills[0];
+      const oldestBill = groupBills[groupBills.length - 1];
+
+      const totalDue = groupBills.reduce((sum, b) => sum + Number(b.pendingAmount || 0), 0);
+      const totalPaid = groupBills.reduce((sum, b) => sum + Number(b.paidAmount || 0), 0);
+
+      // Determine age description
+      let ageDesc = 'Today';
+      try {
+        const createdMs = new Date(oldestBill.createdAt).getTime();
+        const diffDays = Math.floor((Date.now() - createdMs) / (1000 * 60 * 60 * 24));
+        if (diffDays > 1) {
+          ageDesc = `${diffDays} days ago`;
+        } else if (diffDays === 1) {
+          ageDesc = 'Yesterday';
+        }
+      } catch {}
+
+      records.push({
+        id: groupBills.length > 1 ? `group_${primary.id}` : primary.id,
+        shopId: primary.shopId,
+        billId: primary.id,
+        billNumber: groupBills.length > 1 ? `${primary.billNumber} (+${groupBills.length - 1} more)` : primary.billNumber,
+        customerName: primary.customerName || 'Not tracked',
+        customerPhone: primary.customerPhone,
+        amountDue: totalDue,
+        amountPaid: totalPaid,
+        ageDescription: ageDesc,
+        status: 'open',
+        bills: groupBills.map(b => ({
+          billId: b.id,
+          billNumber: b.billNumber,
+          date: b.createdAt,
+          amount: b.pendingAmount,
+        })),
+        createdAt: primary.createdAt,
+      });
+    }
+
+    return records;
+  },
+
+  /**
+   * Clear multiple pending bills for a customer in sequence (e.g. FIFO or user-selected bills)
+   */
+  async clearMultiplePendingBills(
+    shopId: string,
+    billIds: string[],
+    paidNowAmount?: number,
+    paymentMode: PaymentMethod = 'Cash',
+    collector?: { name?: string; role?: string; id?: string }
+  ): Promise<PendingPaymentRecord[]> {
+    const canPend = await authService.canUserPerform(shopId, collector?.id, 'pend');
+    if (!canPend) {
+      throw new Error("You don't have access for that");
+    }
+
+    if (!billIds || billIds.length === 0) {
+      return await this.getPendingPayments(shopId);
+    }
+
+    const allSaved = await storage.getObject<Bill[]>(LOCAL_BILLS_KEY, []);
+    const nowIso = new Date().toISOString();
+    const dbMode = toSupabasePaymentMode(paymentMode);
+
+    // Filter target bills for this shop that have positive pending amount
+    const matchedBills = allSaved
+      .filter(b => b.shopId === shopId && billIds.includes(b.id) && (b.pendingAmount || 0) > 0)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+    let remainingToDistribute = paidNowAmount !== undefined && paidNowAmount !== null && paidNowAmount > 0
+      ? paidNowAmount
+      : matchedBills.reduce((s, b) => s + (b.pendingAmount || 0), 0);
+
+    const updatedBillsMap = new Map<string, Bill>();
+
+    for (const b of matchedBills) {
+      if (remainingToDistribute <= 0) break;
+      const currentDue = b.pendingAmount > 0 ? b.pendingAmount : b.totalAmount;
+      const collectForThisBill = Math.min(currentDue, remainingToDistribute);
+      const remainingDue = Math.max(0, currentDue - collectForThisBill);
+      const isFullSettlement = remainingDue === 0;
+      const newPaidAmount = (b.paidAmount || 0) + collectForThisBill;
+
+      const initialPaid = b.initialPaidAmount !== undefined
+        ? b.initialPaidAmount
+        : (b.paymentMode === 'Pending' ? 0 : (b.paidAmount || 0));
+
+      const newCollection: BillPaymentCollection = {
+        id: generateUUID(),
+        amount: collectForThisBill,
+        paymentMode,
+        paidAt: nowIso,
+        receivedByName: collector?.name || 'Owner',
+        receivedById: collector?.id || null,
+      };
+
+      const updatedBill: Bill = {
+        ...b,
+        paidAmount: newPaidAmount,
+        pendingAmount: remainingDue,
+        initialPaidAmount: initialPaid,
+        paymentMode: isFullSettlement ? (b.paymentMode === 'Pending' ? paymentMode : b.paymentMode) : b.paymentMode,
+        settledAt: isFullSettlement ? nowIso : (b.settledAt || null),
+        completedAt: nowIso,
+        collections: [...(b.collections || []), newCollection],
+      };
+
+      updatedBillsMap.set(b.id, updatedBill);
+      remainingToDistribute -= collectForThisBill;
+
+      // Sync this bill to Supabase asynchronously in background
+      (async () => {
+        try {
+          const updateData: any = {
+            paid_amount: newPaidAmount,
+            pending_amount: remainingDue,
+            completed_at: nowIso,
+            collections: updatedBill.collections,
+          };
+          if (isFullSettlement) {
+            updateData.settled_at = nowIso;
+            if (b.paymentMode === 'Pending') {
+              updateData.payment_mode = dbMode;
+            }
+          }
+          if (isValidUUID(b.id)) {
+            await (supabase.from('bills') as any).update(updateData).eq('id', b.id);
+            if (isFullSettlement) {
+              await (supabase.from('pending_payments') as any)
+                .update({ status: 'settled', settled_at: nowIso, amount_paid: newPaidAmount, amount_due: 0 })
+                .eq('bill_id', b.id);
+            } else {
+              await (supabase.from('pending_payments') as any)
+                .update({ amount_due: remainingDue, amount_paid: newPaidAmount })
+                .eq('bill_id', b.id);
+            }
+          }
+        } catch {}
+      })().catch(() => {});
+    }
+
+    // Persist all updated bills to local storage immediately
+    const updatedAllBills = allSaved.map(b => updatedBillsMap.get(b.id) || b);
+    await storage.setObject(LOCAL_BILLS_KEY, updatedAllBills);
+
+    return await this.getPendingPayments(shopId);
   },
 
   /**
@@ -884,9 +1569,15 @@ export const billingService = {
     shopId: string,
     targetBillId: string,
     paidNowAmount?: number,
-    paymentMode: PaymentMethod = 'Cash'
+    paymentMode: PaymentMethod = 'Cash',
+    collector?: { name?: string; role?: string; id?: string }
   ): Promise<PendingPaymentRecord[]> {
-    const cleanId = String(targetBillId || '').replace(/^pend_/, '').trim();
+    const canPend = await authService.canUserPerform(shopId, collector?.id, 'pend');
+    if (!canPend) {
+      throw new Error("You don't have access for that");
+    }
+
+    const cleanId = String(targetBillId || '').replace(/^pend_/, '').replace(/^group_/, '').trim();
     const bills = await this.getBills(shopId);
     const allSaved = await storage.getObject<Bill[]>(LOCAL_BILLS_KEY, []);
 
@@ -931,6 +1622,8 @@ export const billingService = {
       amount: amountToCollect,
       paymentMode,
       paidAt: nowIso,
+      receivedByName: collector?.name || 'Owner',
+      receivedById: collector?.id || null,
     };
 
     // 1. Update bill in local storage
@@ -997,20 +1690,7 @@ export const billingService = {
         await (supabase.from('bills') as any).update(updateData).eq('shop_id', shopId).eq('bill_number', resolvedBill.billNumber);
       }
 
-      // Also mark open pending_payments by customer name if fully settled
-      if (isFullSettlement && resolvedBill.customerName && resolvedBill.customerName !== 'Not tracked') {
-        await (supabase.from('pending_payments') as any)
-          .update({
-            status: 'settled',
-            settled_at: nowIso,
-            amount_paid: newPaidAmount,
-            amount_due: 0,
-          })
-          .eq('shop_id', shopId)
-          .eq('status', 'open')
-          .eq('customer_name', resolvedBill.customerName);
-      }
-
+      // Record payment transaction
       await (supabase.from('payments') as any).insert({
         id: generateUUID(),
         shop_id: shopId,
@@ -1019,6 +1699,7 @@ export const billingService = {
         amount: amountToCollect,
         status: 'successful',
         paid_at: nowIso,
+        created_by: collector?.id && isValidUUID(collector.id) ? collector.id : null,
       });
 
       if (resolvedBill.customerName && resolvedBill.customerName !== 'Not tracked') {
@@ -1067,9 +1748,19 @@ export const billingService = {
     const allBills = await this.getBills(shopId);
     const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
     return allBills.filter(b => {
-      if (!b.isDeleted && b.status !== 'deleted') return false;
+      if (!b.isDeleted && b.status !== 'deleted' && b.status !== 'cancelled') return false;
       const delTime = b.deletedAt ? new Date(b.deletedAt).getTime() : new Date(b.createdAt).getTime();
       return delTime >= thirtyDaysAgo;
     });
+  },
+
+  async settlePendingPayment(
+    shopId: string,
+    targetBillId: string,
+    paidNowAmount?: number,
+    paymentMode: PaymentMethod = 'Cash',
+    collector?: { name?: string; role?: string; id?: string }
+  ): Promise<PendingPaymentRecord[]> {
+    return this.clearPendingPayment(shopId, targetBillId, paidNowAmount, paymentMode, collector);
   },
 };

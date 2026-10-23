@@ -1,7 +1,7 @@
 import { storage } from '../lib/storage';
 
 export const TWOFACTOR_CONFIG = {
-  API_KEY: process.env.EXPO_PUBLIC_TWOFACTOR_API_KEY || '',
+  API_KEY: process.env.EXPO_PUBLIC_TWOFACTOR_API_KEY || 'e11be203-4f77-11f1-9800-0200cd936042',
   TEMPLATE_NAME: process.env.EXPO_PUBLIC_TWOFACTOR_TEMPLATE_NAME || 'Login_Verification_OTP',
   BASE_URL: 'https://2factor.in/API/V1',
 };

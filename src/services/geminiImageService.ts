@@ -97,7 +97,7 @@ export const geminiImageService = {
             quotaCooldownUntil = Date.now() + 10 * 60 * 1000; // 10-minute cooldown
             if (!hasLoggedQuotaNotice) {
               console.log(
-                '[CounterPro AI] Note: Gemini image synthesis quota reached (HTTP 429). Automatically using verified high-resolution restaurant food photography.'
+                '[Counter365 AI] Note: Gemini image synthesis quota reached (HTTP 429). Automatically using verified high-resolution restaurant food photography.'
               );
               hasLoggedQuotaNotice = true;
             }

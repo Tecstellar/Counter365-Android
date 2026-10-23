@@ -1,274 +1,831 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Image } from 'react-native';
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  Dimensions,
+  Platform,
+  Animated,
+  ActivityIndicator,
+  AccessibilityInfo,
+  KeyboardAvoidingView,
+  ScrollView,
+  Keyboard,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, typography, spacing, radii, shadows } from '../../theme';
-import { AppButton } from '../../components/common/AppButton';
+import Svg, { Defs, RadialGradient, LinearGradient, Stop, Rect } from 'react-native-svg';
+import { Ionicons } from '@expo/vector-icons';
+import { colors, typography } from '../../theme';
+import { ProtoIcon } from '../../components/common/ProtoIcon';
+import { AuthBackgroundGlows } from '../../components/common/AuthBackgroundGlows';
+import { LegalDocumentModal } from '../../components/common/LegalDocumentModal';
+import {
+  PRIVACY_POLICY_SECTIONS,
+  TERMS_OF_SERVICE_SECTIONS,
+  DPDPA_COMPLIANCE_DATE,
+} from '../../constants/legalDocuments';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 interface PhoneStepProps {
   phone: string;
-  onKeyPress: (key: string) => void;
+  onKeyPress?: (key: string) => void;
+  onChangePhone?: (phone: string) => void;
   onNext: () => void;
   loading?: boolean;
   error?: string | null;
+  isVerified?: boolean;
 }
 
 export const PhoneStep: React.FC<PhoneStepProps> = ({
   phone,
   onKeyPress,
+  onChangePhone,
   onNext,
   loading = false,
   error = null,
+  isVerified = false,
 }) => {
   const insets = useSafeAreaInsets();
-  const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'];
+  const inputRef = useRef<TextInput>(null);
 
-  // Format phone display with placeholder underscores: e.g. "98404 12345" or "98404 _____"
-  const formatMask = (num: string) => {
-    let res = '';
-    for (let i = 0; i < 10; i++) {
-      if (i === 5) res += ' ';
-      res += i < num.length ? num[i] : '_';
+  const [isFocused, setIsFocused] = useState(false);
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const [isAgreed, setIsAgreed] = useState(isVerified);
+  const [showTermsModal, setShowTermsModal] = useState(false);
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+
+  // Strip +91 / 91 country prefix if picked up from device autofill to preserve exact 10 digits
+  const sanitizeIndianPhone = (val: string): string => {
+    if (!val) return '';
+    const digitsOnly = val.replace(/\D/g, '');
+    if (digitsOnly.length === 12 && digitsOnly.startsWith('91')) {
+      return digitsOnly.slice(2);
     }
-    return res;
+    if (digitsOnly.length > 10) {
+      return digitsOnly.slice(-10);
+    }
+    return digitsOnly;
   };
 
-  const topPadding = Math.max(insets.top, Platform.OS === 'android' ? 14 : 16);
-  const bottomPadding = Math.max(insets.bottom, Platform.OS === 'android' ? 10 : 12);
+  // Authoritative digits derived directly from phone prop to prevent double-updates
+  const digits = sanitizeIndianPhone(phone);
+
+  // Check accessibility reduce motion
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(enabled => {
+      setReduceMotion(enabled);
+    });
+  }, []);
+
+  // Keyboard show/hide listener to prevent keyboard from hiding the field
+  const heroHeightAnim = useRef(new Animated.Value(330)).current;
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const onShow = () => {
+      setIsKeyboardVisible(true);
+      Animated.timing(heroHeightAnim, {
+        toValue: 90,
+        duration: 250,
+        useNativeDriver: false,
+      }).start();
+    };
+
+    const onHide = () => {
+      setIsKeyboardVisible(false);
+      Animated.timing(heroHeightAnim, {
+        toValue: 330,
+        duration: 250,
+        useNativeDriver: false,
+      }).start();
+    };
+
+    const showSub = Keyboard.addListener(showEvent, onShow);
+    const hideSub = Keyboard.addListener(hideEvent, onHide);
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  // Animation values
+  const ring1 = useRef(new Animated.Value(0)).current;
+  const ring2 = useRef(new Animated.Value(0)).current;
+  const ring3 = useRef(new Animated.Value(0)).current;
+
+  const dotFloat = useRef(new Animated.Value(0)).current;
+
+  const logoTranslateY = useRef(new Animated.Value(12)).current;
+  const logoOpacity = useRef(new Animated.Value(0)).current;
+
+  const cardTranslateY = useRef(new Animated.Value(14)).current;
+  const cardOpacity = useRef(new Animated.Value(0)).current;
+
+  const checkScale = useRef(new Animated.Value(0)).current;
+
+  const isValid = /^[6-9][0-9]{9}$/.test(digits);
+
+  // Format phone display: "98765 43210"
+  const formatPhone = (val: string) => {
+    if (val.length > 5) {
+      return val.slice(0, 5) + ' ' + val.slice(5);
+    }
+    return val;
+  };
+
+  // Animate green checkmark pop
+  useEffect(() => {
+    if (reduceMotion) {
+      checkScale.setValue(isValid ? 1 : 0);
+      return;
+    }
+    Animated.spring(checkScale, {
+      toValue: isValid ? 1 : 0,
+      tension: 180,
+      friction: 10,
+      useNativeDriver: true,
+    }).start();
+  }, [isValid, reduceMotion]);
+
+  // Entrance animations
+  useEffect(() => {
+    if (reduceMotion) {
+      logoTranslateY.setValue(0);
+      logoOpacity.setValue(1);
+      cardTranslateY.setValue(0);
+      cardOpacity.setValue(1);
+      return;
+    }
+
+    Animated.parallel([
+      Animated.sequence([
+        Animated.delay(200),
+        Animated.parallel([
+          Animated.timing(logoTranslateY, {
+            toValue: 0,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+          Animated.timing(logoOpacity, {
+            toValue: 1,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+        ]),
+      ]),
+      Animated.sequence([
+        Animated.delay(150),
+        Animated.parallel([
+          Animated.timing(cardTranslateY, {
+            toValue: 0,
+            duration: 600,
+            useNativeDriver: true,
+          }),
+          Animated.timing(cardOpacity, {
+            toValue: 1,
+            duration: 600,
+            useNativeDriver: true,
+          }),
+        ]),
+      ]),
+    ]).start();
+  }, [reduceMotion]);
+
+  // Concentric rings animation (4.5s ease-out loop, staggered by 1.5s)
+  useEffect(() => {
+    if (reduceMotion) return;
+
+    const createRingLoop = (anim: Animated.Value, delayMs: number) => {
+      return Animated.loop(
+        Animated.sequence([
+          Animated.delay(delayMs),
+          Animated.timing(anim, {
+            toValue: 1,
+            duration: 4500,
+            useNativeDriver: true,
+          }),
+          Animated.timing(anim, {
+            toValue: 0,
+            duration: 0,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+    };
+
+    const l1 = createRingLoop(ring1, 0);
+    const l2 = createRingLoop(ring2, 1500);
+    const l3 = createRingLoop(ring3, 3000);
+
+    l1.start();
+    l2.start();
+    l3.start();
+
+    return () => {
+      l1.stop();
+      l2.stop();
+      l3.stop();
+    };
+  }, [reduceMotion]);
+
+  // Floating dots animation
+  useEffect(() => {
+    if (reduceMotion) return;
+    const floatLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(dotFloat, {
+          toValue: -3,
+          duration: 2500,
+          useNativeDriver: true,
+        }),
+        Animated.timing(dotFloat, {
+          toValue: 0,
+          duration: 2500,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    floatLoop.start();
+    return () => floatLoop.stop();
+  }, [reduceMotion]);
+
+  // Clean text change handler - calls exactly ONE updater to eliminate double-typing
+  const handleChangeText = (text: string) => {
+    const raw = sanitizeIndianPhone(text);
+    if (onChangePhone) {
+      onChangePhone(raw);
+    } else if (onKeyPress) {
+      if (raw.length < digits.length) {
+        onKeyPress('⌫');
+      } else {
+        const added = raw.slice(-1);
+        if (added) onKeyPress(added);
+      }
+    }
+  };
+
+  const topInset = Math.max(insets.top, Platform.OS === 'android' ? 14 : 16);
+
+  // Concentric ring interpolations
+  const getRingScale = (anim: Animated.Value) =>
+    anim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0.6, 4.2],
+    });
+
+  const getRingOpacity = (anim: Animated.Value) =>
+    anim.interpolate({
+      inputRange: [0, 0.1, 0.8, 1],
+      outputRange: [0.8, 0.8, 0.2, 0],
+    });
 
   return (
-    <View style={[styles.container, { paddingTop: topPadding, paddingBottom: bottomPadding }]}>
-      {/* Step Header */}
-      <View style={styles.stepHeader}>
-        <Image
-          source={require('../../../assets/counterpro_logo.png')}
-          style={styles.logoImage}
-          resizeMode="contain"
-        />
-        <Text style={styles.stepCount}>STEP 1 OF 4</Text>
-      </View>
+    <KeyboardAvoidingView
+      style={styles.root}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <AuthBackgroundGlows />
 
-      {/* Progress Bars */}
-      <View style={styles.progressRow}>
-        <View style={[styles.progressSegment, styles.activeSegment]} />
-        <View style={styles.progressSegment} />
-        <View style={styles.progressSegment} />
-        <View style={styles.progressSegment} />
-      </View>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="always"
+        bounces={false}
+      >
+        {/* Top Hero Panel (.lhero) - Collapses when keyboard is active */}
+        <Animated.View style={[styles.heroPanel, { height: heroHeightAnim, paddingTop: topInset }]}>
+          {/* Hero background gradients (Light Mode) */}
+          <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
+            <Defs>
+              <RadialGradient id="heroTopRight" cx="85%" cy="0%" rx="90%" ry="80%" fx="85%" fy="0%">
+                <Stop offset="0%" stopColor="#FF5F00" stopOpacity={0.3} />
+                <Stop offset="60%" stopColor="#FF5F00" stopOpacity={0} />
+              </RadialGradient>
+              <RadialGradient id="heroBottomLeft" cx="0%" cy="100%" rx="70%" ry="60%" fx="0%" fy="100%">
+                <Stop offset="0%" stopColor="#FFAA6E" stopOpacity={0.26} />
+                <Stop offset="60%" stopColor="#FF5F00" stopOpacity={0} />
+              </RadialGradient>
+              <LinearGradient id="heroLinear" x1="0" y1="0" x2="1" y2="1">
+                <Stop offset="0%" stopColor="#FFFFFF" />
+                <Stop offset="100%" stopColor="#FCEFE2" />
+              </LinearGradient>
+            </Defs>
+            <Rect width="100%" height="100%" fill="url(#heroLinear)" />
+            <Rect width="100%" height="100%" fill="url(#heroTopRight)" />
+            <Rect width="100%" height="100%" fill="url(#heroBottomLeft)" />
+          </Svg>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <Text style={styles.title}>Your phone number</Text>
-        <Text style={styles.subtitle}>
-          We send a 6-digit code. This number becomes the owner's master ID — no password to forget.
-        </Text>
+          {/* 3 Concentric Rings (.ring, .r2, .r3) - hidden when keyboard is open */}
+          {!isKeyboardVisible && (
+            <>
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.ring,
+                  {
+                    transform: [{ scale: getRingScale(ring1) }],
+                    opacity: getRingOpacity(ring1),
+                  },
+                ]}
+              />
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.ring,
+                  {
+                    transform: [{ scale: getRingScale(ring2) }],
+                    opacity: getRingOpacity(ring2),
+                  },
+                ]}
+              />
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.ring,
+                  {
+                    transform: [{ scale: getRingScale(ring3) }],
+                    opacity: getRingOpacity(ring3),
+                  },
+                ]}
+              />
 
-        {/* Phone Input Box */}
-        <View style={[styles.phoneBox, !!error && styles.phoneBoxError]}>
-          <Text style={styles.countryCode}>+91</Text>
-          <Text style={styles.maskedPhone}>{formatMask(phone)}</Text>
-        </View>
+              {/* 3 Floating Dots (.dotx, .d1, .d2, .d3) */}
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.dot,
+                  styles.dot1,
+                  { transform: [{ translateY: dotFloat }] },
+                ]}
+              />
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.dot,
+                  styles.dot2,
+                  { transform: [{ translateY: dotFloat }] },
+                ]}
+              />
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.dot,
+                  styles.dot3,
+                  { transform: [{ translateY: dotFloat }] },
+                ]}
+              />
+            </>
+          )}
 
-        {error ? (
-          <View style={styles.errorBanner}>
-            <Text style={styles.errorBannerText}>{error}</Text>
+          {/* Logo (.llogo) with entrance rise */}
+          <Animated.Image
+            source={require('../../../assets/logo_light.png')}
+            style={[
+              styles.heroLogo,
+              isKeyboardVisible && styles.heroLogoSmall,
+              {
+                opacity: logoOpacity,
+                transform: [{ translateY: logoTranslateY }],
+              },
+            ]}
+            resizeMode="contain"
+          />
+        </Animated.View>
+
+        {/* Form Card (.lcard) */}
+        <Animated.View
+          style={[
+            styles.card,
+            isKeyboardVisible && styles.cardKeyboardActive,
+            {
+              backgroundColor: colors.gc,
+              borderColor: colors.glb,
+              opacity: cardOpacity,
+              transform: [{ translateY: cardTranslateY }],
+            },
+          ]}
+        >
+          <Text style={[styles.title, { color: colors.ink }]}>Welcome back</Text>
+          <Text style={[styles.subtitle, { color: colors.mu }]}>
+            Enter your mobile number to sign in
+          </Text>
+
+          <Text style={[styles.fieldLabel, { color: colors.mu }]}>MOBILE NUMBER</Text>
+
+          {/* Phone Field (.pf) */}
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={() => inputRef.current?.focus()}
+            style={[
+              styles.phoneInputContainer,
+              {
+                backgroundColor: colors.s,
+                borderColor: error ? colors.err : isFocused ? '#FF5F00' : colors.ln,
+              },
+              isFocused && styles.phoneInputFocused,
+            ]}
+          >
+            {/* Country code pill (.cc2) */}
+            <View style={[styles.countryCodePill, { borderRightColor: colors.ln }]}>
+              <Text style={styles.flagIcon}>🇮🇳</Text>
+              <Text style={[styles.countryCodeText, { color: colors.ink }]}>+91</Text>
+            </View>
+
+            {/* Input field */}
+            <TextInput
+              ref={inputRef}
+              style={[
+                styles.phoneTextInput,
+                { color: colors.ink },
+                Platform.OS === 'android' ? styles.phoneTextInputAndroid : styles.phoneTextInputIos,
+              ]}
+              value={formatPhone(digits)}
+              onChangeText={handleChangeText}
+              placeholder="98765 43210"
+              placeholderTextColor={colors.mu}
+              keyboardType="phone-pad"
+              autoComplete="tel"
+              maxLength={12}
+              onFocus={() => setIsFocused(true)}
+              onBlur={() => setIsFocused(false)}
+              selectionColor="#FF5F00"
+            />
+
+            {/* Green Checkmark (.vk) */}
+            <Animated.View
+              style={[
+                styles.validationCheck,
+                { transform: [{ scale: checkScale }] },
+              ]}
+            >
+              <ProtoIcon name="ck" size={16} color="#FFFFFF" strokeWidth={2.5} />
+            </Animated.View>
+          </TouchableOpacity>
+
+          {/* Error notice if present */}
+          {error ? (
+            <View style={styles.errorNotice}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
+
+          {isVerified ? (
+            <View style={styles.verifiedNotice}>
+              <Ionicons name="checkmark-circle" size={17} color="#15803D" />
+              <Text style={styles.verifiedText}>
+                Phone verified! You already verified OTP. Tap below to register your shop.
+              </Text>
+            </View>
+          ) : (
+            <Text style={[styles.helperText, { color: colors.mu }]}>
+              We'll send a verification code to this number
+            </Text>
+          )}
+
+          {/* DPDPA 2023 Consent Checkbox Row */}
+          <View style={styles.consentRow}>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => setIsAgreed(prev => !prev)}
+              style={[
+                styles.checkboxBox,
+                (isAgreed || isVerified) && styles.checkboxBoxChecked,
+                { borderColor: (isAgreed || isVerified) ? '#FF5F00' : colors.ln || '#CBD5E1' },
+              ]}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: isAgreed || isVerified }}
+              accessibilityLabel="I agree to the Terms of Service and Privacy Policy"
+            >
+              {(isAgreed || isVerified) ? (
+                <ProtoIcon name="ck" size={13} color="#FFFFFF" strokeWidth={3} />
+              ) : null}
+            </TouchableOpacity>
+
+            <Text style={[styles.consentLabelText, { color: colors.ink }]}>
+              I agree to the{' '}
+              <Text
+                onPress={() => setShowTermsModal(true)}
+                style={styles.legalUnderlineLink}
+              >
+                Terms of Service
+              </Text>
+              {' '}and{' '}
+              <Text
+                onPress={() => setShowPrivacyModal(true)}
+                style={styles.legalUnderlineLink}
+              >
+                Privacy Policy
+              </Text>
+            </Text>
           </View>
-        ) : null}
 
-        <Text style={styles.legalNote}>
-          By continuing you accept the <Text style={styles.link}>Terms</Text> and{' '}
-          <Text style={styles.link}>Privacy Policy</Text>.
-        </Text>
+          {/* Send OTP / Continue Registration Button (.btn) */}
+          <TouchableOpacity
+            onPress={onNext}
+            activeOpacity={0.92}
+            disabled={!isValid || (!isAgreed && !isVerified) || loading}
+            style={[
+              styles.submitButton,
+              (!isValid || (!isAgreed && !isVerified) || loading) && styles.submitButtonDisabled,
+            ]}
+          >
+            {loading ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <>
+                <Text style={styles.submitButtonText}>
+                  {isVerified ? 'Register Shop' : 'Send OTP'}
+                </Text>
+                <ProtoIcon name="ar" size={20} color="#FFFFFF" strokeWidth={2.2} />
+              </>
+            )}
+          </TouchableOpacity>
+        </Animated.View>
       </ScrollView>
 
-      {/* Keypad */}
-      <View style={styles.keypad}>
-        <View style={styles.keyGrid}>
-          {keys.map((k, idx) => (
-            <TouchableOpacity
-              key={idx}
-              activeOpacity={0.7}
-              disabled={!k || loading}
-              onPress={() => onKeyPress(k)}
-              style={[styles.keyButton, !k && styles.emptyKey]}
-            >
-              <Text style={styles.keyText}>{k}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
+      {/* Terms of Service Modal (DPDPA 2023) */}
+      <LegalDocumentModal
+        visible={showTermsModal}
+        onClose={() => setShowTermsModal(false)}
+        title="Terms of Service"
+        subtitle="CounterPro Merchant Service & Regulatory Agreement"
+        badge="DPDPA 2023"
+        sections={TERMS_OF_SERVICE_SECTIONS}
+      />
 
-      {/* Next Button */}
-      <View style={styles.actionRow}>
-        <AppButton
-          title="Send OTP"
-          variant="primary"
-          onPress={onNext}
-          loading={loading}
-          disabled={phone.length < 10 || loading}
-          style={styles.nextBtn}
-        />
-      </View>
-    </View>
+      {/* Privacy Policy Modal (DPDPA 2023) */}
+      <LegalDocumentModal
+        visible={showPrivacyModal}
+        onClose={() => setShowPrivacyModal(false)}
+        title="Privacy Policy"
+        subtitle={`Digital Personal Data Protection Act, 2023 • Updated ${DPDPA_COMPLIANCE_DATE}`}
+        badge="DPDPA 2023"
+        sections={PRIVACY_POLICY_SECTIONS}
+      />
+    </KeyboardAvoidingView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
-    backgroundColor: '#FAF7F2',
-  },
-  stepHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 10,
-  },
-  logoImage: {
-    width: 120,
-    height: 30,
-  },
-  stepCount: {
-    fontSize: 11,
-    color: colors.textSecondary,
-    fontFamily: typography.fonts.heading,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-  },
-  progressRow: {
-    flexDirection: 'row',
-    gap: 6,
-    paddingHorizontal: 20,
-    paddingBottom: 14,
-  },
-  progressSegment: {
-    flex: 1,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#E5E0D8',
-  },
-  activeSegment: {
-    backgroundColor: '#FD5E03',
+    backgroundColor: 'transparent',
   },
   scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 30,
+  },
+  heroPanel: {
+    borderBottomLeftRadius: 46,
+    borderBottomRightRadius: 46,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    shadowColor: '#FF5F00',
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.35,
+    shadowRadius: 24,
+    elevation: 8,
+  },
+  ring: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    width: 120,
+    height: 120,
+    marginTop: -60,
+    marginLeft: -60,
+    borderRadius: 60,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 95, 0, 0.5)',
+  },
+  dot: {
+    position: 'absolute',
+    borderRadius: 99,
+    backgroundColor: 'rgba(255, 120, 40, 0.35)',
+  },
+  dot1: {
+    width: 10,
+    height: 10,
+    left: '14%',
+    top: '30%',
+  },
+  dot2: {
+    width: 16,
+    height: 16,
+    right: '16%',
+    top: '22%',
+  },
+  dot3: {
+    width: 8,
+    height: 8,
+    right: '26%',
+    bottom: '26%',
+  },
+  heroLogo: {
+    width: 236,
+    height: 58,
+    zIndex: 5,
+  },
+  heroLogoSmall: {
+    width: 130,
+    height: 32,
+  },
+  card: {
+    marginTop: -44,
+    marginHorizontal: 16,
+    paddingVertical: 22,
     paddingHorizontal: 20,
-    paddingVertical: 6,
+    borderRadius: 30,
+    borderWidth: 1,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.18,
+    shadowRadius: 22,
+    elevation: 6,
+  },
+  cardKeyboardActive: {
+    marginTop: 10,
   },
   title: {
-    fontFamily: typography.fonts.heading,
-    fontSize: 24,
-    fontWeight: '800',
-    color: colors.text,
-    marginTop: 8,
-    marginBottom: 4,
+    fontFamily: 'Jost',
+    fontSize: 27,
+    fontWeight: '700',
+    letterSpacing: -0.4,
   },
   subtitle: {
+    fontFamily: 'Lexend',
     fontSize: 13.5,
-    lineHeight: 19,
-    color: colors.textSecondary,
-    fontFamily: typography.fonts.body,
+    marginTop: 4,
+    marginBottom: 18,
   },
-  phoneBox: {
+  fieldLabel: {
+    fontFamily: 'Lexend',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  phoneInputContainer: {
+    height: 60,
+    borderRadius: 18,
+    borderWidth: 1.5,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#EFECE6',
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    marginVertical: 16,
-    ...shadows.card,
+    paddingHorizontal: 14,
+    gap: 12,
   },
-  phoneBoxError: {
-    borderColor: '#DC2626',
+  phoneInputFocused: {
+    shadowColor: '#FF5F00',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.16,
+    shadowRadius: 6,
+    elevation: 2,
   },
-  countryCode: {
-    fontFamily: typography.fonts.heading,
+  countryCodePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingRight: 12,
+    borderRightWidth: 1,
+    height: 28,
+  },
+  flagIcon: {
+    fontSize: 18,
+  },
+  countryCodeText: {
+    fontFamily: 'Lexend',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  phoneTextInput: {
+    flex: 1,
     fontSize: 20,
-    fontWeight: '800',
-    color: '#FD5E03',
-    marginRight: 12,
+    letterSpacing: 1.2,
+    padding: 0,
+    margin: 0,
   },
-  maskedPhone: {
-    fontFamily: typography.fonts.heading,
-    fontSize: 20,
-    fontWeight: '800',
-    letterSpacing: 2,
-    color: colors.text,
-    fontVariant: ['tabular-nums'],
+  phoneTextInputIos: {
+    fontFamily: 'Lexend',
+    fontWeight: '600',
   },
-  errorBanner: {
+  phoneTextInputAndroid: {
+    fontFamily: 'Lexend-SemiBold',
+  },
+  validationCheck: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#138A4B',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  errorNotice: {
     backgroundColor: '#FEF2F2',
     borderWidth: 1,
     borderColor: '#FECACA',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    marginBottom: 10,
+    marginTop: 10,
   },
-  errorBannerText: {
-    color: '#DC2626',
-    fontSize: 12.5,
-    fontFamily: typography.fonts.heading,
+  errorText: {
+    color: '#D93A1F',
+    fontSize: 13,
+    fontFamily: 'Lexend',
     fontWeight: '600',
   },
-  legalNote: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    lineHeight: 17,
-    fontFamily: typography.fonts.body,
-  },
-  link: {
-    color: '#FD5E03',
-    fontWeight: '600',
-  },
-  keypad: {
-    borderTopWidth: 1,
-    borderTopColor: '#EFECE6',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: '#FAF7F2',
-  },
-  keyGrid: {
+  verifiedNotice: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    justifyContent: 'space-between',
-  },
-  keyButton: {
-    width: '31%',
-    height: 50,
+    alignItems: 'center',
+    backgroundColor: '#F0FDF4',
     borderWidth: 1,
-    borderColor: '#EFECE6',
-    backgroundColor: '#FFFFFF',
+    borderColor: '#BBF7D0',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 10,
+    marginBottom: 10,
+    gap: 8,
+  },
+  verifiedText: {
+    flex: 1,
+    color: '#15803D',
+    fontSize: 12.5,
+    fontFamily: 'Lexend',
+    fontWeight: '600',
+  },
+  helperText: {
+    fontFamily: 'Lexend',
+    fontSize: 12,
+    marginTop: 8,
+    marginBottom: 18,
+    marginHorizontal: 2,
+  },
+  submitButton: {
+    height: 54,
+    borderRadius: 15,
+    backgroundColor: '#FF5F00',
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 14,
-    ...shadows.sm,
+    gap: 10,
+    shadowColor: '#FF5F00',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
+    elevation: 6,
   },
-  emptyKey: {
-    borderColor: 'transparent',
-    backgroundColor: 'transparent',
+  submitButtonDisabled: {
+    opacity: 0.45,
     shadowOpacity: 0,
     elevation: 0,
   },
-  keyText: {
-    fontFamily: typography.fonts.heading,
-    fontSize: 20,
+  submitButtonText: {
+    color: '#FFFFFF',
+    fontFamily: 'Lexend',
+    fontSize: 16,
     fontWeight: '700',
-    color: colors.text,
   },
-  actionRow: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#EFECE6',
-    backgroundColor: '#FAF7F2',
+  consentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 2,
+    marginBottom: 20,
+    paddingHorizontal: 2,
   },
-  nextBtn: {
-    width: '100%',
-    minHeight: 50,
-    borderRadius: 16,
+  checkboxBox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  checkboxBoxChecked: {
+    backgroundColor: '#FF5F00',
+    borderColor: '#FF5F00',
+  },
+  consentLabelText: {
+    flex: 1,
+    fontFamily: 'Lexend',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  legalUnderlineLink: {
+    color: '#FF5F00',
+    textDecorationLine: 'underline',
+    fontWeight: '700',
+    fontFamily: 'Lexend',
   },
 });

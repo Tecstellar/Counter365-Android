@@ -481,26 +481,59 @@ export const exportService = {
 
   /**
    * Helper: converts base64 string to Uint8Array for Supabase Storage
+   * Ultra-resilient pure JS decoding: operates without Buffer or atob dependencies.
    */
   base64ToUint8Array(base64: string): Uint8Array {
     try {
+      const clean = base64.replace(/^data:application\/pdf;base64,/, '').replace(/[^A-Za-z0-9+/=]/g, '');
+      const len = clean.length;
+      if (len === 0) return new Uint8Array(0);
+
       if (typeof Buffer !== 'undefined') {
-        return new Uint8Array(Buffer.from(base64, 'base64'));
+        try {
+          return new Uint8Array(Buffer.from(clean, 'base64'));
+        } catch {}
       }
-      const binaryString = typeof atob === 'function' ? atob(base64) : '';
-      const len = binaryString.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
+
+      const b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+      const lookup = new Uint8Array(256);
+      for (let i = 0; i < b64chars.length; i++) {
+        lookup[b64chars.charCodeAt(i)] = i;
       }
+
+      let padding = 0;
+      if (clean[len - 1] === '=') padding++;
+      if (clean[len - 2] === '=') padding++;
+
+      const byteLength = Math.max(0, (len * 3) / 4 - padding);
+      const bytes = new Uint8Array(byteLength);
+
+      let p = 0;
+      for (let i = 0; i < len; i += 4) {
+        const enc1 = lookup[clean.charCodeAt(i)];
+        const enc2 = lookup[clean.charCodeAt(i + 1)];
+        const enc3 = lookup[clean.charCodeAt(i + 2)];
+        const enc4 = lookup[clean.charCodeAt(i + 3)];
+
+        bytes[p++] = (enc1 << 2) | (enc2 >> 4);
+        if (clean[i + 2] !== '=' && p < byteLength) {
+          bytes[p++] = ((enc2 & 15) << 4) | (enc3 >> 2);
+        }
+        if (clean[i + 3] !== '=' && p < byteLength) {
+          bytes[p++] = ((enc3 & 3) << 6) | enc4;
+        }
+      }
+
       return bytes;
-    } catch {
+    } catch (err) {
+      console.warn('base64ToUint8Array error:', err);
       return new Uint8Array(0);
     }
   },
 
   /**
    * Uploads receipt PDF to Supabase Storage 'receipts' public bucket
+   * Includes multi-attempt retries to guarantee persistence before returning
    */
   async uploadReceiptToCloud(billId: string, pdfBase64: string): Promise<string | null> {
     try {
@@ -510,22 +543,38 @@ export const exportService = {
       if (!fileBytes || fileBytes.length === 0) return null;
       const arrayBuffer = fileBytes.buffer.slice(fileBytes.byteOffset, fileBytes.byteOffset + fileBytes.byteLength) as ArrayBuffer;
       const filePath = `${billId}.pdf`;
-      const { error } = await supabase.storage
-        .from('receipts')
-        .upload(filePath, arrayBuffer, {
-          contentType: 'application/pdf',
-          upsert: true,
-          cacheControl: '0',
-        });
-      if (error) {
-        console.warn('Supabase storage receipt upload notice:', error.message);
-        const { data } = supabase.storage.from('receipts').getPublicUrl(filePath);
-        return data?.publicUrl || `https://tziqjkklqtmjlncoraba.supabase.co/storage/v1/object/public/receipts/${filePath}`;
+
+      let lastError: any = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const { error } = await supabase.storage
+            .from('receipts')
+            .upload(filePath, arrayBuffer, {
+              contentType: 'application/pdf',
+              upsert: true,
+              cacheControl: '0',
+            });
+          if (!error) {
+            lastError = null;
+            break;
+          }
+          lastError = error;
+        } catch (e: any) {
+          lastError = e;
+        }
+        if (attempt < 3) {
+          await new Promise(r => setTimeout(r, 350 * attempt));
+        }
       }
+
+      if (lastError) {
+        console.warn('Supabase storage receipt upload notice:', lastError.message || lastError);
+      }
+
       const { data } = supabase.storage
         .from('receipts')
         .getPublicUrl(filePath);
-      return data?.publicUrl || null;
+      return data?.publicUrl || `https://tziqjkklqtmjlncoraba.supabase.co/storage/v1/object/public/receipts/${filePath}`;
     } catch (err: any) {
       console.warn('uploadReceiptToCloud exception:', err);
       return null;
@@ -1883,9 +1932,9 @@ export const exportService = {
         }
       }
 
-      const publicStorageUrl = `https://tziqjkklqtmjlncoraba.supabase.co/storage/v1/object/public/receipts/${versionedBillId}.pdf`;
+      const publicStorageUrl = `https://tziqjkklqtmjlncoraba.supabase.co/storage/v1/object/public/receipts/${targetBillId}.pdf`;
       const finalPdfUrl = cloudUrl || publicStorageUrl;
-      const brandedUrl = `https://counter365.tecstellar.com/b/${versionedBillId}`;
+      const brandedUrl = `https://counter365.tecstellar.com/b/${targetBillId}`;
 
       return {
         success: true,

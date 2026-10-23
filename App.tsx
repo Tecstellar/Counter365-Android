@@ -873,14 +873,24 @@ const MainApp: React.FC = () => {
             {salesSubView === 'bill' && (
               <BillCheckoutScreen
                 onBackToMenu={() => setSalesSubView('menu')}
-                onBillSaved={async (bill, share, autoPrint, paperSize) => {
+                onBillSaved={async (bill, share, autoPrint, paperSize, customPdfUrl) => {
                   setSavedBill(bill);
-                  // Ensure cloud PDF receipt is generated & uploaded to Supabase Storage so WhatsApp link works
-                  exportService.generateAndUploadBillReceipt(bill, shop).catch(e => console.warn('Receipt upload err:', e));
                   if (share) {
-                    // Instantly share clean customer receipt via WhatsApp without blocking on slow PDF upload
-                    const waText = whatsappService.formatCustomerBill(bill, shop.name, shop.upiId, shop.phone);
+                    let pdfUrl = customPdfUrl;
+                    if (!pdfUrl) {
+                      try {
+                        const receiptRes = await exportService.generateAndUploadBillReceipt(bill, shop);
+                        if (receiptRes?.pdfUrl) {
+                          pdfUrl = receiptRes.pdfUrl;
+                        }
+                      } catch (e) {
+                        console.warn('Receipt upload err:', e);
+                      }
+                    }
+                    const waText = whatsappService.formatCustomerBill(bill, shop.name, shop.upiId, shop.phone, pdfUrl);
                     whatsappService.shareViaWhatsApp(waText, bill.customerPhone);
+                  } else {
+                    exportService.generateAndUploadBillReceipt(bill, shop).catch(e => console.warn('Receipt upload err:', e));
                   }
                   if (autoPrint && shop.printerEnabled) {
                     try {

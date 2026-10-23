@@ -31,7 +31,7 @@ import { formatRupee, calculateGST } from '../../lib/money';
 
 interface BillCheckoutScreenProps {
   onBackToMenu: () => void;
-  onBillSaved: (bill: Bill, share: boolean, autoPrint?: boolean, paperSize?: ThermalPaperSize) => void;
+  onBillSaved: (bill: Bill, share: boolean, autoPrint?: boolean, paperSize?: ThermalPaperSize, customPdfUrl?: string) => void;
   nextBillNo?: string;
 }
 
@@ -824,10 +824,24 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
 
         cancelEditingBill();
         refreshSubscription().catch(() => {});
-        // Pre-warm and upload receipt PDF immediately so WhatsApp link never 404s
-        exportService.generateAndUploadBillReceipt(updatedBill, shop).catch(err => {
-          console.warn('Background receipt PDF generation notice:', err);
-        });
+
+        let uploadedPdfUrl: string | undefined;
+        if (share) {
+          try {
+            flash('Preparing receipt...');
+            const receiptRes = await exportService.generateAndUploadBillReceipt(updatedBill, shop);
+            if (receiptRes?.pdfUrl) {
+              uploadedPdfUrl = receiptRes.pdfUrl;
+            }
+          } catch (e) {
+            console.warn('Background receipt PDF generation notice:', e);
+          }
+        } else {
+          exportService.generateAndUploadBillReceipt(updatedBill, shop).catch(err => {
+            console.warn('Background receipt PDF generation notice:', err);
+          });
+        }
+
         if (!share && !effectiveAutoPrint) {
           if (closeAfter) {
             flash('Bill Saved Successfully');
@@ -837,7 +851,7 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
             flash('Bill Saved Successfully');
           }
         } else {
-          onBillSaved(updatedBill, share, effectiveAutoPrint, paperSize);
+          onBillSaved(updatedBill, share, effectiveAutoPrint, paperSize, uploadedPdfUrl);
           flash(share ? `Bill #${updatedBill.billNumber} shared on WhatsApp` : `Printing bill #${updatedBill.billNumber}`);
           if (closeAfter) {
             onBackToMenu();
@@ -862,10 +876,24 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
 
         clearCart();
         refreshSubscription().catch(() => {});
-        // Pre-warm and upload receipt PDF immediately so WhatsApp link never 404s
-        exportService.generateAndUploadBillReceipt(res.bill, shop).catch(err => {
-          console.warn('Background receipt PDF generation notice:', err);
-        });
+
+        let uploadedPdfUrl: string | undefined;
+        if (share) {
+          try {
+            flash('Preparing receipt...');
+            const receiptRes = await exportService.generateAndUploadBillReceipt(res.bill, shop);
+            if (receiptRes?.pdfUrl) {
+              uploadedPdfUrl = receiptRes.pdfUrl;
+            }
+          } catch (e) {
+            console.warn('Background receipt PDF generation notice:', e);
+          }
+        } else {
+          exportService.generateAndUploadBillReceipt(res.bill, shop).catch(err => {
+            console.warn('Background receipt PDF generation notice:', err);
+          });
+        }
+
         if (!share && !effectiveAutoPrint) {
           if (closeAfter) {
             flash('Bill Saved Successfully');
@@ -875,7 +903,7 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
             flash('Bill Saved Successfully');
           }
         } else {
-          onBillSaved(res.bill, share, effectiveAutoPrint, paperSize);
+          onBillSaved(res.bill, share, effectiveAutoPrint, paperSize, uploadedPdfUrl);
           flash(share ? `Bill #${res.bill.billNumber} shared on WhatsApp` : `Printing bill #${res.bill.billNumber}`);
           if (closeAfter) {
             onBackToMenu();

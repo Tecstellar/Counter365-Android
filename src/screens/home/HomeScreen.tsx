@@ -1139,11 +1139,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch {}
-    // Ensure cloud PDF receipt is generated & uploaded to Supabase Storage
-    exportService.generateAndUploadBillReceipt(bill, shop).catch(err => {
-      console.warn('Background receipt sync notice:', err);
-    });
-    const msg = whatsappService.formatCustomerBill(bill, shop.name, shop.upiId, shop.phone);
+    flash('Preparing bill receipt...');
+    let pdfUrl: string | undefined;
+    try {
+      const receiptRes = await exportService.generateAndUploadBillReceipt(bill, shop);
+      if (receiptRes?.pdfUrl) {
+        pdfUrl = receiptRes.pdfUrl;
+      }
+    } catch (err) {
+      console.warn('Receipt upload notice:', err);
+    }
+    const msg = whatsappService.formatCustomerBill(bill, shop.name, shop.upiId, shop.phone, pdfUrl);
     await whatsappService.shareViaWhatsApp(msg, bill.customerPhone);
     flash(`Bill #${bill.billNumber} sent on WhatsApp`);
   };

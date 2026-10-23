@@ -755,18 +755,23 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     }
     setIsDeletingBill(true);
     try {
-      await billingService.deleteBill(shop.id, billToDelete.id, {
-        name: profile?.fullName || currentRole,
-        role: currentRole,
-        id: profile?.id,
-      });
+      await billingService.deleteBill(
+        shop.id,
+        billToDelete.id,
+        {
+          name: profile?.fullName || currentMember?.fullName || currentRole,
+          role: currentRole,
+          id: profile?.id || currentMember?.id,
+        },
+        'Cancelled from Home screen'
+      );
       setBillToDelete(null);
       await loadData();
       try { await refreshSubscription(); } catch {}
       flash(`Bill ${billToDelete.billNumber} deleted`);
-    } catch (err) {
+    } catch (err: any) {
       console.warn('handleConfirmDeleteBill error:', err);
-      flash('Failed to delete bill');
+      flash(err?.message || 'Failed to delete bill');
     } finally {
       setIsDeletingBill(false);
     }
@@ -1857,7 +1862,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         onPrint={handlePrintBillFromMenu}
         onShareWhatsApp={handleShareBillFromMenu}
         onEdit={currentRole !== 'Biller' ? handleEditBillFromMenu : undefined}
-        onDelete={currentRole === 'Owner' ? handleDeleteBillFromMenu : undefined}
+        onDelete={currentRole !== 'Biller' ? handleDeleteBillFromMenu : undefined}
       />
 
       {/* Expense Action Menu Modal */}

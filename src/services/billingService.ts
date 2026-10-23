@@ -1120,11 +1120,11 @@ export const billingService = {
     deleter: { name: string; role: string; id?: string },
     cancellationReason?: string
   ): Promise<Bill> {
-    if (deleter.role !== 'Owner') {
+    if (deleter.role !== 'Owner' && deleter.role !== 'Supervisor') {
       if (deleter.role === 'Biller') {
-        throw new Error('Unauthorized: Billers cannot delete or cancel bills. Only the shop Owner can delete or cancel bills.');
+        throw new Error('Unauthorized: Billers cannot delete or cancel bills. Only the shop Owner or Supervisor can delete or cancel bills.');
       }
-      throw new Error(`Unauthorized: Only the shop Owner can delete or cancel bills. ${deleter.role}s cannot delete or cancel bills.`);
+      throw new Error(`Unauthorized: Only the shop Owner or Supervisor can delete or cancel bills. ${deleter.role}s cannot delete or cancel bills.`);
     }
 
     if (deleter.id) {

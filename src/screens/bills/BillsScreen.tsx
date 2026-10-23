@@ -179,8 +179,8 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
 
   const handleConfirmDelete = async () => {
     if (!billToDelete || !shop.id) return;
-    if (currentRole !== 'Owner') {
-      flash('Only the shop Owner can delete or cancel bills');
+    if (currentRole === 'Biller') {
+      flash('Only the shop Owner or Supervisor can delete or cancel bills');
       setBillToDelete(null);
       return;
     }
@@ -389,7 +389,7 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
             return (
               <SwipeToDeleteRow
                 key={bill.id}
-                disabled={isDeleted}
+                disabled={isDeleted || currentRole === 'Biller'}
                 onDelete={() => {
                   setBillToDelete(bill);
                 }}
@@ -529,7 +529,7 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
         onDownloadPdf={handleDownloadPdf}
         onShareWhatsApp={handleShareWhatsApp}
         onEdit={currentRole !== 'Biller' ? onEditBill : undefined}
-        onDelete={currentRole === 'Owner' ? (bill) => setBillToDelete(bill) : undefined}
+        onDelete={currentRole !== 'Biller' ? (bill) => setBillToDelete(bill) : undefined}
       />
 
       {/* Delete Confirmation Modal */}
@@ -628,6 +628,15 @@ export const BillsScreen: React.FC<BillsScreenProps> = ({
                 <Text style={styles.previewTotalVal}>{formatRupee(previewBill?.totalAmount || 0)}</Text>
               </View>
             </View>
+
+            {(previewBill?.isDeleted || previewBill?.status === 'cancelled') && previewBill?.deletedByName && (
+              <View style={[styles.auditBox, { marginTop: 12 }]}>
+                <Text style={[styles.auditLine, { color: colors.danger || '#DC2626' }]}>
+                  Cancelled by <Text style={styles.auditHighlight}>{previewBill.deletedByName}</Text> ({previewBill.deletedByRole || 'Supervisor'}) {previewBill.deletedAt ? `on ${formatTimestamp(previewBill.deletedAt)}` : ''}
+                  {previewBill.cancellationReason ? ` • ${previewBill.cancellationReason}` : ''}
+                </Text>
+              </View>
+            )}
 
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
               {(previewBill?.isDeleted || previewBill?.status === 'cancelled') ? (

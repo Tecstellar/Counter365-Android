@@ -125,21 +125,34 @@ describe('Feature-Specific Production QA & Supabase Integrity Test Suite', () =>
       ).rejects.toThrow(/Billers cannot delete or cancel bills/i);
     });
 
-    test('Supervisor cannot delete or cancel bills', async () => {
-      await expect(
-        billingService.deleteBill(
-          TEST_SHOP_ID,
-          createdBillId,
-          { name: 'Super Sam', role: 'Supervisor', id: 'super-01' },
-          'Mistake in order'
-        )
-      ).rejects.toThrow(/Only the shop Owner can delete or cancel bills.*Supervisors cannot delete or cancel bills/i);
-    });
-
-    test('Owner can successfully cancel and delete bills', async () => {
+    test('Supervisor can successfully delete or cancel bills with full audit trail', async () => {
       const deleted = await billingService.deleteBill(
         TEST_SHOP_ID,
         createdBillId,
+        { name: 'Super Sam', role: 'Supervisor', id: 'super-01' },
+        'Mistake in order'
+      );
+      expect(deleted.isCancelled).toBe(true);
+      expect(deleted.isDeleted).toBe(true);
+      expect(deleted.status).toBe('cancelled');
+      expect(deleted.deletedByName).toBe('Super Sam');
+      expect(deleted.deletedByRole).toBe('Supervisor');
+      expect(deleted.cancellationReason).toBe('Mistake in order');
+    });
+
+    test('Owner can successfully cancel and delete bills', async () => {
+      // Create a fresh bill for Owner cancellation test
+      const res = await billingService.createBill({
+        shopId: TEST_SHOP_ID,
+        cart: [{ key: 'dish-1|full', itemId: 'dish-1', name: 'Chicken Biryani', unitPrice: 220, quantity: 1, isHalf: false, lineTotal: 220 }],
+        paymentMode: 'Cash',
+        gstEnabled: false,
+        customerName: 'Suresh',
+        creator: { name: 'Staff', role: 'Biller', id: 'biller-01' },
+      });
+      const deleted = await billingService.deleteBill(
+        TEST_SHOP_ID,
+        res.bill.id,
         { name: 'Owner Boss', role: 'Owner', id: 'owner-01' },
         'Owner approved cancellation'
       );
@@ -147,6 +160,7 @@ describe('Feature-Specific Production QA & Supabase Integrity Test Suite', () =>
       expect(deleted.isDeleted).toBe(true);
       expect(deleted.status).toBe('cancelled');
       expect(deleted.deletedByName).toBe('Owner Boss');
+      expect(deleted.deletedByRole).toBe('Owner');
     });
   });
 

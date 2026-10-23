@@ -102,7 +102,7 @@ describe('End-to-End Human Tester Workout (Demo Account: 9999999999)', () => {
       sortOrder: 1,
     };
     createdItemId = itemToCreate.id;
-    const itemsAfterAdd = await menuService.saveMenuItem(itemToCreate);
+    const itemsAfterAdd = (await menuService.saveMenuItem(itemToCreate)).items;
     const newItem = itemsAfterAdd.find(i => i.id === createdItemId);
     expect(newItem).toBeDefined();
     expect(newItem?.name).toBe('Ginger Cardamom Chai');
@@ -117,7 +117,7 @@ describe('End-to-End Human Tester Workout (Demo Account: 9999999999)', () => {
       price: 25,
       halfPrice: 15,
     };
-    const itemsAfterEdit = await menuService.saveMenuItem(itemToEdit);
+    const itemsAfterEdit = (await menuService.saveMenuItem(itemToEdit)).items;
     const editedItem = itemsAfterEdit.find(i => i.id === createdItemId);
     expect(editedItem?.name).toBe('Ginger Cardamom Chai — Special');
     expect(editedItem?.price).toBe(25);

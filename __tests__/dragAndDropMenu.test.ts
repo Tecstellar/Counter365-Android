@@ -56,7 +56,7 @@ describe('Drag-and-Drop Menu Functionality', () => {
 
     // Dropping 'Lemon Soda' into cat2
     const updatedItem = { ...item, categoryId: cat2Id };
-    const items = await menuService.saveMenuItem(updatedItem);
+    const items = (await menuService.saveMenuItem(updatedItem)).items;
 
     const saved = items.find(i => i.id === itemId);
     expect(saved).toBeDefined();

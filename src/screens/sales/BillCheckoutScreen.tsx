@@ -394,8 +394,7 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
   const [whatsAppModalError, setWhatsAppModalError] = useState<string | null>(null);
   const [thermalPaperSize, setThermalPaperSize] = useState<ThermalPaperSize>('80mm');
   const [savedBillSuccess, setSavedBillSuccess] = useState<Bill | null>(null);
-  const [billDateOption, setBillDateOption] = useState<'today' | 'yesterday' | 'custom'>('today');
-  const [customBillDate, setCustomBillDate] = useState<Date>(new Date());
+  const [billDateOption, setBillDateOption] = useState<'today' | 'yesterday'>('today');
   const [isCustomDatePickerOpen, setIsCustomDatePickerOpen] = useState(false);
   const [autoCloseCountdown, setAutoCloseCountdown] = useState<number>(0);
 
@@ -435,11 +434,8 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
       d.setDate(d.getDate() - 1);
       return d;
     }
-    if (billDateOption === 'custom') {
-      return customBillDate;
-    }
     return new Date();
-  }, [editingBill, billDateOption, customBillDate]);
+  }, [editingBill, billDateOption]);
 
   const isPendingOrPartial = paymentMode === 'Pending' || paymentMode === 'Partial Pay';
   const selectedModeConfig = paymentModesList.find(m => m.mode === paymentMode) || paymentModesList[0];
@@ -761,14 +757,12 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
 
     // Validation for Full Pending or Partial Pay
     if (isPendingOrPartial) {
-      const cleanPhone = effectivePhone.replace(/[^0-9]/g, '');
-      const hasCustomer =
-        (effectiveName.length > 0 || !!overrideCustomerId || !!selectedCustomerId) &&
-        cleanPhone.length === 10;
+      const cleanPhone = effectivePhone.replace(/[^0-9]/g, '').slice(-10);
+      const hasCustomer = cleanPhone.length === 10;
 
       if (!hasCustomer) {
         try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error); } catch {}
-        setWhatsAppModalError('You need to select a customer for pending dues');
+        setWhatsAppModalError('Enter a valid 10-digit mobile number for pending dues');
         setWhatsAppPromptPhone(cleanPhone);
         setWhatsAppPromptName(effectiveName);
         setWhatsAppContactSearch('');
@@ -817,9 +811,9 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
 
     setIsSaving(true);
     try {
-      let finalCustomerName = effectiveName;
-      let finalCustomerId = overrideCustomerId || selectedCustomerId;
       const cleanPhone = effectivePhone.replace(/[^0-9]/g, '').slice(-10);
+      let finalCustomerName = effectiveName || (cleanPhone.length === 10 ? 'Customer' : '');
+      let finalCustomerId = overrideCustomerId || selectedCustomerId;
 
       // Auto-save customer in background (non-blocking for continuous fast speed)
       if (cleanPhone.length === 10) {
@@ -860,8 +854,8 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
           cashAmount: paymentMode === 'Cash + GPay' ? splitCashAmt : undefined,
           gpayAmount: paymentMode === 'Cash + GPay' ? splitGpayAmt : undefined,
           tableNumber: selectedTable,
-          customerName: finalCustomerName || undefined,
-          customerPhone: effectivePhone || undefined,
+          customerName: finalCustomerName || (cleanPhone.length === 10 ? 'Customer' : undefined),
+          customerPhone: cleanPhone || undefined,
           customerId: finalCustomerId || undefined,
           editor: userMeta,
         });
@@ -912,8 +906,8 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
           cashAmount: paymentMode === 'Cash + GPay' ? splitCashAmt : undefined,
           gpayAmount: paymentMode === 'Cash + GPay' ? splitGpayAmt : undefined,
           tableNumber: selectedTable,
-          customerName: finalCustomerName || undefined,
-          customerPhone: effectivePhone || undefined,
+          customerName: finalCustomerName || (cleanPhone.length === 10 ? 'Customer' : undefined),
+          customerPhone: cleanPhone || undefined,
           customerId: finalCustomerId || undefined,
           creator: userMeta,
           createdAt: effectiveBillDate.toISOString(),
@@ -963,6 +957,69 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
     }
   };
 
+  // Submits customer prompt modal:
+  // shareOnWhatsApp=false for Save Only (records customer, updates due ledger, returns to menu without WhatsApp)
+  // shareOnWhatsApp=true for Save & Send (records customer, updates due ledger, and launches WhatsApp share)
+  const submitCustomerModal = async (shareOnWhatsApp: boolean) => {
+    const clean = whatsAppPromptPhone.replace(/[^0-9]/g, '').slice(-10);
+    const isPending = paymentMode === 'Pending' || paymentMode === 'Partial Pay';
+
+    if (isPending && clean.length !== 10) {
+      setWhatsAppModalError('Enter a valid 10-digit mobile number for pending dues');
+      return;
+    }
+    if (!isPending && clean.length > 0 && clean.length !== 10) {
+      setWhatsAppModalError('Please enter a valid 10-digit mobile number');
+      return;
+    }
+    if (!isPending && shareOnWhatsApp && clean.length !== 10) {
+      setWhatsAppModalError('Please enter customer 10-digit mobile number');
+      return;
+    }
+
+    const trimmedName = whatsAppPromptName.trim() || 'Customer';
+    let savedCustId: string | undefined = selectedCustomerId || undefined;
+
+    if (clean.length === 10) {
+      try {
+        const custRecord = await contactService.addCustomer(
+          shop.id,
+          trimmedName,
+          clean
+        );
+        if (custRecord) {
+          savedCustId = custRecord.id;
+          setSelectedCustomerId(custRecord.id);
+          setSelectedWhatsAppContact(custRecord);
+          setSavedCustomers(prev => [custRecord, ...prev.filter(c => c.id !== custRecord.id)]);
+        }
+      } catch (err) {
+        console.warn('Auto-save customer in modal notice:', err);
+      }
+    }
+
+    if (trimmedName && trimmedName !== 'Customer') {
+      setCustomerName(trimmedName);
+    }
+    setCustomerPhone(clean);
+    if (savedCustId) {
+      setSelectedCustomerId(savedCustId);
+    }
+
+    setWhatsAppModalError(null);
+    setIsWhatsAppPromptOpen(false);
+
+    await handleSave(
+      shareOnWhatsApp,
+      false,
+      '80mm',
+      clean,
+      true, // closeAfter: true
+      trimmedName,
+      savedCustId
+    );
+  };
+
   // Right action: Save & Close (Saves bill and shows share / print / new bill options)
   const handleSaveAndClose = async () => {
     if (!can('bill')) {
@@ -970,10 +1027,10 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
       return;
     }
     try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
-    const cleanPhone = customerPhone.replace(/[^0-9]/g, '');
-    const hasCustomer = (selectedCustomerId || customerName.trim().length > 0) && cleanPhone.length === 10;
+    const cleanPhone = customerPhone.replace(/[^0-9]/g, '').slice(-10);
+    const hasCustomer = cleanPhone.length === 10;
     if (isPendingOrPartial && !hasCustomer) {
-      setWhatsAppModalError('You need to select a customer for pending dues');
+      setWhatsAppModalError('Enter a valid 10-digit mobile number for pending dues');
       setWhatsAppPromptPhone(cleanPhone);
       setWhatsAppPromptName(customerName || '');
       setWhatsAppContactSearch('');
@@ -991,11 +1048,11 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
       return;
     }
     try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
-    const cleanPhone = customerPhone.replace(/[^0-9]/g, '');
-    const hasCustomer = (selectedCustomerId || customerName.trim().length > 0) && cleanPhone.length === 10;
+    const cleanPhone = customerPhone.replace(/[^0-9]/g, '').slice(-10);
+    const hasCustomer = cleanPhone.length === 10;
 
     if (isPendingOrPartial && !hasCustomer) {
-      setWhatsAppModalError('You need to select a customer for pending dues');
+      setWhatsAppModalError('Enter a valid 10-digit mobile number for pending dues');
       setWhatsAppPromptPhone(cleanPhone);
       setWhatsAppPromptName(customerName || '');
       setWhatsAppContactSearch('');
@@ -1567,7 +1624,7 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
               <View style={styles.dateModalHeader}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   <Ionicons name="calendar" size={18} color="#FF5F00" />
-                  <Text style={styles.dateModalTitle}>Select Past Bill Date</Text>
+                  <Text style={styles.dateModalTitle}>Select Bill Date</Text>
                 </View>
                 <TouchableOpacity
                   onPress={() => setIsCustomDatePickerOpen(false)}
@@ -1578,68 +1635,61 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
               </View>
 
               <Text style={styles.dateModalSub}>
-                Choose any recent date to record a backdated bill:
+                Select date to record this bill (Today or Yesterday only):
               </Text>
 
-              {/* Past days quick options (Today, Yesterday, 2..14 days ago - strictly past dates only) */}
-              <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
-                <View style={styles.pastDaysGrid}>
-                  {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].map(daysAgo => {
-                    const d = new Date();
-                    d.setDate(d.getDate() - daysAgo);
-                    const isToday = daysAgo === 0;
-                    const isYesterday = daysAgo === 1;
-                    const isSelected = isToday
-                      ? billDateOption === 'today'
-                      : isYesterday
-                      ? billDateOption === 'yesterday'
-                      : billDateOption === 'custom' &&
-                        customBillDate.toDateString() === d.toDateString();
-                    const dayLabel = isToday
-                      ? 'Today'
-                      : isYesterday
-                      ? 'Yesterday'
-                      : `${daysAgo}d ago`;
-                    const dateLabel = d.toLocaleDateString('en-IN', {
-                      weekday: 'short',
-                      day: 'numeric',
-                      month: 'short',
-                    });
+              {/* Past days quick options: strictly Today and Yesterday */}
+              <View style={[styles.pastDaysGrid, { marginTop: 12 }]}>
+                {[0, 1].map(daysAgo => {
+                  const d = new Date();
+                  d.setDate(d.getDate() - daysAgo);
+                  const isToday = daysAgo === 0;
+                  const isSelected = isToday
+                    ? billDateOption === 'today'
+                    : billDateOption === 'yesterday';
+                  const dayLabel = isToday ? 'Today' : 'Yesterday';
+                  const dateLabel = d.toLocaleDateString('en-IN', {
+                    weekday: 'short',
+                    day: 'numeric',
+                    month: 'short',
+                  });
 
-                    return (
-                      <TouchableOpacity
-                        key={daysAgo}
-                        activeOpacity={0.75}
-                        onPress={() => {
-                          if (isToday) {
-                            setBillDateOption('today');
-                            flash('Bill date set to Today');
-                          } else if (isYesterday) {
-                            setBillDateOption('yesterday');
-                            flash('Bill date set to Yesterday');
-                          } else {
-                            setCustomBillDate(d);
-                            setBillDateOption('custom');
-                            flash(`Bill date set to ${dateLabel}`);
-                          }
-                          setIsCustomDatePickerOpen(false);
-                        }}
-                        style={[
-                          styles.pastDayBtn,
-                          isSelected && styles.pastDayBtnSelected,
-                        ]}
-                      >
+                  return (
+                    <TouchableOpacity
+                      key={daysAgo}
+                      activeOpacity={0.75}
+                      onPress={() => {
+                        if (isToday) {
+                          setBillDateOption('today');
+                          flash('Bill date set to Today');
+                        } else {
+                          setBillDateOption('yesterday');
+                          flash('Bill date set to Yesterday');
+                        }
+                        setIsCustomDatePickerOpen(false);
+                      }}
+                      style={[
+                        styles.pastDayBtn,
+                        isSelected && styles.pastDayBtnSelected,
+                      ]}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <Ionicons
+                          name={isSelected ? 'radio-button-on' : 'radio-button-off'}
+                          size={16}
+                          color={isSelected ? '#FF5F00' : (isDark ? '#6B7280' : '#9CA3AF')}
+                        />
                         <Text style={[styles.pastDayLabel, isSelected && styles.pastDayLabelSelected]}>
                           {dayLabel}
                         </Text>
-                        <Text style={[styles.pastDayDate, isSelected && styles.pastDayDateSelected]}>
-                          {dateLabel}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </ScrollView>
+                      </View>
+                      <Text style={[styles.pastDayDate, isSelected && styles.pastDayDateSelected]}>
+                        {dateLabel}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </View>
           </TouchableWithoutFeedback>
         </TouchableOpacity>
@@ -1667,26 +1717,27 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
             >
               {/* Compact Header */}
               <View style={styles.whatsAppModalHeaderRow}>
-                <View style={styles.whatsAppModalIconSmall}>
-                  <Ionicons name="logo-whatsapp" size={17} color="#1FAD55" />
+                <View style={[styles.whatsAppModalIconSmall, isPendingOrPartial && { backgroundColor: isDark ? '#451A03' : '#FEF3C7' }]}>
+                  <Ionicons
+                    name={isPendingOrPartial ? "person" : "logo-whatsapp"}
+                    size={17}
+                    color={isPendingOrPartial ? "#D97706" : "#1FAD55"}
+                  />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.whatsAppModalTitle}>
-                    {isPendingOrPartial ? 'Customer Details Required' : 'Share Bill via WhatsApp'}
+                    {isPendingOrPartial ? 'Customer Details & Due' : 'Customer & WhatsApp Share'}
+                  </Text>
+                  <Text style={styles.whatsAppModalSubtitle}>
+                    {isPendingOrPartial
+                      ? 'Mobile number required to record balance due'
+                      : 'Send invoice receipt directly via WhatsApp'}
                   </Text>
                 </View>
               </View>
 
-              {/* In-Modal Alert Banner: ONLY for Partial Pay and Fully Pending */}
-              {isPendingOrPartial && (
-                <View style={styles.modalAlertBanner}>
-                  <Ionicons name="alert-circle" size={15} color="#DC2626" style={{ marginRight: 6 }} />
-                  <Text style={styles.modalAlertText}>
-                    {whatsAppModalError || 'You need to select a customer for pending dues'}
-                  </Text>
-                </View>
-              )}
-              {!isPendingOrPartial && whatsAppModalError && (
+              {/* In-Modal Alert Banner */}
+              {whatsAppModalError && (
                 <View style={styles.modalAlertBanner}>
                   <Ionicons name="alert-circle" size={15} color="#DC2626" style={{ marginRight: 6 }} />
                   <Text style={styles.modalAlertText}>
@@ -1826,74 +1877,42 @@ export const BillCheckoutScreen: React.FC<BillCheckoutScreenProps> = ({
                 />
               </View>
 
-              <View style={styles.whatsAppModalActions}>
+              <View style={styles.modalActionGroup}>
+                <View style={styles.modalPrimaryActionsRow}>
+                  {/* Left: Save & Send via WhatsApp */}
+                  <TouchableOpacity
+                    style={styles.whatsAppSendBtn}
+                    onPress={() => submitCustomerModal(true)}
+                    activeOpacity={0.82}
+                    accessibilityLabel="Save bill and send on WhatsApp"
+                  >
+                    <Ionicons name="logo-whatsapp" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.whatsAppSendText}>Save & Send</Text>
+                  </TouchableOpacity>
+
+                  {/* Right: Save (No WhatsApp share needed) */}
+                  <TouchableOpacity
+                    style={styles.saveOnlyBtn}
+                    onPress={() => submitCustomerModal(false)}
+                    activeOpacity={0.82}
+                    accessibilityLabel="Save bill without sharing"
+                  >
+                    <Ionicons name="checkmark-circle" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.saveOnlyBtnText}>Save</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Option 3: Cancel */}
                 <TouchableOpacity
-                  style={styles.whatsAppCancelBtn}
+                  style={styles.whatsAppCancelBtnRow}
                   onPress={() => {
                     setWhatsAppModalError(null);
                     setIsWhatsAppPromptOpen(false);
                   }}
                   activeOpacity={0.7}
+                  accessibilityLabel="Cancel"
                 >
                   <Text style={styles.whatsAppCancelText}>Cancel</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.whatsAppSendBtn}
-                  onPress={async () => {
-                    const clean = whatsAppPromptPhone.replace(/[^0-9]/g, '');
-                    const isPending = paymentMode === 'Pending' || paymentMode === 'Partial Pay';
-
-                    if (isPending && (!whatsAppPromptName.trim() && !selectedCustomerId)) {
-                      setWhatsAppModalError('You need to select a customer for pending dues');
-                      return;
-                    }
-                    if (isPending && clean.length !== 10) {
-                      setWhatsAppModalError('You need to select a customer for pending dues');
-                      return;
-                    }
-                    if (clean.length > 0 && clean.length !== 10) {
-                      setWhatsAppModalError('Please enter a valid 10-digit mobile number');
-                      return;
-                    }
-                    if (!isPending && clean.length !== 10) {
-                      setWhatsAppModalError('Please enter customer 10-digit mobile number');
-                      return;
-                    }
-
-                    const trimmedName = whatsAppPromptName.trim();
-                    let savedCustId: string | undefined = selectedCustomerId || undefined;
-
-                    if (clean.length === 10) {
-                      contactService.addCustomer(
-                        shop.id,
-                        trimmedName || 'Customer',
-                        clean
-                      ).then(custRecord => {
-                        if (custRecord) {
-                          setSavedCustomers(prev => [custRecord, ...prev.filter(c => c.id !== custRecord.id)]);
-                        }
-                      }).catch(err => {
-                        console.warn('Failed to auto-save customer in WhatsApp prompt:', err);
-                      });
-                    }
-
-                    if (trimmedName) {
-                      setCustomerName(trimmedName);
-                    }
-                    setCustomerPhone(clean);
-                    if (savedCustId) {
-                      setSelectedCustomerId(savedCustId);
-                    }
-
-                    setWhatsAppModalError(null);
-                    setIsWhatsAppPromptOpen(false);
-                    await handleSave(true, false, '80mm', clean, true, trimmedName || undefined, savedCustId);
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="send" size={14} color="#FFFFFF" style={{ marginRight: 5 }} />
-                  <Text style={styles.whatsAppSendText}>Send Bill</Text>
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -2983,6 +3002,36 @@ const createStyles = (theme: Theme, isDark: boolean) => {
       letterSpacing: 0.5,
       padding: 0,
     },
+    whatsAppModalSubtitle: {
+      fontFamily: typography.fonts.body,
+      fontSize: 11,
+      color: muted,
+      marginTop: 2,
+    },
+    modalActionGroup: {
+      gap: 6,
+      marginTop: 6,
+      marginBottom: 4,
+    },
+    modalPrimaryActionsRow: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    saveOnlyBtn: {
+      flex: 1,
+      height: 40,
+      borderRadius: 10,
+      backgroundColor: isDark ? '#334155' : '#1E293B',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    saveOnlyBtnText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 12.5,
+      fontWeight: '800',
+      color: '#FFFFFF',
+    },
     whatsAppModalActions: {
       flexDirection: 'row',
       gap: 8,
@@ -2998,15 +3047,21 @@ const createStyles = (theme: Theme, isDark: boolean) => {
       alignItems: 'center',
       justifyContent: 'center',
     },
+    whatsAppCancelBtnRow: {
+      height: 32,
+      borderRadius: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
     whatsAppCancelText: {
       fontFamily: typography.fonts.heading,
-      fontSize: 12.5,
+      fontSize: 12,
       fontWeight: '700',
       color: muted,
     },
     whatsAppSendBtn: {
-      flex: 1.4,
-      height: 38,
+      flex: 1,
+      height: 40,
       borderRadius: 10,
       backgroundColor: '#1FAD55',
       flexDirection: 'row',

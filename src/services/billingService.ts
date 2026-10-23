@@ -360,7 +360,8 @@ export const billingService = {
     }
 
     // 4. Update or insert customer aggregates in public.customers (strict deduplication by phone)
-    if (bill.customerName && bill.customerName !== 'Not tracked') {
+    const hasCustomerIdentity = (bill.customerName && bill.customerName !== 'Not tracked') || (bill.customerPhone && bill.customerPhone.length === 10);
+    if (hasCustomerIdentity) {
       try {
         const cleanPhone = bill.customerPhone ? bill.customerPhone.replace(/[^0-9]/g, '').slice(-10) : '';
         let existingCust: any = null;
@@ -377,7 +378,7 @@ export const billingService = {
           existingCust = byPhone;
         }
 
-        if (!existingCust) {
+        if (!existingCust && bill.customerName && bill.customerName !== 'Not tracked') {
           const { data: byName } = await (supabase.from('customers') as any)
             .select('id, name, total_bills, pending_balance, phone')
             .eq('shop_id', bill.shopId)
@@ -387,20 +388,23 @@ export const billingService = {
           existingCust = byName;
         }
 
+        const resolvedName = bill.customerName && bill.customerName !== 'Not tracked' ? bill.customerName : 'Customer';
+
         if (existingCust) {
           await (supabase.from('customers') as any)
             .update({
               total_bills: (existingCust.total_bills || 0) + 1,
               pending_balance: (existingCust.pending_balance || 0) + bill.pendingAmount,
-              phone: existingCust.phone || bill.customerPhone || undefined,
+              phone: existingCust.phone || cleanPhone || undefined,
+              name: (!existingCust.name || existingCust.name === 'Customer') && resolvedName !== 'Customer' ? resolvedName : existingCust.name,
             })
             .eq('id', existingCust.id);
         } else {
           await (supabase.from('customers') as any).insert({
-            id: generateUUID(),
+            id: bill.customerId || generateUUID(),
             shop_id: bill.shopId,
-            name: bill.customerName,
-            phone: bill.customerPhone || null,
+            name: resolvedName,
+            phone: cleanPhone || null,
             total_bills: 1,
             pending_balance: bill.pendingAmount,
             is_active: true,
@@ -683,12 +687,15 @@ export const billingService = {
     const billId = generateUUID();
     const isPendingOrPartial = pendingAmount > 0;
 
+    const cleanCustomerPhone = params.customerPhone ? params.customerPhone.replace(/[^0-9]/g, '').slice(-10) : null;
+    const resolvedCustomerName = params.customerName?.trim() || (cleanCustomerPhone ? 'Customer' : (isPendingOrPartial ? 'Not tracked' : null));
+
     const bill: Bill = {
       id: billId,
       shopId: params.shopId,
       billNumber,
-      customerName: params.customerName || (isPendingOrPartial ? 'Not tracked' : null),
-      customerPhone: params.customerPhone || null,
+      customerName: resolvedCustomerName,
+      customerPhone: cleanCustomerPhone || null,
       customerId: params.customerId || null,
       tableNumber: params.tableNumber || null,
       status: 'completed',
@@ -741,26 +748,31 @@ export const billingService = {
     await storage.setObject(LOCAL_BILL_COUNT_KEY, nextCount);
 
     // Update customer in local store immediately for zero-delay visibility & offline ledger
-    if (bill.customerName && bill.customerName !== 'Not tracked') {
+    const hasCustomerIdentity = (bill.customerName && bill.customerName !== 'Not tracked') || (bill.customerPhone && bill.customerPhone.length === 10);
+    if (hasCustomerIdentity) {
       try {
         const localCusts = await storage.getObject<any[]>('@counterpro/customers', []);
         const cleanPhone = bill.customerPhone ? bill.customerPhone.replace(/[^0-9]/g, '').slice(-10) : '';
         const match = localCusts.find(c =>
           c.shopId === bill.shopId && (
             (cleanPhone && c.phone && c.phone.replace(/[^0-9]/g, '').slice(-10) === cleanPhone) ||
-            c.name === bill.customerName
+            (bill.customerName && bill.customerName !== 'Not tracked' && c.name === bill.customerName)
           )
         );
         if (match) {
           match.totalBills = (match.totalBills || 0) + 1;
           match.pendingBalance = (match.pendingBalance || 0) + bill.pendingAmount;
           match.statusTag = match.pendingBalance > 0 ? 'Pending' : 'Regular';
+          if (!match.phone && cleanPhone) match.phone = cleanPhone;
+          if ((!match.name || match.name === 'Customer') && bill.customerName && bill.customerName !== 'Not tracked') {
+            match.name = bill.customerName;
+          }
         } else {
           localCusts.push({
-            id: generateUUID(),
+            id: bill.customerId || generateUUID(),
             shopId: bill.shopId,
-            name: bill.customerName,
-            phone: bill.customerPhone || null,
+            name: bill.customerName && bill.customerName !== 'Not tracked' ? bill.customerName : 'Customer',
+            phone: cleanPhone || null,
             totalBills: 1,
             pendingBalance: bill.pendingAmount,
             statusTag: bill.pendingAmount > 0 ? 'Pending' : 'Regular',

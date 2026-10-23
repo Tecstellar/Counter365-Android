@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import * as Haptics from 'expo-haptics';
 import { colors, typography, radii, spacing, shadows, useTheme, Theme } from '../../theme';
 import { AppButton } from '../../components/common/AppButton';
 import { AppTag } from '../../components/common/AppTag';
@@ -127,6 +128,11 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
   const [showHeaderActionsModal, setShowHeaderActionsModal] = useState(false);
   const [isBulkEditMode, setIsBulkEditMode] = useState(false);
   const [bulkEditMap, setBulkEditMap] = useState<Record<string, { price: number; halfPrice: number }>>({});
+
+  // Move To Modal states (triggered on item hold/long-press)
+  const [itemToMove, setItemToMove] = useState<MenuItem | null>(null);
+  const [isMoveToModalOpen, setIsMoveToModalOpen] = useState(false);
+  const [isMovingItem, setIsMovingItem] = useState(false);
   const [isSavingBulk, setIsSavingBulk] = useState(false);
 
   // Import Strategy Modal (Replace vs Add to Existing)
@@ -210,6 +216,44 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
     setTimeout(() => {
       fullPriceInputRef.current?.focus();
     }, 120);
+  };
+
+  const handleOpenMoveTo = (item: MenuItem) => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch {}
+    setItemToMove(item);
+    setIsMoveToModalOpen(true);
+  };
+
+  const handleConfirmMoveTo = async (targetCat: MenuCategory) => {
+    if (!itemToMove) return;
+    if (itemToMove.categoryId === targetCat.id) {
+      flash(`"${itemToMove.name}" is already in ${targetCat.name}`);
+      setIsMoveToModalOpen(false);
+      setItemToMove(null);
+      return;
+    }
+
+    setIsMovingItem(true);
+    const updatedItem: MenuItem = { ...itemToMove, categoryId: targetCat.id };
+    const prevItems = [...items];
+    setItems(prev => prev.map(i => i.id === updatedItem.id ? updatedItem : i));
+    setIsMoveToModalOpen(false);
+
+    try {
+      try {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch {}
+      await menuService.saveMenuItem(updatedItem);
+      flash(`✓ Moved "${itemToMove.name}" to "${targetCat.name}"`);
+    } catch (err: any) {
+      setItems(prevItems);
+      flash(`Failed to move "${itemToMove.name}". Reverted.`);
+    } finally {
+      setIsMovingItem(false);
+      setItemToMove(null);
+    }
   };
 
   const handleStartNewItem = () => {
@@ -1495,18 +1539,28 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                               </TouchableOpacity>
                             )}
 
-                            <DishVectorIcon
-                              dishName={item.name}
-                              categoryName={catName}
-                              overrideIconKey={item.icon}
-                              size={22}
-                              showBadge={true}
-                              style={{ marginRight: 10 }}
-                            />
+                            <TouchableOpacity
+                              disabled={isBulkEditMode}
+                              onPress={() => (isSelectMode ? handleToggleSelectItem(item.id) : handleStartEdit(item))}
+                              onLongPress={() => !isSelectMode && handleOpenMoveTo(item)}
+                              delayLongPress={280}
+                              activeOpacity={0.7}
+                            >
+                              <DishVectorIcon
+                                dishName={item.name}
+                                categoryName={catName}
+                                overrideIconKey={item.icon}
+                                size={22}
+                                showBadge={true}
+                                style={{ marginRight: 10 }}
+                              />
+                            </TouchableOpacity>
 
                             <TouchableOpacity
                               disabled={isBulkEditMode}
                               onPress={() => (isSelectMode ? handleToggleSelectItem(item.id) : handleStartEdit(item))}
+                              onLongPress={() => !isSelectMode && handleOpenMoveTo(item)}
+                              delayLongPress={280}
                               style={styles.itemRowInfo}
                             >
                               <Text style={styles.itemRowName}>{item.name}</Text>
@@ -2126,6 +2180,91 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
                 </View>
                 <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
               </TouchableOpacity>
+            </View>
+          </TouchableWithoutFeedback>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* MODAL: Move To Category Modal (Triggered on Item Hold / Long-Press) */}
+      <Modal
+        visible={isMoveToModalOpen}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => {
+          setIsMoveToModalOpen(false);
+          setItemToMove(null);
+        }}
+      >
+        <TouchableOpacity
+          style={styles.menuActionsModalOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            setIsMoveToModalOpen(false);
+            setItemToMove(null);
+          }}
+        >
+          <TouchableWithoutFeedback>
+            <View style={styles.moveToModalCard}>
+              <View style={styles.moveToHeader}>
+                <View style={styles.moveToHeaderLeft}>
+                  <View style={styles.moveToIconCircle}>
+                    <Ionicons name="folder-outline" size={18} color="#FF5F00" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.moveToTitle}>Move To</Text>
+                    <Text style={styles.moveToSub} numberOfLines={1}>
+                      {itemToMove ? `Moving "${itemToMove.name}"` : 'Select category'}
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  onPress={() => {
+                    setIsMoveToModalOpen(false);
+                    setItemToMove(null);
+                  }}
+                  style={styles.moveToCloseBtn}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="close" size={20} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={styles.moveToCatList} showsVerticalScrollIndicator={false}>
+                {categories.map((cat, idx) => {
+                  const isCurrent = itemToMove?.categoryId === cat.id;
+                  return (
+                    <TouchableOpacity
+                      key={cat.id || idx}
+                      style={[
+                        styles.moveToCatItem,
+                        isCurrent && styles.moveToCatItemCurrent,
+                      ]}
+                      activeOpacity={0.7}
+                      onPress={() => handleConfirmMoveTo(cat)}
+                      disabled={isMovingItem}
+                    >
+                      <View style={styles.moveToCatLeft}>
+                        <Ionicons
+                          name={isCurrent ? "folder" : "folder-outline"}
+                          size={18}
+                          color={isCurrent ? '#FF5F00' : colors.textMuted}
+                        />
+                        <Text style={[styles.moveToCatName, isCurrent && styles.moveToCatNameCurrent]}>
+                          {cat.name}
+                        </Text>
+                      </View>
+
+                      {isCurrent ? (
+                        <View style={styles.moveToCurrentBadge}>
+                          <Text style={styles.moveToCurrentBadgeText}>Current</Text>
+                        </View>
+                      ) : (
+                        <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
             </View>
           </TouchableWithoutFeedback>
         </TouchableOpacity>
@@ -3973,6 +4112,102 @@ const createStyles = (theme: Theme) => {
     iconChipTextSelected: {
       color: '#FD5E03',
       fontWeight: '700',
+    },
+    moveToModalCard: {
+      width: '100%',
+      maxWidth: 360,
+      backgroundColor: colors.surface,
+      borderRadius: radii.xl,
+      padding: 18,
+      borderWidth: 1,
+      borderColor: colors.dividerLight,
+      ...shadows.lg,
+    },
+    moveToHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 14,
+      paddingBottom: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.dividerLight,
+    },
+    moveToHeaderLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      flex: 1,
+      marginRight: 8,
+    },
+    moveToIconCircle: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: theme.isDark ? 'rgba(255, 95, 0, 0.18)' : '#FFF3EB',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    moveToTitle: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 16,
+      fontWeight: '800',
+      color: colors.text,
+    },
+    moveToSub: {
+      fontFamily: typography.fonts.body,
+      fontSize: 12,
+      color: colors.textMuted,
+      marginTop: 1,
+    },
+    moveToCloseBtn: {
+      padding: 4,
+    },
+    moveToCatList: {
+      maxHeight: 320,
+    },
+    moveToCatItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 12,
+      paddingHorizontal: 12,
+      borderRadius: 12,
+      backgroundColor: theme.isDark ? '#27272A' : '#F9FAFB',
+      marginBottom: 8,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    moveToCatItemCurrent: {
+      borderColor: '#FF5F00',
+      backgroundColor: theme.isDark ? 'rgba(255, 95, 0, 0.12)' : '#FFF7ED',
+    },
+    moveToCatLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      flex: 1,
+    },
+    moveToCatName: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 14,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    moveToCatNameCurrent: {
+      color: '#FF5F00',
+      fontWeight: '800',
+    },
+    moveToCurrentBadge: {
+      backgroundColor: '#FF5F00',
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 6,
+    },
+    moveToCurrentBadgeText: {
+      fontFamily: typography.fonts.heading,
+      fontSize: 10.5,
+      fontWeight: '800',
+      color: '#FFFFFF',
     },
   });
 };

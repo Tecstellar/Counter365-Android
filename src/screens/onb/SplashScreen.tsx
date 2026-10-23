@@ -57,12 +57,12 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
         contentFit="cover"
         nativeControls={false}
       />
-      {/* Tecstellar logo small in bottom center */}
+      {/* Tecstellar logo small in bottom center (single horizontal row to prevent overlap on 3-button nav devices) */}
       <View
         pointerEvents="none"
         style={[
           styles.bottomLogoContainer,
-          { bottom: Math.max(insets.bottom, 20) + 14 },
+          { bottom: Math.max(insets.bottom, 12) + 6 },
         ]}
       >
         <Text style={styles.fromText}>from</Text>
@@ -86,6 +86,7 @@ const styles = StyleSheet.create({
   bottomLogoContainer: {
     position: 'absolute',
     alignSelf: 'center',
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
@@ -94,13 +95,13 @@ const styles = StyleSheet.create({
   fromText: {
     fontFamily: typography.fonts.body,
     fontSize: 11,
-    color: '#111827',
+    color: '#374151',
     letterSpacing: 0.8,
-    marginBottom: 4,
+    marginRight: 6,
     textTransform: 'lowercase',
   },
   bottomLogo: {
-    width: 108,
-    height: 23,
+    width: 96,
+    height: 20,
   },
 });

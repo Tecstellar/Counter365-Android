@@ -44,26 +44,6 @@ const UniqueAnimatedMenuEditorButton: React.FC<{
   theme: Theme;
 }> = ({ onPress, theme }) => {
   const scaleAnim = React.useRef(new Animated.Value(1)).current;
-  const pulseAnim = React.useRef(new Animated.Value(1)).current;
-
-  React.useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.15,
-          duration: 1200,
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 1200,
-          useNativeDriver: true,
-        }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [pulseAnim]);
 
   const handlePressIn = () => {
     Animated.spring(scaleAnim, { toValue: 0.88, useNativeDriver: true }).start();
@@ -94,9 +74,6 @@ const UniqueAnimatedMenuEditorButton: React.FC<{
         ]}
         accessibilityLabel="Edit Menu"
       >
-        <Animated.View style={[stylesUniqueMenuBtn.iconCircle, { transform: [{ scale: pulseAnim }] }]}>
-          <Ionicons name="sparkles" size={11} color="#FF5F00" />
-        </Animated.View>
         <Text style={stylesUniqueMenuBtn.text}>Menu</Text>
       </TouchableOpacity>
     </Animated.View>
@@ -108,19 +85,11 @@ const stylesUniqueMenuBtn = StyleSheet.create({
     height: 38,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
+    justifyContent: 'center',
+    paddingHorizontal: 14,
     borderRadius: 12,
     borderWidth: 1.2,
     ...shadows.sm,
-  },
-  iconCircle: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255, 95, 0, 0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   text: {
     fontFamily: typography.fonts.heading,
@@ -129,235 +98,61 @@ const stylesUniqueMenuBtn = StyleSheet.create({
     color: '#FF5F00',
     letterSpacing: 0.2,
   },
-  editBadge: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: '#FF5F00',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
 });
 
 interface CategoryPillProps {
   cat: { id: string; name: string };
-  idx: number;
   itemCount?: number;
   isSelected: boolean;
-  isHoveredTarget: boolean;
-  isInsertTarget: boolean;
-  isPulsing?: boolean;
-  canManageMenu: boolean;
-  isOrganizeMode: boolean;
-  hasPickedItem: boolean;
   onSelect: () => void;
-  onMakeFront?: () => void;
-  onPillRef: (el: any) => void;
-  onMeasureLayout: () => void;
-  onDragStart: (cat: { id: string; name: string }, idx: number, pageX: number, pageY: number) => void;
-  onDragMove: (pageX: number, pageY: number) => void;
-  onDragEnd: (pageX: number, pageY: number) => void;
-  onWebDrop?: (data: string, catId: string) => void;
   styles: any;
 }
 
 const CategoryPill: React.FC<CategoryPillProps> = ({
   cat,
-  idx,
   itemCount,
   isSelected,
-  isHoveredTarget,
-  isInsertTarget,
-  isPulsing = false,
-  canManageMenu,
-  isOrganizeMode,
-  hasPickedItem,
   onSelect,
-  onMakeFront,
-  onPillRef,
-  onMeasureLayout,
-  onDragStart,
-  onDragMove,
-  onDragEnd,
-  onWebDrop,
   styles,
 }) => {
-  const isDraggingRef = useRef(false);
-  const touchStartTime = useRef(0);
-  const isCustom = cat.id !== 'all';
-  const scaleAnim = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    if (isPulsing) {
-      Animated.sequence([
-        Animated.timing(scaleAnim, { toValue: 1.25, duration: 160, useNativeDriver: true }),
-        Animated.timing(scaleAnim, { toValue: 0.96, duration: 120, useNativeDriver: true }),
-        Animated.timing(scaleAnim, { toValue: 1.0, duration: 100, useNativeDriver: true }),
-      ]).start();
-    } else if (isHoveredTarget) {
-      Animated.spring(scaleAnim, {
-        toValue: 1.12,
-        friction: 5,
-        tension: 80,
-        useNativeDriver: true,
-      }).start();
-    } else {
-      Animated.spring(scaleAnim, {
-        toValue: 1.0,
-        friction: 6,
-        tension: 70,
-        useNativeDriver: true,
-      }).start();
-    }
-  }, [isPulsing, isHoveredTarget]);
-
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => isCustom && canManageMenu,
-      onStartShouldSetPanResponderCapture: () => false,
-      onMoveShouldSetPanResponder: (_: any, gestureState: any) => {
-        return Math.abs(gestureState.dx) > 6 || Math.abs(gestureState.dy) > 6;
-      },
-      onMoveShouldSetPanResponderCapture: () => false,
-      onPanResponderTerminationRequest: () => !isDraggingRef.current,
-      onPanResponderGrant: (evt: any) => {
-        touchStartTime.current = Date.now();
-        isDraggingRef.current = false;
-      },
-      onPanResponderMove: (evt: any, gestureState: any) => {
-        const dist = Math.hypot(gestureState.dx, gestureState.dy);
-        if (dist > 8) {
-          if (!isDraggingRef.current && canManageMenu && isCustom) {
-            isDraggingRef.current = true;
-            try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
-            onDragStart(cat, idx, evt.nativeEvent.pageX, evt.nativeEvent.pageY);
-          }
-          if (isDraggingRef.current) {
-            onDragMove(evt.nativeEvent.pageX, evt.nativeEvent.pageY);
-          }
-        }
-      },
-      onPanResponderRelease: (evt: any, gestureState: any) => {
-        const duration = Date.now() - touchStartTime.current;
-        const dist = Math.hypot(gestureState.dx, gestureState.dy);
-
-        if (isDraggingRef.current) {
-          isDraggingRef.current = false;
-          onDragEnd(evt.nativeEvent.pageX, evt.nativeEvent.pageY);
-        } else if (dist < 10 && duration < 500) {
-          onSelect();
-        }
-      },
-      onPanResponderTerminate: () => {
-        if (isDraggingRef.current) {
-          isDraggingRef.current = false;
-          onDragEnd(-1, -1);
-        }
-      },
-    })
-  ).current;
-
-  const webProps = Platform.OS === 'web' ? {
-    draggable: isCustom && canManageMenu,
-    onDragStart: (ev: any) => {
-      if (ev.dataTransfer) {
-        ev.dataTransfer.setData('text/plain', `cat:${cat.id}`);
-        ev.dataTransfer.effectAllowed = 'move';
-      }
-      onDragStart(cat, idx, ev.clientX || 0, ev.clientY || 0);
-    },
-    onDragOver: (ev: any) => {
-      ev.preventDefault();
-      if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
-      onDragMove(ev.clientX || 0, ev.clientY || 0);
-    },
-    onDrop: (ev: any) => {
-      ev.preventDefault();
-      const raw = ev.dataTransfer?.getData('text/plain') || '';
-      if (raw && onWebDrop) {
-        onWebDrop(raw, cat.id);
-      } else {
-        onDragEnd(ev.clientX || 0, ev.clientY || 0);
-      }
-    },
-    onDragEnd: (ev: any) => {
-      onDragEnd(ev.clientX || 0, ev.clientY || 0);
-    },
-  } : {};
-
-  const showMakeFront = isOrganizeMode && !hasPickedItem && isCustom && idx > 1;
-
   return (
-    <Animated.View
-      ref={onPillRef}
-      onLayout={onMeasureLayout}
-      {...(isCustom && canManageMenu ? panResponder.panHandlers : {})}
-      {...webProps}
+    <TouchableOpacity
+      activeOpacity={0.8}
+      onPress={onSelect}
       style={[
-        styles.categoryPillWrapper,
-        { transform: [{ scale: scaleAnim }] },
-        isInsertTarget && styles.categoryPillInsertTarget,
+        styles.categoryPill,
+        isSelected && styles.categoryPillSelected,
       ]}
     >
-      <TouchableOpacity
-        activeOpacity={0.8}
-        onPress={onSelect}
+      <Text
         style={[
-          styles.categoryPill,
-          isSelected && styles.categoryPillSelected,
-          isHoveredTarget && styles.categoryPillDropTarget,
-          hasPickedItem && styles.categoryPillTarget,
-          { flexDirection: 'row', alignItems: 'center' },
+          styles.categoryText,
+          isSelected && styles.categoryTextSelected,
         ]}
+        numberOfLines={1}
       >
-        <Text
+        {cat.name}
+      </Text>
+
+      {itemCount !== undefined && (
+        <View
           style={[
-            styles.categoryText,
-            isSelected && styles.categoryTextSelected,
-            isHoveredTarget && styles.categoryTextDropTarget,
-            hasPickedItem && styles.categoryTextTarget,
+            styles.categoryCountBadge,
+            isSelected && styles.categoryCountBadgeSelected,
           ]}
         >
-          {cat.name}
-          {hasPickedItem ? ' 📥' : (isHoveredTarget ? ' ⬇' : '')}
-        </Text>
-
-        {itemCount !== undefined && (
-          <View
+          <Text
             style={[
-              styles.categoryCountBadge,
-              isSelected && styles.categoryCountBadgeSelected,
-              isHoveredTarget && styles.categoryCountBadgeHovered,
+              styles.categoryCountText,
+              isSelected && styles.categoryCountTextSelected,
             ]}
+            numberOfLines={1}
           >
-            <Text
-              style={[
-                styles.categoryCountText,
-                isSelected && styles.categoryCountTextSelected,
-                isHoveredTarget && styles.categoryCountTextHovered,
-              ]}
-            >
-              {itemCount}
-            </Text>
-          </View>
-        )}
-
-        {showMakeFront && (
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={(e) => {
-              e.stopPropagation();
-              onMakeFront?.();
-            }}
-            style={styles.makeFrontBtn}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons name="arrow-up" size={10} color="#FFFFFF" />
-            <Text style={styles.makeFrontText}>Front</Text>
-          </TouchableOpacity>
-        )}
-      </TouchableOpacity>
-    </Animated.View>
+            {itemCount}
+          </Text>
+        </View>
+      )}
+    </TouchableOpacity>
   );
 };
 
@@ -396,43 +191,6 @@ export const SalesMenuScreen: React.FC<SalesMenuScreenProps> = ({
   const scrollTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
   const [unidentifiedPriceInput, setUnidentifiedPriceInput] = useState('20');
-  const [draggedItem, setDraggedItem] = useState<MenuItem | null>(null);
-  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
-  const [hoveredCatId, setHoveredCatId] = useState<string | null>(null);
-  const [draggedCat, setDraggedCat] = useState<{ id: string; name: string } | null>(null);
-  const [dragCatPos, setDragCatPos] = useState<{ x: number; y: number } | null>(null);
-  const [hoveredCatIndex, setHoveredCatIndex] = useState<number | null>(null);
-  const [mostlyUsedOrderIndex, setMostlyUsedOrderIndex] = useState<number>(0);
-  const [isOrganizeMode, setIsOrganizeMode] = useState<boolean>(false);
-  const [pickedItem, setPickedItem] = useState<MenuItem | null>(null);
-  const [flyingItemId, setFlyingItemId] = useState<string | null>(null);
-  const [pulsingCatId, setPulsingCatId] = useState<string | null>(null);
-
-  const pillRefs = useRef<Record<string, any>>({});
-  const pillBounds = useRef<Record<string, { x: number; y: number; width: number; height: number }>>({});
-
-  const measureCategoryPills = useCallback(() => {
-    Object.entries(pillRefs.current).forEach(([id, ref]) => {
-      if (!ref) return;
-      if (typeof ref.measureInWindow === 'function') {
-        ref.measureInWindow((x: number, y: number, width: number, height: number) => {
-          if (width > 0 && height > 0) {
-            pillBounds.current[id] = { x, y, width, height };
-          }
-        });
-      } else if (typeof ref.getBoundingClientRect === 'function') {
-        const rect = ref.getBoundingClientRect();
-        if (rect && rect.width > 0) {
-          pillBounds.current[id] = {
-            x: rect.left,
-            y: rect.top,
-            width: rect.width,
-            height: rect.height,
-          };
-        }
-      }
-    });
-  }, []);
 
   useEffect(() => {
     // 1. Instant local cache load for zero-latency screen rendering
@@ -535,20 +293,21 @@ export const SalesMenuScreen: React.FC<SalesMenuScreenProps> = ({
     setIsRefreshing(false);
   };
 
-  const reorderedCustomCats = React.useMemo(() => {
-    const list = [...categories];
+  const displayCategories = React.useMemo(() => {
+    const list = [
+      { id: 'all', name: t('all_items', 'All Items'), shopId: shop.id, sortOrder: -1, isActive: true },
+    ];
     if (mostlyUsedIds.size > 0) {
-      const muCat = { id: 'mostly_used', name: `🔥 ${t('mostly_used', 'Mostly Used')}`, shopId: shop.id, sortOrder: -0.5, isActive: true } as MenuCategory;
-      const insertAt = Math.min(Math.max(0, mostlyUsedOrderIndex), list.length);
-      list.splice(insertAt, 0, muCat);
+      list.push({
+        id: 'mostly_used',
+        name: `🔥 ${t('mostly_used', 'Mostly Used')}`,
+        shopId: shop.id,
+        sortOrder: -0.5,
+        isActive: true,
+      } as MenuCategory);
     }
-    return list;
-  }, [categories, mostlyUsedIds.size, mostlyUsedOrderIndex, shop.id, t]);
-
-  const displayCategories = [
-    { id: 'all', name: t('all_items', 'All Items'), shopId: shop.id, sortOrder: -1, isActive: true },
-    ...reorderedCustomCats,
-  ];
+    return [...list, ...categories];
+  }, [categories, mostlyUsedIds.size, shop.id, t]);
 
   const safeCatIndex = (activeCategoryIndex >= 0 && activeCategoryIndex < displayCategories.length)
     ? activeCategoryIndex
@@ -621,30 +380,30 @@ export const SalesMenuScreen: React.FC<SalesMenuScreenProps> = ({
       return sections;
     }
 
-    // 3. 'all' is selected: List each category in the exact custom reordered sequence!
-    for (const cat of reorderedCustomCats) {
-      if (cat.id === 'mostly_used') {
-        const muItems = items.filter(i => (mostlyUsedCountMap.get(i.id) || 0) > 0);
-        const filtered = searchFilter ? muItems.filter(i => i.name.toLowerCase().includes(searchFilter)) : muItems;
-        if (filtered.length > 0) {
-          sections.push({
-            id: 'mostly_used',
-            name: '🔥 Mostly Used',
-            items: filtered,
-          });
-        }
-      } else {
-        let catItems = items.filter(i => i.categoryId === cat.id || (i as any).category === cat.name);
-        if (searchFilter) {
-          catItems = catItems.filter(i => i.name.toLowerCase().includes(searchFilter));
-        }
-        if (catItems.length > 0) {
-          sections.push({
-            id: cat.id,
-            name: cat.name,
-            items: catItems,
-          });
-        }
+    // 3. 'all' is selected: List each category
+    if (mostlyUsedIds.size > 0) {
+      const muItems = items.filter(i => (mostlyUsedCountMap.get(i.id) || 0) > 0);
+      const filtered = searchFilter ? muItems.filter(i => i.name.toLowerCase().includes(searchFilter)) : muItems;
+      if (filtered.length > 0) {
+        sections.push({
+          id: 'mostly_used',
+          name: '🔥 Mostly Used',
+          items: filtered,
+        });
+      }
+    }
+
+    for (const cat of categories) {
+      let catItems = items.filter(i => i.categoryId === cat.id || (i as any).category === cat.name);
+      if (searchFilter) {
+        catItems = catItems.filter(i => i.name.toLowerCase().includes(searchFilter));
+      }
+      if (catItems.length > 0) {
+        sections.push({
+          id: cat.id,
+          name: cat.name,
+          items: catItems,
+        });
       }
     }
 
@@ -665,7 +424,7 @@ export const SalesMenuScreen: React.FC<SalesMenuScreenProps> = ({
     }
 
     return sections;
-  }, [items, categories, reorderedCustomCats, currentCategory, searchQuery, mostlyUsedCountMap]);
+  }, [items, categories, currentCategory, searchQuery, mostlyUsedCountMap, mostlyUsedIds.size]);
 
   const handleScroll = () => {
     if (!isScrolling) {
@@ -678,237 +437,6 @@ export const SalesMenuScreen: React.FC<SalesMenuScreenProps> = ({
       setIsScrolling(false);
     }, 1200);
   };
-
-  const handleDragStart = useCallback((item: MenuItem, pageX: number, pageY: number) => {
-    measureCategoryPills();
-    setDraggedItem(item);
-    setDragPos({ x: pageX, y: pageY });
-  }, [measureCategoryPills]);
-
-  const handleDragMove = useCallback((pageX: number, pageY: number) => {
-    setDragPos({ x: pageX, y: pageY });
-    let matchedCatId: string | null = null;
-    for (const [id, bounds] of Object.entries(pillBounds.current)) {
-      if (id === 'all') continue;
-      if (
-        pageX >= bounds.x - 14 &&
-        pageX <= bounds.x + bounds.width + 14 &&
-        pageY >= bounds.y - 35 &&
-        pageY <= bounds.y + bounds.height + 55
-      ) {
-        matchedCatId = id;
-        break;
-      }
-    }
-    setHoveredCatId(matchedCatId);
-  }, []);
-
-  const handleDropItemOnCategory = useCallback(async (item: MenuItem, targetCatId: string) => {
-    if (targetCatId === 'all') {
-      flash('Please drop onto a specific category');
-      return;
-    }
-
-    if (targetCatId === 'mostly_used') {
-      setMostlyUsedIds(prev => new Set([...prev, item.id]));
-      setPulsingCatId('mostly_used');
-      setFlyingItemId(item.id);
-      setTimeout(() => setFlyingItemId(null), 300);
-      setTimeout(() => setPulsingCatId(null), 500);
-      try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
-      flash(`${item.name} moved to Mostly Used ✓ saved`);
-      return;
-    }
-
-    const targetCat = categories.find(c => c.id === targetCatId);
-    if (!targetCat) return;
-
-    if (item.categoryId === targetCat.id) {
-      flash(`${item.name} is already in ${targetCat.name}`);
-      return;
-    }
-
-    // Trigger animations immediately: fly card + pulse bounce on target category chip
-    setFlyingItemId(item.id);
-    setPulsingCatId(targetCat.id);
-    setTimeout(() => setFlyingItemId(null), 300);
-    setTimeout(() => setPulsingCatId(null), 500);
-
-    // Optimistic update so counts and items list update immediately
-    const originalItems = [...items];
-    const updated: MenuItem = { ...item, categoryId: targetCat.id };
-    setItems(prev => prev.map(i => i.id === updated.id ? updated : i));
-
-    try {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch {}
-
-    try {
-      await menuService.saveMenuItem(updated);
-      flash(`${item.name} moved to ${targetCat.name} ✓ saved`);
-    } catch (err) {
-      // Revert if saving fails
-      setItems(originalItems);
-      flash(`Failed to save ${item.name}. Reverted.`);
-    }
-  }, [categories, items, flash]);
-
-  const handleDropCategoryOnCategory = useCallback(async (sourceCatId: string, targetCatId: string) => {
-    if (sourceCatId === targetCatId || targetCatId === 'all') return;
-
-    setPulsingCatId(targetCatId);
-    setTimeout(() => setPulsingCatId(null), 500);
-
-    if (sourceCatId === 'mostly_used') {
-      const targetCatIdx = categories.findIndex(c => c.id === targetCatId);
-      const newIndex = targetCatIdx !== -1 ? targetCatIdx : 0;
-      setMostlyUsedOrderIndex(newIndex);
-      await storage.setObject(`@counterpro/mostly_used_idx_${shop.id}`, newIndex);
-      try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
-      flash('Category order saved ✓');
-      return;
-    }
-
-    const fromIdx = categories.findIndex(c => c.id === sourceCatId);
-    const toIdx = categories.findIndex(c => c.id === targetCatId);
-
-    if (fromIdx !== -1 && toIdx !== -1) {
-      const originalCats = [...categories];
-      const newCats = [...categories];
-      const [moved] = newCats.splice(fromIdx, 1);
-      newCats.splice(toIdx, 0, moved);
-      setCategories(newCats);
-
-      try {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      } catch {}
-
-      try {
-        await menuService.updateCategoryOrder(shop.id, newCats.map(c => c.id));
-        flash('Category order saved ✓');
-      } catch (err) {
-        setCategories(originalCats);
-        flash('Failed to save category order. Reverted.');
-      }
-    }
-  }, [categories, shop.id, flash]);
-
-  const handleDragEnd = useCallback(async (pageX: number, pageY: number) => {
-    let finalTargetId = hoveredCatId;
-    if (!finalTargetId && pageX > 0 && pageY > 0) {
-      for (const [id, bounds] of Object.entries(pillBounds.current)) {
-        if (id === 'all') continue;
-        if (
-          pageX >= bounds.x - 20 &&
-          pageX <= bounds.x + bounds.width + 20 &&
-          pageY >= bounds.y - 45 &&
-          pageY <= bounds.y + bounds.height + 65
-        ) {
-          finalTargetId = id;
-          break;
-        }
-      }
-    }
-
-    const itm = draggedItem;
-    setDraggedItem(null);
-    setDragPos(null);
-    setHoveredCatId(null);
-
-    if (itm && finalTargetId) {
-      await handleDropItemOnCategory(itm, finalTargetId);
-    }
-  }, [draggedItem, hoveredCatId, handleDropItemOnCategory]);
-
-  const handleCategoryDragStart = useCallback((cat: { id: string; name: string }, index: number, pageX: number, pageY: number) => {
-    measureCategoryPills();
-    setDraggedCat({ id: cat.id, name: cat.name });
-    setDragCatPos({ x: pageX, y: pageY });
-  }, [measureCategoryPills]);
-
-  const handleCategoryDragMove = useCallback((pageX: number, pageY: number) => {
-    setDragCatPos({ x: pageX, y: pageY });
-    let targetIdx: number | null = null;
-    for (let i = 0; i < displayCategories.length; i++) {
-      const c = displayCategories[i];
-      const bounds = pillBounds.current[c.id];
-      if (bounds && pageX >= bounds.x - 12 && pageX <= bounds.x + bounds.width + 12) {
-        targetIdx = i;
-        break;
-      }
-    }
-    setHoveredCatIndex(targetIdx);
-  }, [displayCategories]);
-
-  const handleCategoryDragEnd = useCallback(async (pageX: number, pageY: number) => {
-    const dragged = draggedCat;
-    let targetIdx = hoveredCatIndex;
-    if (targetIdx === null && pageX > 0) {
-      for (let i = 0; i < displayCategories.length; i++) {
-        const c = displayCategories[i];
-        const bounds = pillBounds.current[c.id];
-        if (bounds && pageX >= bounds.x - 16 && pageX <= bounds.x + bounds.width + 16) {
-          targetIdx = i;
-          break;
-        }
-      }
-    }
-
-    setDraggedCat(null);
-    setDragCatPos(null);
-    setHoveredCatIndex(null);
-
-    if (dragged && targetIdx !== null) {
-      const targetCategory = displayCategories[targetIdx];
-      if (targetCategory && targetCategory.id !== dragged.id) {
-        await handleDropCategoryOnCategory(dragged.id, targetCategory.id);
-      }
-    }
-  }, [draggedCat, hoveredCatIndex, displayCategories, handleDropCategoryOnCategory]);
-
-  const handleWebDrop = useCallback(async (data: string, targetCatId: string) => {
-    if (!data) return;
-    if (data.startsWith('item:')) {
-      const itemId = data.replace('item:', '');
-      const item = items.find(i => i.id === itemId);
-      if (item) {
-        await handleDropItemOnCategory(item, targetCatId);
-      }
-    } else if (data.startsWith('cat:')) {
-      const sourceCatId = data.replace('cat:', '');
-      await handleDropCategoryOnCategory(sourceCatId, targetCatId);
-    }
-  }, [items, handleDropItemOnCategory, handleDropCategoryOnCategory]);
-
-  // Click-to-Pick -> Click-to-Put handler: Instantly moves picked item into destination category!
-  const handlePutItemIntoCategory = useCallback(async (targetCat: { id: string; name: string }) => {
-    if (!pickedItem) return;
-    const itm = pickedItem;
-    setPickedItem(null);
-    await handleDropItemOnCategory(itm, targetCat.id);
-  }, [pickedItem, handleDropItemOnCategory]);
-
-  // One-click Make Category Front handler
-  const handleMakeCategoryFront = useCallback(async (catId: string) => {
-    try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
-
-    if (catId === 'mostly_used') {
-      setMostlyUsedOrderIndex(0);
-      await storage.setObject(`@counterpro/mostly_used_idx_${shop.id}`, 0);
-      flash('✓ Mostly Used moved to front');
-      return;
-    }
-
-    const catIndex = categories.findIndex(c => c.id === catId);
-    if (catIndex > 0) {
-      const newCats = [...categories];
-      const [pickedCat] = newCats.splice(catIndex, 1);
-      newCats.unshift(pickedCat);
-      setCategories(newCats);
-      await menuService.updateCategoryOrder(shop.id, newCats.map(c => c.id));
-      flash(`✓ "${pickedCat.name}" is now the first category`);
-    }
-  }, [categories, shop.id, flash]);
 
   const handleProceedToBill = () => {
     if (!can('bill')) {
@@ -975,37 +503,6 @@ export const SalesMenuScreen: React.FC<SalesMenuScreenProps> = ({
           </TouchableOpacity>
         )}
 
-        {/* Organize & Reorder Mode Toggle Button */}
-        {can('menu') && (
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={() => {
-              try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-              setIsOrganizeMode(prev => !prev);
-              setPickedItem(null);
-            }}
-            style={[
-              styles.organizeToggleBtn,
-              isOrganizeMode && styles.organizeToggleBtnActive,
-            ]}
-          >
-            <Ionicons
-              name={isOrganizeMode ? "checkmark" : "swap-horizontal"}
-              size={15}
-              color={isOrganizeMode ? "#FFFFFF" : (theme.isDark ? colors.accent : colors.accent700)}
-            />
-            <Text
-              style={[
-                styles.organizeToggleText,
-                isOrganizeMode && styles.organizeToggleTextActive,
-              ]}
-              numberOfLines={1}
-            >
-              {isOrganizeMode ? "Done" : "Organize"}
-            </Text>
-          </TouchableOpacity>
-        )}
-
         {can('menu') && (
           <UniqueAnimatedMenuEditorButton
             onPress={() => {
@@ -1019,58 +516,6 @@ export const SalesMenuScreen: React.FC<SalesMenuScreenProps> = ({
           />
         )}
       </View>
-
-      {/* Organize Mode Top Instruction Banner */}
-      {isOrganizeMode && (
-        <View style={styles.organizeModeBanner}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
-            <Ionicons name="hand-right" size={15} color="#FF5F00" />
-            <Text style={styles.organizeModeBannerText} numberOfLines={1}>
-              {pickedItem
-                ? `Picked: "${pickedItem.name}" → Tap any category above`
-                : "Organize Mode: Tap item to pick, or tap category to Move to Front"}
-            </Text>
-          </View>
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={() => {
-              setIsOrganizeMode(false);
-              setPickedItem(null);
-            }}
-            style={styles.organizeModeDoneBtn}
-          >
-            <Ionicons name="checkmark" size={13} color="#FFFFFF" />
-            <Text style={styles.organizeModeDoneBtnText}>Done</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* Persistent Picked Item Copy Banner */}
-      {pickedItem && (
-        <View style={styles.pickedItemFloatingBanner}>
-          <View style={styles.pickedItemLeftRow}>
-            <View style={styles.pickedItemIconCircle}>
-              <Ionicons name="copy-outline" size={15} color="#FFFFFF" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.pickedItemTitle} numberOfLines={1}>
-                {pickedItem.name} <Text style={{ fontSize: 11, fontWeight: 'normal' }}>(Picked)</Text>
-              </Text>
-              <Text style={styles.pickedItemSubtitle} numberOfLines={1}>
-                Tap any category above to put here
-              </Text>
-            </View>
-          </View>
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={() => setPickedItem(null)}
-            style={styles.pickedItemCancelBtn}
-          >
-            <Ionicons name="close" size={14} color="#FFFFFF" />
-            <Text style={styles.pickedItemCancelText}>Cancel</Text>
-          </TouchableOpacity>
-        </View>
-      )}
 
       {/* Staff Permission Override: Billing Locked Banner */}
       {!can('bill') && (
@@ -1098,16 +543,9 @@ export const SalesMenuScreen: React.FC<SalesMenuScreenProps> = ({
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.categoryScroll}
-          onScroll={() => {
-            requestAnimationFrame(measureCategoryPills);
-          }}
-          scrollEventThrottle={16}
         >
           {displayCategories.map((cat, idx) => {
             const isSelected = idx === activeCategoryIndex && !q;
-            const isHoveredTarget = hoveredCatId === cat.id;
-            const isInsertTarget = hoveredCatIndex === idx && draggedCat?.id !== cat.id;
-            const isPulsing = pulsingCatId === cat.id;
             const count = cat.id === 'all'
               ? items.length
               : cat.id === 'mostly_used'
@@ -1118,33 +556,13 @@ export const SalesMenuScreen: React.FC<SalesMenuScreenProps> = ({
               <CategoryPill
                 key={cat.id}
                 cat={cat}
-                idx={idx}
                 itemCount={count}
                 isSelected={isSelected}
-                isHoveredTarget={isHoveredTarget}
-                isInsertTarget={isInsertTarget}
-                isPulsing={isPulsing}
-                canManageMenu={can('menu')}
-                isOrganizeMode={isOrganizeMode}
-                hasPickedItem={!!pickedItem}
                 onSelect={() => {
-                  if (pickedItem) {
-                    handlePutItemIntoCategory(cat);
-                  } else {
-                    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-                    setActiveCategoryIndex(idx);
-                    setSearchQuery('');
-                  }
+                  try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+                  setActiveCategoryIndex(idx);
+                  setSearchQuery('');
                 }}
-                onMakeFront={() => handleMakeCategoryFront(cat.id)}
-                onPillRef={el => { pillRefs.current[cat.id] = el; }}
-                onMeasureLayout={() => {
-                  requestAnimationFrame(measureCategoryPills);
-                }}
-                onDragStart={handleCategoryDragStart}
-                onDragMove={handleCategoryDragMove}
-                onDragEnd={handleCategoryDragEnd}
-                onWebDrop={handleWebDrop}
                 styles={styles}
               />
             );
@@ -1157,7 +575,7 @@ export const SalesMenuScreen: React.FC<SalesMenuScreenProps> = ({
 
       {/* Category Sections & Items List */}
       <ScrollView
-        scrollEnabled={!draggedItem && !draggedCat}
+        style={styles.mainScrollView}
         contentContainerStyle={styles.scrollContentContainer}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
@@ -1211,22 +629,7 @@ export const SalesMenuScreen: React.FC<SalesMenuScreenProps> = ({
                     tileSize={tileSize}
                     quantity={getItemQty(item.id)}
                     isMostlyUsed={mostlyUsedIds.has(item.id)}
-                    isFlying={flyingItemId === item.id}
-                    canManageMenu={can('menu')}
-                    isOrganizeMode={isOrganizeMode}
-                    isPicked={pickedItem?.id === item.id}
-                    onPickItem={(it) => {
-                      setIsOrganizeMode(true);
-                      setPickedItem(prev => (prev?.id === it.id ? null : it));
-                    }}
-                    onDragStart={handleDragStart}
-                    onDragMove={handleDragMove}
-                    onDragEnd={handleDragEnd}
                     onAddFull={() => {
-                      if (isOrganizeMode) {
-                        setPickedItem(prev => (prev?.id === item.id ? null : item));
-                        return;
-                      }
                       if (!can('bill')) {
                         flash(t('no_access', "You don't have access for that"));
                         return;
@@ -1234,7 +637,6 @@ export const SalesMenuScreen: React.FC<SalesMenuScreenProps> = ({
                       addItem(item, false);
                     }}
                     onAddHalf={() => {
-                      if (isOrganizeMode) return;
                       if (!can('bill')) {
                         flash(t('no_access', "You don't have access for that"));
                         return;
@@ -1242,7 +644,6 @@ export const SalesMenuScreen: React.FC<SalesMenuScreenProps> = ({
                       addItem(item, true);
                     }}
                     onDecrease={() => {
-                      if (isOrganizeMode) return;
                       decreaseItem(item.id);
                     }}
                     onSoldOutNotice={() => flash(`${item.name} is marked sold out`)}
@@ -1259,9 +660,9 @@ export const SalesMenuScreen: React.FC<SalesMenuScreenProps> = ({
             <View style={[styles.categorySectionAccentBar, { backgroundColor: '#3B82F6' }]} />
             <Text style={styles.categorySectionHeading}>Quick Actions</Text>
           </View>
-          <View style={styles.categoryItemsGrid}>
+          <View style={styles.quickActionsRow}>
             <TouchableOpacity
-              activeOpacity={0.75}
+              activeOpacity={0.78}
               onPress={() => {
                 try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
                 if (!can('bill')) {
@@ -1270,19 +671,21 @@ export const SalesMenuScreen: React.FC<SalesMenuScreenProps> = ({
                 }
                 setIsUnidentifiedModalOpen(true);
               }}
-              style={[styles.unidentifiedTileContainer, { width: tileSize, height: tileHeight }]}
+              style={styles.unidentifiedTileContainer}
               accessibilityLabel="Add Unidentified Product"
             >
               <View style={styles.unidentifiedTileIconCircle}>
-                <Ionicons name="help" size={16} color="#FFFFFF" />
+                <Ionicons name="help" size={17} color="#FFFFFF" />
               </View>
-              <Text style={styles.unidentifiedTileTitle} numberOfLines={1}>Unidentified</Text>
-              <Text style={styles.unidentifiedTileSub} numberOfLines={1}>+ Custom</Text>
+              <View style={styles.quickActionTextCol}>
+                <Text style={styles.unidentifiedTileTitle} numberOfLines={1}>Unidentified</Text>
+                <Text style={styles.unidentifiedTileSub} numberOfLines={1}>+ Custom Price</Text>
+              </View>
             </TouchableOpacity>
 
             {can('menu') && (
               <TouchableOpacity
-                activeOpacity={0.75}
+                activeOpacity={0.78}
                 onPress={() => {
                   try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
                   if (!can('menu')) {
@@ -1291,78 +694,29 @@ export const SalesMenuScreen: React.FC<SalesMenuScreenProps> = ({
                   }
                   onOpenMenuEditor(true);
                 }}
-                style={[styles.addTileContainer, { width: tileSize, height: tileHeight }]}
+                style={styles.addTileContainer}
                 accessibilityLabel="Add New Product"
               >
                 <View style={styles.addTileIconCircle}>
-                  <Ionicons name="add" size={18} color="#FFFFFF" />
+                  <Ionicons name="add" size={19} color="#FFFFFF" />
                 </View>
-                <Text style={styles.addTileTitle} numberOfLines={1}>{t('add_product', 'Add Product')}</Text>
-                <Text style={styles.addTileSub} numberOfLines={1}>+ New</Text>
+                <View style={styles.quickActionTextCol}>
+                  <Text style={styles.addTileTitle} numberOfLines={1}>{t('add_product', 'Add Product')}</Text>
+                  <Text style={styles.addTileSub} numberOfLines={1}>+ New Item</Text>
+                </View>
               </TouchableOpacity>
             )}
           </View>
         </View>
       </ScrollView>
 
-      {/* Bottom Cart Bar (Only visible during billing mode) */}
-      {!isOrganizeMode && (
-        <CartBar
-          totalAmount={subtotal}
-          totalCount={totalCount}
-          paymentMode="Cash"
-          onGoToBill={handleProceedToBill}
-        />
-      )}
-
-      {/* Floating Drag Chip when dragging an item towards categories */}
-      {draggedItem && dragPos && (
-        <View
-          pointerEvents="none"
-          style={[
-            styles.floatingDragChip,
-            {
-              left: Math.max(10, Math.min(dragPos.x - 70, windowWidth - 160)),
-              top: Math.max(45, dragPos.y - 70),
-            },
-          ]}
-        >
-          <Ionicons name="hand-right" size={15} color="#FF5F00" />
-          <Text style={styles.floatingDragChipText} numberOfLines={1}>
-            {draggedItem.name}
-          </Text>
-          {hoveredCatId && (
-            <Text style={styles.floatingDragTargetText} numberOfLines={1}>
-              → {hoveredCatId === 'mostly_used' ? 'Mostly Used' : categories.find(c => c.id === hoveredCatId)?.name}
-            </Text>
-          )}
-        </View>
-      )}
-
-      {/* Floating Category Chip when dragging a category pill */}
-      {draggedCat && dragCatPos && (
-        <View
-          pointerEvents="none"
-          style={[
-            styles.floatingDragChip,
-            {
-              left: Math.max(10, Math.min(dragCatPos.x - 70, windowWidth - 160)),
-              top: Math.max(45, dragCatPos.y - 65),
-              borderColor: '#3B82F6',
-            },
-          ]}
-        >
-          <Ionicons name="swap-horizontal" size={15} color="#3B82F6" />
-          <Text style={styles.floatingDragChipText} numberOfLines={1}>
-            {draggedCat.name}
-          </Text>
-          {hoveredCatIndex !== null && displayCategories[hoveredCatIndex] && (
-            <Text style={[styles.floatingDragTargetText, { color: '#60A5FA' }]} numberOfLines={1}>
-              → {hoveredCatIndex <= 1 ? 'Move to Front' : `Before ${displayCategories[hoveredCatIndex].name}`}
-            </Text>
-          )}
-        </View>
-      )}
+      {/* Bottom Cart Bar */}
+      <CartBar
+        totalAmount={subtotal}
+        totalCount={totalCount}
+        paymentMode="Cash"
+        onGoToBill={handleProceedToBill}
+      />
 
       {/* Side Corner Floating Category Pill on Scroll */}
       {isScrolling && (
@@ -1531,18 +885,23 @@ const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left
     paddingBottom: 10,
   },
   categoryScroll: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     gap: 8,
+    alignItems: 'center',
+    flexDirection: 'row',
   },
   categoryPill: {
-    height: 40,
+    minHeight: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 16,
+    paddingVertical: 7,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexShrink: 0,
     ...shadows.sm,
   },
   categoryPillSelected: {
@@ -1554,6 +913,7 @@ const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left
     fontSize: 13.5,
     color: colors.textMuted,
     fontWeight: '600',
+    includeFontPadding: false,
   },
   categoryTextSelected: {
     color: '#FFFFFF',
@@ -1570,8 +930,11 @@ const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left
     fontWeight: '600',
     textTransform: 'uppercase',
   },
+  mainScrollView: {
+    flex: 1,
+  },
   scrollContentContainer: {
-    paddingBottom: Math.max(bottomInset, 16) + 90,
+    paddingBottom: Math.max(bottomInset, 20) + 130,
   },
   categorySectionBlock: {
     marginBottom: 16,
@@ -1850,45 +1213,56 @@ const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left
     color: '#DC2626',
     fontWeight: '600',
   },
-  addTileContainer: {
-    backgroundColor: theme.isDark ? 'rgba(255, 95, 0, 0.06)' : '#FFF7ED',
-    borderWidth: 1.5,
-    borderColor: theme.isDark ? 'rgba(255, 95, 0, 0.35)' : '#FDBA74',
-    borderStyle: 'dashed',
-    borderRadius: 18,
+  quickActionsRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    gap: 10,
     alignItems: 'center',
+  },
+  quickActionTextCol: {
+    flex: 1,
     justifyContent: 'center',
-    padding: 10,
-    gap: 6,
+  },
+  addTileContainer: {
+    flex: 1,
+    minHeight: 58,
+    backgroundColor: theme.isDark ? 'rgba(255, 95, 0, 0.08)' : '#FFF7ED',
+    borderWidth: 1.5,
+    borderColor: theme.isDark ? 'rgba(255, 95, 0, 0.40)' : '#FDBA74',
+    borderStyle: 'dashed',
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 10,
     ...shadows.sm,
   },
   addTileIconCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 2,
     shadowColor: colors.accent,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
-    shadowRadius: 4,
+    shadowRadius: 3,
     elevation: 3,
   },
   addTileTitle: {
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
     fontFamily: typography.fonts.heading,
     color: colors.text,
-    textAlign: 'center',
   },
   addTileSub: {
-    fontSize: 9.5,
+    fontSize: 11,
     fontWeight: '600',
     fontFamily: typography.fonts.heading,
     color: colors.accent,
-    textAlign: 'center',
+    marginTop: 1,
   },
   categoryAlignPill: {
     height: 40,
@@ -1923,11 +1297,13 @@ const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left
     fontWeight: '800',
   },
   categoryCountBadge: {
-    marginLeft: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 1,
+    marginLeft: 7,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
     borderRadius: 10,
-    backgroundColor: theme.isDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.07)',
+    backgroundColor: theme.isDark ? 'rgba(255, 255, 255, 0.16)' : 'rgba(0, 0, 0, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   categoryCountBadgeSelected: {
     backgroundColor: 'rgba(255, 255, 255, 0.28)',
@@ -1936,9 +1312,11 @@ const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left
     backgroundColor: 'rgba(255, 95, 0, 0.25)',
   },
   categoryCountText: {
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: '700',
     color: colors.textMuted,
+    fontFamily: typography.fonts.numbers,
+    includeFontPadding: false,
   },
   categoryCountTextSelected: {
     color: '#FFFFFF',
@@ -1947,25 +1325,27 @@ const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left
     color: theme.isDark ? '#FFFFFF' : '#C4622D',
   },
   unidentifiedTileContainer: {
-    backgroundColor: theme.isDark ? 'rgba(59, 130, 246, 0.08)' : '#EFF6FF',
+    flex: 1,
+    minHeight: 58,
+    backgroundColor: theme.isDark ? 'rgba(59, 130, 246, 0.10)' : '#EFF6FF',
     borderWidth: 1.5,
-    borderColor: theme.isDark ? 'rgba(59, 130, 246, 0.35)' : '#93C5FD',
+    borderColor: theme.isDark ? 'rgba(59, 130, 246, 0.40)' : '#93C5FD',
     borderStyle: 'dashed',
-    borderRadius: 18,
+    borderRadius: 14,
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    padding: 8,
-    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 10,
     ...shadows.sm,
   },
   unidentifiedTileIconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#3B82F6',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 2,
     shadowColor: '#3B82F6',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
@@ -1973,18 +1353,17 @@ const createStyles = (theme: Theme, insets?: { top: number; bottom: number; left
     elevation: 3,
   },
   unidentifiedTileTitle: {
-    fontSize: 10.5,
+    fontSize: 13,
     fontWeight: '700',
     fontFamily: typography.fonts.heading,
     color: colors.text,
-    textAlign: 'center',
   },
   unidentifiedTileSub: {
-    fontSize: 9,
+    fontSize: 11,
     fontWeight: '600',
     fontFamily: typography.fonts.heading,
     color: '#3B82F6',
-    textAlign: 'center',
+    marginTop: 1,
   },
   floatingDragChip: {
     position: 'absolute',

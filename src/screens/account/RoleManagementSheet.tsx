@@ -22,6 +22,7 @@ export const PERM_ROWS: Array<{ key: PermissionKey; name: string }> = [
   { key: 'pend', name: 'Clear pending' },
   { key: 'report', name: 'See day report & analytics' },
   { key: 'menu', name: 'Edit menu & prices' },
+  { key: 'menu_delete', name: 'Delete menu items & categories' },
   { key: 'users', name: 'Add or remove users' },
 ];
 
@@ -31,9 +32,9 @@ export const ROLES_INFO: Array<{ role: UserRole; sub: string }> = [
 ];
 
 export const DEFAULT_ROLE_PERMS: Record<UserRole, Record<PermissionKey, boolean>> = {
-  Owner: { bill: true, total: true, exp: true, pend: true, report: true, menu: true, users: true, subscription: true },
-  Supervisor: { bill: true, total: true, exp: true, pend: true, report: true, menu: true, users: false, subscription: false },
-  Biller: { bill: true, total: true, exp: false, pend: false, report: false, menu: false, users: false, subscription: false },
+  Owner: { bill: true, total: true, exp: true, pend: true, report: true, menu: true, menu_delete: true, users: true, subscription: true },
+  Supervisor: { bill: true, total: true, exp: true, pend: true, report: true, menu: true, menu_delete: false, users: false, subscription: false },
+  Biller: { bill: true, total: true, exp: false, pend: false, report: false, menu: false, menu_delete: false, users: false, subscription: false },
 };
 
 export const RoleManagementSheet: React.FC<RoleManagementSheetProps> = ({

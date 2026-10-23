@@ -53,9 +53,9 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
   const styles = React.useMemo(() => createStyles(theme), [theme]);
   const { shop } = useShop();
   const { flash } = useCart();
-  const { can, currentRole } = useAuth();
-  // Supervisors can add and edit the menu but not delete from it.
-  const canDelete = currentRole === 'Owner';
+  const { can } = useAuth();
+  // Deleting needs its own permission; the owner grants it per person.
+  const canDelete = can('menu_delete');
   const { t } = useLanguage();
 
   // Immediate override protection: If owner revokes menu edit permission while menu editor is open

@@ -2,7 +2,7 @@ export type ShopType = 'Tea Shop' | 'Cafe' | 'Fast Food' | 'Tiffin Shop' | 'Rest
 
 export type UserRole = 'Owner' | 'Supervisor' | 'Biller';
 
-export type PermissionKey = 'bill' | 'total' | 'exp' | 'pend' | 'report' | 'menu' | 'users' | 'subscription';
+export type PermissionKey = 'bill' | 'total' | 'exp' | 'pend' | 'report' | 'menu' | 'menu_delete' | 'users' | 'subscription';
 
 export interface UserProfile {
   id: string;

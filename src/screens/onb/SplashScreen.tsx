@@ -94,7 +94,7 @@ const styles = StyleSheet.create({
   fromText: {
     fontFamily: typography.fonts.body,
     fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.7)',
+    color: '#111827',
     letterSpacing: 0.8,
     marginBottom: 4,
     textTransform: 'lowercase',

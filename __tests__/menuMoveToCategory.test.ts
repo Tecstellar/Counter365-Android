@@ -35,7 +35,7 @@ describe('Menu Management - Move To Category Feature', () => {
 
     // Simulate "Move To" Snacks
     const movedItem: MenuItem = { ...initialItem, categoryId: catSnacksId };
-    const result = await menuService.saveMenuItem(movedItem);
+    const { items: result } = await menuService.saveMenuItem(movedItem);
 
     const saved = result.find(i => i.id === itemId);
     expect(saved).toBeDefined();

@@ -247,8 +247,15 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
       try {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch {}
-      await menuService.saveMenuItem(updatedItem);
-      flash(`✓ Moved "${itemToMove.name}" to "${targetCat.name}"`);
+      const { items: updated, syncError } = await menuService.saveMenuItem(updatedItem);
+      if (updated && updated.length > 0) {
+        setItems(updated);
+      }
+      if (syncError) {
+        flash(`Moved locally. Note: sync pending`);
+      } else {
+        flash(`✓ Moved "${itemToMove.name}" to "${targetCat.name}"`);
+      }
     } catch (err: any) {
       setItems(prevItems);
       flash(`Failed to move "${itemToMove.name}". Reverted.`);

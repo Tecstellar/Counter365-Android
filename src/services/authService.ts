@@ -92,16 +92,39 @@ export const authService = {
 
       // 2. Check if this phone belongs to a registered shop owner or shop member (Supervisor / Biller)
       try {
-        const { data: shopList } = await (supabase.from('shops') as any)
-          .select('*')
-          .eq('phone', cleanPhone)
-          .order('created_at', { ascending: false })
-          .limit(1);
-
-        let shopData = (shopList && shopList.length > 0 && !shopList[0].phone?.includes('_del_') && !shopList[0].name?.startsWith('[Deleted]')) ? shopList[0] : null;
+        let shopData: any = null;
         let memberRole: UserRole = 'Owner';
         let memberId = generateUUID();
         let memberOverrides: any = undefined;
+
+        // Staff membership wins: someone who works in another shop opens that shop, even if their own phone matches a shop.
+        try {
+          const { data: staffList } = await (supabase.from('shop_members') as any)
+            .select('*, shops(*)')
+            .eq('user_id', profile.id)
+            .eq('is_active', true)
+            .neq('role', 'Owner')
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          if (staffList && staffList.length > 0 && staffList[0].shops && !staffList[0].shops.name?.startsWith('[Deleted]')) {
+            shopData = staffList[0].shops;
+            memberRole = (staffList[0].role as UserRole) || 'Biller';
+            memberId = staffList[0].id;
+            memberOverrides = staffList[0].permissions_override;
+          }
+        } catch (sErr) {
+          console.warn('Supabase staff membership check notice:', sErr);
+        }
+
+        if (!shopData) {
+          const { data: shopList } = await (supabase.from('shops') as any)
+            .select('*')
+            .eq('phone', cleanPhone)
+            .order('created_at', { ascending: false })
+            .limit(1);
+          shopData = (shopList && shopList.length > 0 && !shopList[0].phone?.includes('_del_') && !shopList[0].name?.startsWith('[Deleted]')) ? shopList[0] : null;
+        }
 
         if (!shopData) {
           // Check if this phone belongs to a member by direct phone match OR user_id

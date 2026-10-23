@@ -392,8 +392,13 @@ export const MenuEditorScreen: React.FC<MenuEditorScreenProps> = ({
         icon: selectedIconKey || null,
       };
 
-      const updated = await menuService.saveMenuItem(itemRecord);
+      const { items: updated, syncError } = await menuService.saveMenuItem(itemRecord);
       setItems(updated);
+      if (syncError) {
+        Alert.alert('Saved on this phone only', `${itemRecord.name} did not upload, so other staff and the owner will not see it yet.
+
+${syncError}`);
+      }
 
       if (addMore) {
         // Reset inputs and keep form open for immediate entry of more items

@@ -1,7 +1,8 @@
 import React, { useEffect, useRef } from 'react';
-import { StyleSheet, TouchableOpacity, StatusBar, Image, View } from 'react-native';
+import { StyleSheet, TouchableOpacity, StatusBar, Image, View, Text } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { typography } from '../../theme/typography';
 
 interface SplashScreenProps {
   onComplete: () => void;
@@ -64,6 +65,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
           { bottom: Math.max(insets.bottom, 20) + 14 },
         ]}
       >
+        <Text style={styles.fromText}>from</Text>
         <Image
           source={tecstellarLogo}
           style={styles.bottomLogo}
@@ -89,9 +91,16 @@ const styles = StyleSheet.create({
     zIndex: 10,
     elevation: 6,
   },
+  fromText: {
+    fontFamily: typography.fonts.body,
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.7)',
+    letterSpacing: 0.8,
+    marginBottom: 4,
+    textTransform: 'lowercase',
+  },
   bottomLogo: {
-    width: 110,
-    height: 38,
-    borderRadius: 8,
+    width: 108,
+    height: 23,
   },
 });
